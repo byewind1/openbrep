@@ -77,6 +77,18 @@ fn open_releases_page(channel: UpdateChannel) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// P0-B：打开助手消息里的外部链接（http/https only，交系统浏览器）。
+/// 链接来自模型输出——Rust 侧再做一次协议白名单校验，webview 内绝不导航。
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let parsed: tauri::Url = url.parse().map_err(|e| format!("invalid url: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => tauri_plugin_opener::open_url(parsed.as_str(), None::<&str>)
+            .map_err(|e| e.to_string()),
+        _ => Err(format!("scheme not allowed: {}", parsed.scheme())),
+    }
+}
+
 fn updater_for_channel(
     app: &tauri::AppHandle,
     channel: UpdateChannel,
@@ -421,6 +433,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             open_releases_page,
+            open_external_url,
             updater_check,
             updater_download_and_install
         ])

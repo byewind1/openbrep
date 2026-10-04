@@ -327,7 +327,10 @@ class ErrorLearningStore:
             else:
                 content = _message_content_to_text(message.get("content", ""))
                 role = str(message.get("role", ""))
-                timestamp = now
+                # P2：消息自带创建时间（前端 createdAt 转换）时透传保留——
+                # 否则每次全量保存都会把历史时间戳覆盖成本次保存时刻
+                # （同一份 transcript 全部同秒，诊断无法还原时序）。
+                timestamp = str(message.get("timestamp") or "").strip() or now
                 entry_source = source
                 entry_project = project_name
                 raw_meta = message.get("meta")

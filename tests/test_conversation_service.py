@@ -310,3 +310,47 @@ def test_gui_context_absence_keeps_generation_request_bytes_identical(tmp_path):
     _, second = session.assistant_service._build_generate_pipeline({**body,'conversation_context':None}, validate_image_payload(body), on_event=None)
     assert first.assistant_settings.encode() == second.assistant_settings.encode() == body['assistant_settings'].encode()
     assert first.conversation_context is None and second.conversation_context is None
+
+
+def test_effect_contract_passes_through_to_execution_request(tmp_path):
+    """P0-A：turn body 的 effect_contract 必须原样进入执行请求（GUI 显式传契约），
+    无契约时不注入。"""
+    session = session_at(tmp_path)
+    ready = prepare(session, effect_contract={'change_kind': 'geometry', 'reference_asset_ids': ['ref1']})
+    session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    call = session.assistant_service.generate_with_assistant.call_args.args[0]
+    assert call['effect_contract'] == {'change_kind': 'geometry', 'reference_asset_ids': ['ref1']}
+
+    (tmp_path / '2').mkdir()
+    session2 = session_at(tmp_path / '2')
+    ready2 = prepare(session2, client_turn_id='c9')
+    session2.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready2['turn_id']})
+    call2 = session2.assistant_service.generate_with_assistant.call_args.args[0]
+    assert 'effect_contract' not in call2
+
+
+def test_selected_reference_injected_into_execution(tmp_path, monkeypatch):
+    """P1-A 闭环：上一轮显式采用的参考资产，下一轮无新附件执行时按允许列表
+    注入（images + effect_contract.reference_asset_ids），不需要用户重发图片。"""
+    import base64 as _b64
+
+    from openbrep.workbench.reference_service import WorkbenchReferenceService
+
+    png = _b64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    monkeypatch.setattr(
+        'openbrep.workbench.reference_service._download_image', lambda url: (png, 'image/png')
+    )
+    session = session_at(tmp_path)
+    assert isinstance(session.reference_service, WorkbenchReferenceService)
+    adopt = session.route('POST', '/api/references/adopt', {'url': 'https://images.example.com/hw.png', 'alt': '回纹'})
+    assert adopt['ok'], adopt.get('error')
+    ready = prepare(session, client_turn_id='c-ref')  # 与既有 execute 路由用例同款本地规则消息
+    session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    call = session.assistant_service.generate_with_assistant.call_args.args[0]
+    assert call['images'][0]['mime'] == 'image/png'
+    assert _b64.b64decode(call['images'][0]['b64']) == png
+    contract = call['effect_contract']
+    assert contract['change_kind'] == 'geometry'
+    assert adopt['asset']['id'] in contract['reference_asset_ids']

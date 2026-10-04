@@ -7,6 +7,7 @@ fn main() {
             tauri_build::AppManifest::new().commands(&[
                 "app_version",
                 "open_releases_page",
+                "open_external_url",
                 "updater_check",
                 "updater_download_and_install",
             ]),

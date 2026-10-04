@@ -1,7 +1,7 @@
 # lattice_window — 园林漏窗定向提取（P5b 首发，设计 §4 示例；P5c 加字段级置信度）
 name: lattice_window
 trigger:
-  keywords: [漏窗, 窗花, 花窗, 棂, lattice]
+  keywords: [漏窗, 窗花, 花窗, 棂, lattice, 回纹, 回字纹, 回形纹]
 extract_prompt: |
   这是园林漏窗参考图。只提取以下 GDL 建模必需信息，不要生成 GDL 代码：
   1. opening_shape：开洞形状（rect 方形 / circle 圆形 / hexagon 六角 / octagon 八角 / begonia 海棠 / freeform 自由形）

@@ -62,6 +62,32 @@ _CRITIC_SYSTEM_PROMPT = """\
 """
 
 
+def build_project_hints(project: Any, effect_contract: Optional[dict] = None) -> str:
+    """P1-B（R4）：构造 schema 分型用的项目领域提示。
+
+    只包含确定性可枚举的事实（项目名、String/枚举参数当前值、契约目标分支），
+    不复制知识库/长文本。调用方必须在显式门控下传入（参考资产已采用或 GUI
+    显式契约）；benchmark/CLI 不调用 → 分型与 prompt 与基线逐字节一致。
+    """
+    hints: list[str] = []
+    name = getattr(project, "name", None)
+    if name:
+        hints.append(f"项目：{name}")
+    try:
+        for param in getattr(project, "parameters", []) or []:
+            type_tag = getattr(param, "type_tag", "")
+            value = getattr(param, "value", None)
+            if type_tag in ("String",) and value and str(value).strip():
+                hints.append(f"当前参数 {param.name}={value}")
+    except Exception:
+        pass
+    if effect_contract:
+        branch = effect_contract.get("target_branch")
+        if branch:
+            hints.append(f"目标分支：{branch}")
+    return "\n".join(hints)
+
+
 def run(
     images: list,
     intent: str,
@@ -70,6 +96,7 @@ def run(
     on_event: Optional[Callable] = None,
     critic_pass: bool = True,
     llm_kwargs: Optional[dict] = None,
+    project_hints: str = "",
 ) -> list[Optional[ModelingPlan]]:
     """对有序多图跑 Vision Harness（S1 分型 → S2 定向提取 → S3 critic → S4 合成）。
 
@@ -77,6 +104,10 @@ def run(
     llm_kwargs: D5 Codex 图片通道——随提取/critic 的 generate_with_image 调用
         透传给 LLMAdapter 的专用 kwargs（codex_intent 等）。None = 现有行为
         逐字节不变（不传任何 kwargs）。
+    project_hints: P1-B（R4）——schema 分型的项目领域上下文（项目名、当前
+        纹样参数值、目标分支）。只影响 select_schema 命中，不进入提取 prompt。
+        默认空 = 分型行为与基线逐字节一致；调用方仅在显式参考资产/契约存在
+        时传入（GUI 门控），保证既有语料不 miss。
 
     Returns:
         list[ModelingPlan | None] —— 与输入 images 一一对齐；无字节的图返回 None
@@ -84,7 +115,7 @@ def run(
     """
     on_event = on_event or (lambda *_: None)
     schemas = load_all_schemas()
-    schema_name = select_schema(user_input, schemas)
+    schema_name = select_schema(user_input, schemas, project_hints=project_hints)
     schema = schemas[schema_name]
 
     plans: list[Optional[ModelingPlan]] = []

@@ -912,8 +912,16 @@ export interface FileChoiceResult {
 // ── MODIFY 验收报告（V5）：确定性自然语言摘要 + 前后几何对比 ─────────────
 export interface ModifyAcceptance {
   summary_lines: string[]
+  /** P0-A：显式效果契约判定（契约未传时缺省） */
+  effect?: {
+    required: boolean
+    change_kind: string
+    satisfied: boolean
+    status: 'satisfied' | 'no_effect' | 'shape_check_failed' | 'unverifiable'
+    reason: string
+  }
   geometry_delta: {
-    status: 'ok' | 'unchanged' | 'before_unavailable' | 'after_unavailable'
+    status: 'ok' | 'unchanged' | 'no_effect' | 'before_unavailable' | 'after_unavailable'
     reason?: string
     mesh_count?: { from: number | null; to: number | null }
     bbox_size?: { from: number[] | null; to: number[] | null }
@@ -931,6 +939,8 @@ export interface ModifyAcceptance {
 export interface AssistantHistoryItem {
   role: 'user' | 'assistant'
   content: string
+  /** P2：消息创建时间（ISO）；缺失时后端回退为保存时刻 */
+  timestamp?: string
   /** ST03 F2：持久化 delivery/continue 关联（不进 LLM prompt） */
   meta?: {
     delivery?: DeliveryPresentation | null
@@ -945,9 +955,11 @@ export interface AssistantHistoryItem {
 }
 
 export interface AssistantMessage {
-  advisor?: { proposals?: Array<{ proposal_id: string; title: string; goal: string; scope: string[]; constraints: string[]; tradeoffs: string[] }>; inspection?: { checks: Array<{ kind: string; status: string; unavailable_reason?: string | null }> } }
+  advisor?: { proposals?: Array<{ proposal_id: string; title: string; goal: string; scope: string[]; constraints: string[]; tradeoffs: string[] }>; inspection?: { checks: Array<{ kind: string; status: string; unavailable_reason?: string | null }> }; omitted_sections?: string[] }
   role: 'user' | 'assistant'
   content: string
+  /** P2：消息创建时刻（epoch ms）；保存历史时转换为 timestamp 透传后端 */
+  createdAt?: number
   // 以下字段仅在当前会话内存活：后端聊天历史只持久化 role/content，
   // 刷新后摘要卡降级为 content 里的纯文本（含 Changed files 后缀兜底）。
   changedFiles?: string[]

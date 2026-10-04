@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 from openbrep.config import GDLAgentConfig
 from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import ImageRef, TaskPipeline, TaskRequest
-from openbrep.vision.harness import run as harness_run
+from openbrep.vision.harness import build_project_hints, run as harness_run
 from openbrep.vision.modeling_plan import ModelingPlan
 from openbrep.vision.schema import VisualLayer, VisualStructure
 from openbrep.vision.schema_registry import load_all_schemas, load_schemas_from_dir
@@ -918,3 +918,35 @@ class TestImageSha256(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProjectHintsTriage(unittest.TestCase):
+    """P1-B（R4）：schema 分型消费项目领域上下文；空 hints 行为不变。"""
+
+    def setUp(self):
+        self.schemas = load_all_schemas()
+
+    def test_empty_hints_keep_baseline_behavior(self):
+        # "回字纹/回纹" 本身已是 lattice 触发词（P1-B 关键词补齐）；无 hints 时
+        # 不含关键词的请求保持 generic 兜底（baseline 行为不变）。
+        self.assertEqual(select_schema("按这个样式", self.schemas), "generic")
+        self.assertEqual(select_schema("按这个样式", self.schemas, project_hints=""), "generic")
+
+    def test_project_hints_hit_lattice_schema(self):
+        """项目本身是漏窗 + 当前纹样参数为回纹 → "按这个样式" 也命中 lattice。"""
+        hints = "项目：window_decorative_lattice_v2\ncurrent params\n当前参数 pattern_type=回纹"
+        self.assertEqual(select_schema("回字纹按这个样式", self.schemas, project_hints=hints), "lattice_window")
+        self.assertEqual(select_schema("按这个样式修改", self.schemas, project_hints=hints), "lattice_window")
+
+    def test_build_project_hints_gated_and_deterministic(self):
+        from openbrep.hsf_project import GDLParameter, HSFProject
+
+        proj = HSFProject.create_new("Lattice")
+        proj.parameters.append(GDLParameter(name="pattern_type", type_tag="String", description="纹样", value="回纹"))
+        hints = build_project_hints(proj, {"change_kind": "geometry", "target_branch": "pattern_type=回纹"})
+        self.assertIn("Lattice", hints)
+        self.assertIn("pattern_type=回纹", hints)
+        self.assertIn("目标分支", hints)
+        # 无项目 / 空契约 → 空提示
+        self.assertEqual(build_project_hints(None, None), "")
+        self.assertEqual(build_project_hints(proj, None), "项目：Lattice\n当前参数 pattern_type=回纹")

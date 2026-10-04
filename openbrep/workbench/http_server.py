@@ -104,6 +104,16 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
         return
 
     def _send(self, payload, status: int | None = None) -> None:
+        # P1-A：二进制载荷 (data, mime) → 原样字节响应（参考图资产读取）
+        if isinstance(payload, tuple) and len(payload) == 2 and isinstance(payload[0], (bytes, bytearray)):
+            data, mime = payload
+            self.send_response(status or 200)
+            self.send_header("Content-Type", mime or "application/octet-stream")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         # generator / iterator → SSE 流式响应
         if hasattr(payload, "__iter__") and not isinstance(payload, (dict, list, str, bytes)):
             self._send_stream(payload)

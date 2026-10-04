@@ -3,6 +3,9 @@ import type { FormEvent, KeyboardEvent } from 'react'
 import type { AssistantImageAttachment, AssistantMessage, CodexModelInfo, DeliveryPresentation, LlmModelOption, LlmSettings, ModifyAcceptance, PendingExtraction, PendingPlan, SkillProposal, VerificationReport, VisionExtraction, WorkspaceInfo } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { attachmentLabel, isImagePathText, MAX_ASSISTANT_IMAGES, validateAssistantImageFile } from './assistantImage'
+import { AssistantMarkdown } from './AssistantMarkdownView'
+import { AssistantReferenceGallery, assistantMessageImages } from './AssistantReferenceGallery'
+import { adoptReference, fetchSelectedReferences, setReferenceSelection } from '../api/client'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
 import { DeliveryCard, shouldSuppressAutoFixLabel } from './DeliveryCard'
 import { ExtractionCardList, ExtractionConfirmCard } from './ExtractionCard'
@@ -115,8 +118,32 @@ export function AssistantPanel({
   const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [selectedMessages, setSelectedMessages] = useState<Set<number>>(new Set())
+  // P0-B/P1-A：当前采用的执行参考图（显式选择；渲染图片不自动成为参考）。
+  // 采用动作经后端取回为会话参考资产（hash + 状态），下一轮执行注入允许列表。
+  const [adoptedReference, setAdoptedReference] = useState<{ id: string; url: string } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void fetchSelectedReferences().then((assets) => {
+      if (cancelled || !assets.length) return
+      const latest = assets[assets.length - 1]
+      setAdoptedReference({ id: latest.id, url: latest.url })
+    })
+    return () => { cancelled = true }
+  }, [])
   const t = useT()
   const { confirm, dialogNode } = useThemedDialog()
+
+  async function adoptGalleryReference(url: string | null, alt: string) {
+    if (!url) {
+      if (adoptedReference) {
+        setAdoptedReference(null)
+        void setReferenceSelection(adoptedReference.id, false)
+      }
+      return
+    }
+    const result = await adoptReference(url, alt)
+    if (result.ok && result.asset) setAdoptedReference({ id: result.asset.id, url: url })
+  }
 
   async function deleteSelectedMessages() {
     if (!selectedMessages.size || !onDeleteMessages) return
@@ -442,12 +469,26 @@ export function AssistantPanel({
                   </em>
                 ) : null}
               </span>
-              <p>{message.content}</p>
+              {message.role === 'assistant' ? (
+                <>
+                  <AssistantMarkdown content={message.content} />
+                  <AssistantReferenceGallery
+                    images={assistantMessageImages(message.content)}
+                    adoptedUrl={adoptedReference?.url ?? null}
+                    onAdopt={(url, alt) => void adoptGalleryReference(url, alt)}
+                  />
+                </>
+              ) : (
+                <p>{message.content}</p>
+              )}
               {message.advisor && <details><summary>只读建议 · 未修改项目</summary>
                 {message.advisor.inspection?.checks.map((check) => <p key={check.kind}>
                   {({ static: '静态检查', parameters: '参数声明', preview_2d: '2D预览', preview_3d: '3D预览', recent_verification: '已有验证' } as Record<string, string>)[check.kind] ?? check.kind}：
                   {({ completed: '已检查', partial: '部分覆盖', unavailable: '不可用', not_requested: '本轮未检查' } as Record<string, string>)[check.status] ?? check.status}
                 </p>)}
+                {message.advisor.omitted_sections?.length ? (
+                  <p className="assistant-advisor-omitted">⚠️ 本轮上下文覆盖不足（未送入模型：{message.advisor.omitted_sections.join('、')}）；AI 结论可能缺少依据，具体修改请先补看相关内容。</p>
+                ) : null}
               </details>}
               {message.advisor?.proposals?.map((proposal) => <div className="plan-confirm-card" key={proposal.proposal_id}>
                 <strong>{proposal.title}</strong><p>{proposal.goal}</p>
@@ -825,6 +866,11 @@ function AcceptanceCard({ acceptance }: { acceptance: ModifyAcceptance }) {
   return (
     <div className="acceptance-card">
       <strong className="acceptance-title">{t('assistant.acceptance.title')}</strong>
+      {acceptance.effect && acceptance.effect.status !== 'satisfied' ? (
+        <p className={`acceptance-effect effect-${acceptance.effect.status}`}>
+          ❌ 目标效果（{acceptance.effect.change_kind}）未达成：{acceptance.effect.reason}
+        </p>
+      ) : null}
       {acceptance.summary_lines?.length ? (
         <ul className="acceptance-summary">
           {acceptance.summary_lines.map((line, i) => (
@@ -1158,7 +1204,7 @@ function AssistantHistoryDrawer({
                 <span>{message.role === 'user' ? '你' : 'OpenBrep'}</span>
                 <em>#{index + 1}</em>
               </div>
-              <p>{message.content}</p>
+              <AssistantMarkdown content={message.content} />
               {message.role === 'assistant' && message.content.includes('```') ? (
                 <button
                   type="button"

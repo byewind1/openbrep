@@ -191,8 +191,13 @@ class ModifyToolRegistry:
         apply_changes: Callable[[HSFProject, dict[str, str]], None],
         on_event: Optional[Callable] = None,
         on_before_write: Optional[Callable[[], None]] = None,
+        effect_contract: Optional[dict] = None,
     ) -> None:
         self.project = project
+        # P1-C：显式效果契约（GUI 传入）。仅在有契约时 preview_geometry 才
+        # 附加几何签名/连通分量行——无契约路径的工具文本逐字节不变
+        # （benchmark 语料安全，不需重录）。
+        self.effect_contract = effect_contract
         self.compiler = compiler
         self.output_gsm = output_gsm
         # 复用 GDLAgent._apply_changes 的参数表/脚本落盘语义，不复制其逻辑
@@ -801,6 +806,7 @@ class ModifyToolRegistry:
 
     def _preview_geometry(self, _args: dict) -> ToolExecutionResult:
         from openbrep.gdl_previewer import preview_3d_script
+        from openbrep.runtime.effect_contract import compute_geometry_signature, count_mesh_components
         from openbrep.workbench.project_parameter_service import parameter_values
 
         script_3d = self.project.get_script(ScriptType.SCRIPT_3D) or ""
@@ -823,6 +829,17 @@ class ModifyToolRegistry:
             )
         else:
             parts.append("包围盒：无（几何为空）")
+        # P1-C：几何签名 + 连通分量数——模型可据此发现"同数量不同形态"
+        # 与"棂条断开"类问题。仅显式契约在场时附加（prompt 语料安全）。
+        signature = compute_geometry_signature(result.meshes) if self.effect_contract else None
+        components = count_mesh_components(result.meshes) if self.effect_contract else None
+        data = {"mesh_count": len(result.meshes)}
+        if signature:
+            parts.append(f"几何签名：{signature}（可与修改前/参考状态对比）")
+            data["geometry_signature"] = signature
+        if components is not None:
+            parts.append(f"连通组件数：{components}" + ("（注意：多个组件互不相连）" if components > 1 else ""))
+            data["mesh_components"] = components
         if result.warnings:
             parts.append("预览警告：\n" + "\n".join(f"- {w}" for w in result.warnings[:5]))
         self.on_event("status", {"stage": "preview", "message": f"📐 几何预览：{parts[0]}"})
@@ -830,7 +847,7 @@ class ModifyToolRegistry:
             name="preview_geometry",
             ok=bool(result.meshes),
             summary=_truncate("\n".join(parts)),
-            data={"mesh_count": len(result.meshes)},
+            data=data,
         )
 
 

@@ -280,5 +280,37 @@ class TestErrorLearning(unittest.TestCase):
             self.assertNotIn("第80", prompt)
 
 
+class TestChatTranscriptTimestamps(unittest.TestCase):
+    """P2：transcript 保存不得覆盖消息自带创建时间（历史时序可还原）。"""
+
+    def test_rewrite_preserves_message_timestamps(self):
+        import tempfile
+
+        from openbrep.learning import ErrorLearningStore
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ErrorLearningStore(tmpdir)
+            count = store.rewrite_chat_transcript([
+                {"role": "user", "content": "搜个回纹的图片", "timestamp": "2026-10-04T08:51:30"},
+                {"role": "assistant", "content": "参考图如下", "timestamp": "2026-10-04T08:51:58"},
+                {"role": "user", "content": "按建议修改"},  # 无时间戳 → 回退保存时刻
+            ], project_name="lattice", source="react_workbench")
+            self.assertEqual(count, 3)
+            entries = store.list_chat_transcript()
+            stamps = [e.timestamp for e in entries]
+            self.assertEqual(stamps[0], "2026-10-04T08:51:30")
+            self.assertEqual(stamps[1], "2026-10-04T08:51:58")
+            self.assertTrue(stamps[2])
+            # 再次全量保存（刷新后前端重发）：带时间戳的条目不被覆盖
+            store.rewrite_chat_transcript([
+                {"role": "user", "content": "搜个回纹的图片", "timestamp": "2026-10-04T08:51:30"},
+                {"role": "assistant", "content": "参考图如下", "timestamp": "2026-10-04T08:51:58"},
+                {"role": "user", "content": "按建议修改", "timestamp": "2026-10-04T08:53:00"},
+            ], project_name="lattice", source="react_workbench")
+            entries = store.list_chat_transcript()
+            stamps = [e.timestamp for e in entries]
+            self.assertEqual(stamps, ["2026-10-04T08:51:30", "2026-10-04T08:51:58", "2026-10-04T08:53:00"])
+
+
 if __name__ == "__main__":
     unittest.main()

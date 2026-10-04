@@ -61,7 +61,9 @@ function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem {
   if (message.role === 'assistant' && (message.delivery || message.deliverySource || message.changedFiles?.length)) {
     if (!('delivery' in meta)) meta.delivery = null
   }
-  return { role: message.role, content: message.content, meta: Object.keys(meta).length ? meta : undefined }
+  // P2：消息创建时间透传——历史保存不再把全部时间戳覆盖为保存时刻
+  const timestamp = message.createdAt ? new Date(message.createdAt).toISOString() : undefined
+  return { role: message.role, content: message.content, timestamp, meta: Object.keys(meta).length ? meta : undefined }
 }
 
 /**
@@ -418,8 +420,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     const history = buildAssistantHistory(get().assistantMessages)
     set((state) => ({ assistantBusy: true, chatAbortController: controller, pendingDeliveryContinue: null,
       assistantMessages: [...state.assistantMessages,
-        { role: 'user', content: userMessageContent(message, images), images: images.length ? images : undefined },
-        { role: 'assistant', content: ASSISTANT_PENDING_PREFIX }],
+        { role: 'user', content: userMessageContent(message, images), images: images.length ? images : undefined, createdAt: Date.now() },
+        { role: 'assistant', content: ASSISTANT_PENDING_PREFIX, createdAt: Date.now() }],
     }))
     const prepare = () => api.conversationTurn({ phase: 'prepare', client_turn_id: crypto.randomUUID(),
       message, history, images, requested_mode: proposal?.action === 'select' ? 'consult' : requestedMode, project_epoch: epoch,

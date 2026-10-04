@@ -128,6 +128,10 @@ class WorkbenchSession:
         self.skill_proposal_service = SkillProposalService(self)
         self.copilot_service = WorkbenchCopilotService(self)
         self.memory_service = WorkbenchMemoryService(self)
+        from openbrep.workbench.reference_service import WorkbenchReferenceService
+
+        # P1-A：会话参考图资产（搜索—整理—选图—执行闭环；唯一写入入口是显式 adopt）
+        self.reference_service = WorkbenchReferenceService(self)
         default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
         self.tapir = WorkbenchTapirAdapter(
             tapir_import_ok=default_import_ok if tapir_import_ok is None else tapir_import_ok,
@@ -423,6 +427,27 @@ class WorkbenchSession:
         """计划确认门：approve 后带已确认计划执行（stream 走 SSE）；拒绝/无 pending 各自返回。"""
         return self.assistant_service.confirm_modify(body)
 
+    def _reference_route(self, normalized_method: str, route: str, body: dict[str, Any]) -> Any:
+        """P1-A：参考图资产路由（adopt / select / list / bytes）。"""
+        service = self.reference_service
+        if normalized_method == "POST" and route == "/api/references/adopt":
+            return service.adopt(body)
+        if normalized_method == "POST" and route == "/api/references/select":
+            return service.set_selection(body)
+        if normalized_method == "POST" and route == "/api/references/clear":
+            service.clear()
+            return {"ok": True}
+        if normalized_method == "GET" and route == "/api/references":
+            selected_only = str(body.get("selected") or "").lower() in {"1", "true"}
+            return {"ok": True, "assets": service.list_assets(selected_only=selected_only)}
+        if normalized_method == "GET" and route.startswith("/api/references/"):
+            asset_id = route.rsplit("/", 1)[-1]
+            stored = service.asset_bytes(asset_id)
+            if stored is None:
+                return {"ok": False, "error": "参考资产不存在或字节缺失"}
+            return stored
+        return {"ok": False, "error": f"Unknown reference route: {normalized_method} {route}"}
+
     def _knowledge_status(self) -> dict[str, Any]:
         """Return current knowledge base status (Free/Pro doc counts and path info)."""
         try:
@@ -715,6 +740,10 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/assistant/turn":
             return self.conversation_service.route(body)
+
+        # P1-A：参考图资产（adopt 取回/采用、选择状态、列表、字节读取）
+        if route == "/api/references" or route.startswith("/api/references/"):
+            return self._reference_route(normalized_method, route, body)
 
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)

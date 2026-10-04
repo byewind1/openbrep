@@ -72,7 +72,16 @@ def reduce_intent(state: dict, event: dict) -> dict:
             run_id = assistant.get('run_id')
             changed = assistant.get('changed_files') or []
             complete = bool(result.get('ok') and run_id and source and source.get('run_id') == run_id and changed and verification.get('passed') is True)
-            task.update(state='completed' if complete else ('failed' if not result.get('ok') or verification.get('passed') is False else 'incomplete'),
+            # P0-A：显式效果契约未达成（no_effect）时任务不得关闭为 completed，
+            # 也不降级成 failed——真实文件变化已交付，只是目标效果未观察到，
+            # 保持 incomplete 让模型/用户可继续针对未满足项推进。
+            # acceptance 位置：统一入口在 assistant.acceptance；pipeline 直连在 metadata.acceptance。
+            acceptance = (assistant.get('acceptance') or (result.get('metadata') or {}).get('acceptance') or {})
+            effect = acceptance.get('effect') or {}
+            effect_blocked = bool(effect.get('required')) and not effect.get('satisfied')
+            if effect_blocked:
+                complete = False
+            task.update(state='completed' if complete else ('failed' if not result.get('ok') or (verification.get('passed') is False and not effect_blocked) else 'incomplete'),
                         run_id=run_id, delivery_ref=copy.deepcopy(source))
             if complete:
                 for c in next_state['constraints']:

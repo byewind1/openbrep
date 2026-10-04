@@ -224,6 +224,9 @@ class TaskRequest:
     credential_scope: str = ""
     execution_policy: Optional[dict] = None
     conversation_context: Optional[dict] = None
+    # P0-A：显式执行效果契约（GUI/调用方传入；None = 不判定，CLI/benchmark
+    # 语义不变）。normalize 后进入 acceptance/verification 的 effect 门。
+    effect_contract: Optional[dict] = None
 
 
 @dataclass
@@ -1181,6 +1184,12 @@ class TaskPipeline:
                     plans = [ModelingPlan.from_dict(entry) for entry in confirmed]
                 else:
                     on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
+                    # P1-B：显式效果契约存在时注入项目领域提示（GUI 门控，
+                    # benchmark/CLI 不传 → 分型与 prompt 与基线逐字节一致）。
+                    from openbrep.vision.harness import build_project_hints
+                    from openbrep.runtime.effect_contract import normalize_effect_contract
+
+                    contract = normalize_effect_contract(getattr(request, "effect_contract", None))
                     plans = vision_harness_run(
                         multi_images,
                         request.intent,
@@ -1191,6 +1200,9 @@ class TaskPipeline:
                         # D5：Codex 图片通道——提取/critic 的视觉调用带
                         # codex kwargs（无图/非 codex 时为空 → 现有行为逐字节不变）。
                         llm_kwargs=codex_kwargs or None,
+                        project_hints=(
+                            build_project_hints(request.project, contract) if contract else ""
+                        ),
                     )
                 # P5d-1：plans 序列化进 metadata（设计 D7 存储 + 前端只读卡片数据源）。
                 # 每图一条：schema/fields/confidence/corrections/降级标记 + sha256；
@@ -2165,6 +2177,7 @@ class TaskPipeline:
 
         # 确定性验收摘要（不调 LLM）：参数变更 + 前后几何对比 + 验证结论
         from openbrep.runtime.modify_acceptance import build_modify_acceptance
+        from openbrep.runtime.effect_contract import normalize_effect_contract
         acceptance = build_modify_acceptance(
             before=before_preview,
             after=after_preview,
@@ -2174,6 +2187,7 @@ class TaskPipeline:
             semantic_issues=semantic_issues,
             revision_id=_revision_id,
             revision_warnings=revision_warnings,
+            effect_contract=normalize_effect_contract(getattr(request, "effect_contract", None)),
         )
 
         output_parts = [
@@ -2422,6 +2436,7 @@ class TaskPipeline:
             build_modify_acceptance,
             preview_geometry_summary,
         )
+        from openbrep.runtime.effect_contract import normalize_effect_contract
         after_preview = preview_geometry_summary(project)
         acceptance = build_modify_acceptance(
             before=before_preview,
@@ -2439,6 +2454,7 @@ class TaskPipeline:
             semantic_issues=semantic_issues,
             revision_id=outcome.revision_id,
             revision_warnings=outcome.warnings,
+            effect_contract=normalize_effect_contract(getattr(request, "effect_contract", None)),
         )
 
         output_parts = [

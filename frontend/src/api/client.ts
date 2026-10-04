@@ -1631,3 +1631,51 @@ export async function conversationTurn(
   })
   return readAssistantStream(response, onEvent, signal)
 }
+
+// ── P1-A：参考图资产（搜索—整理—选图—执行闭环） ─────────────
+
+export interface ReferenceAssetInfo {
+  id: string
+  url: string
+  alt: string
+  source_url: string
+  mime: string
+  sha256: string
+  size: number
+  selected: boolean
+  region: string
+  project_epoch: number
+  error: string
+}
+
+export interface ReferenceAdoptResult {
+  ok: boolean
+  asset?: ReferenceAssetInfo
+  error?: string
+}
+
+/** 采用一张参考图：后端取回字节（约束内）、hash、入会话资产区并标记选中。 */
+export async function adoptReference(url: string, alt = ''): Promise<ReferenceAdoptResult> {
+  return requestJson('/api/references/adopt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, alt }),
+  }, { ok: false, error: 'OpenBrep local API is not available.' })
+}
+
+export async function setReferenceSelection(id: string, selected: boolean): Promise<ReferenceAdoptResult> {
+  return requestJson('/api/references/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, selected }),
+  }, { ok: false, error: 'OpenBrep local API is not available.' })
+}
+
+export async function fetchSelectedReferences(): Promise<ReferenceAssetInfo[]> {
+  const result = await requestJson<{ ok: boolean; assets?: ReferenceAssetInfo[] }>(
+    '/api/references?selected=true',
+    { method: 'GET' },
+    { ok: false },
+  )
+  return result.assets ?? []
+}

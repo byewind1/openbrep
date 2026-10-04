@@ -17,14 +17,24 @@ from typing import Any, Optional
 
 from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 from openbrep.hsf_project import HSFProject, ScriptType
-from openbrep.workbench.project_parameter_service import to_preview_number
+from openbrep.runtime.effect_contract import (
+    compute_geometry_signature,
+    count_mesh_components,
+    evaluate_effect_contract,
+)
+from openbrep.workbench.project_parameter_service import parameter_values
 
 # ── 轻量几何摘要（只读消费预览，不改渲染器/返回结构） ──────
 
-def preview_geometry_summary(project: HSFProject) -> dict[str, Any]:
+def preview_geometry_summary(project: HSFProject, overrides: dict | None = None) -> dict[str, Any]:
     """对当前项目取 3D/2D 预览的轻量几何摘要；渲染异常时 available=False。
 
-    摘要只含小字段（计数 + 包围盒），不存大图/顶点数据。
+    摘要只含小字段（计数 + 包围盒 + 几何签名），不存大图/顶点数据。
+    参数状态必须与生产预览/模型工具一致（P0-A R1）：走统一的
+    parameter_values（保留 String/Boolean 参数，如 pattern_type="回纹"），
+    此前 to_preview_number 会把字符串参数整个丢掉，验收摘要观察到的几何
+    与正式预览/preview_geometry 工具不同（8 框 vs 16 网格事故）。
+    overrides：内存参数覆盖（new-option 分支验证用），不落盘。
     """
     summary: dict[str, Any] = {
         "available": False,
@@ -36,11 +46,7 @@ def preview_geometry_summary(project: HSFProject) -> dict[str, Any]:
         "circle_count": None,
         "arc_count": None,
     }
-    parameters = {
-        p.name.upper(): to_preview_number(p.value)
-        for p in project.parameters
-        if to_preview_number(p.value) is not None
-    }
+    parameters = parameter_values(project, overrides)
     errors: list[str] = []
 
     try:
@@ -78,6 +84,11 @@ def preview_geometry_summary(project: HSFProject) -> dict[str, Any]:
                 "min": [round(min(xs), 4), round(min(ys), 4), round(min(zs), 4)],
                 "max": [round(max(xs), 4), round(max(ys), 4), round(max(zs), 4)],
             }
+        # P0-A：规范化几何签名——等价源码改写稳定、真实顶点变化敏感、
+        # 同数量不同形态可区分（mesh_count/bbox 做不到）。
+        summary["geometry_signature"] = compute_geometry_signature(meshes)
+        # P1-C：连通分量数（require_connected 契约的可观察依据；不可算为 None）
+        summary["mesh_components"] = count_mesh_components(meshes)
     except Exception as exc:
         errors.append(f"3D 预览不可用：{exc}")
 
@@ -216,13 +227,16 @@ def build_modify_acceptance(
     semantic_issues: Optional[list[str]] = None,  # 阻塞几何语义问题 detail 列表
     revision_id: Optional[str] = None,
     revision_warnings: Optional[list[str]] = None,
+    effect_contract: Optional[dict] = None,  # P0-A 显式执行效果契约（None = 不判定）
 ) -> dict[str, Any]:
     """从结构化数据生成验收报告 dict（纯函数，不调 LLM）。
 
-    返回 {summary_lines[], geometry_delta, checks[]}：
+    返回 {summary_lines[], geometry_delta, checks[], effect?}：
     - summary_lines：中文模板句（参数变更 / 文件 / 几何变化）
     - geometry_delta：结构化前后对比（前端渲染双栏）
     - checks：编译 / 语义 / 版本快照 / 预览状态
+    - effect：显式契约传入时的目标效果判定（None = 调用方未声明目标，
+      完成门不因"看不见的目标"拦截——无上下文 CLI/benchmark 语义不变）
     """
     summary_lines: list[str] = []
 
@@ -249,6 +263,24 @@ def build_modify_acceptance(
         # 落盘）只随 changed_files 出现，零产出时必然为空，无需额外去重。
         geometry_lines = [ln for ln in geometry_lines if ln != "当前参数下几何未变化"]
     summary_lines.extend(geometry_lines)
+
+    # P0-A：显式效果契约判定。no_effect 时覆盖 geometry_delta 状态并显性
+    # 写入摘要——"已改文件但无形态效果"必须可见，不得被通用编译绿掩盖。
+    effect = evaluate_effect_contract(
+        effect_contract,
+        before=before,
+        after=after,
+        parameter_changes=parameter_changes,
+        changed_files=changed_files,
+    )
+    if effect is not None:
+        summary_lines.append(
+            ("✅ " if effect["satisfied"] else "❌ ")
+            + f"目标效果（{effect['change_kind']}）：{effect['reason']}"
+        )
+        if effect["status"] == "no_effect" and geometry_delta["status"] == "unchanged":
+            geometry_delta["status"] = "no_effect"
+            geometry_delta["reason"] = effect["reason"]
 
     checks: list[dict[str, str]] = []
     if compile_result is None:
@@ -296,6 +328,7 @@ def build_modify_acceptance(
         "summary_lines": summary_lines,
         "geometry_delta": geometry_delta,
         "checks": checks,
+        **({"effect": effect} if effect is not None else {}),
     }
 
 

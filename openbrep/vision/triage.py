@@ -55,13 +55,20 @@ def select_schema(
     user_input: str,
     schemas: Mapping[str, VisionSchema],
     default: str = "generic",
+    project_hints: str = "",
 ) -> str:
     """每任务选择一个提取 schema：用户显式指定（关键词命中）> generic 兜底。
 
     schemas: registry 的全部 schema（load_all_schemas() 返回，确定性排序）。
     命中顺序 = schemas 迭代顺序（registry 按文件名排序），首个命中即返回。
+    project_hints（P1-B R4）：项目领域上下文（项目名、当前纹样参数值、目标
+    分支等）——"漏窗回字纹按这个样式" 即使本轮没写"漏窗"，项目本身是漏窗
+    时也应命中 lattice schema。空字符串 = 现有行为逐字节不变（benchmark/CLI
+    不传，prompt 语料安全）；hints 只参与命中判定，不进入提取 prompt。
     """
     text = user_input or ""
+    if project_hints:
+        text = f"{text}\n{project_hints}"
     for name, schema in schemas.items():
         if name == default:
             continue

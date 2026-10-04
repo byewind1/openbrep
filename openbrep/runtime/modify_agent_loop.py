@@ -355,6 +355,10 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     budget = max(1, min(budget, MAX_AGENT_LOOP_BUDGET))
     messages[0]["content"] = (messages[0].get("content") or "") + _AGENT_LOOP_PROTOCOL.format(budget=budget)
 
+    # P0-A：显式效果契约 normalize（vision 块和验收门都消费；None = 不判定）
+    from openbrep.runtime.effect_contract import normalize_effect_contract
+    effect_contract = normalize_effect_contract(getattr(request, "effect_contract", None))
+
     # ── P5e：带图 MODIFY —— 简化档 Vision Harness + 提取复用（D10 system 层注入）──
     # 无图 → 全流程零变化（硬门禁）。有图 → S0 预处理（与 CREATE 同口径）→ 逐图
     # 分流：sha256 命中 load_extraction → ModelingPlan.from_dict 重建（零 vision
@@ -394,9 +398,15 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                         reused_from_model = str(stored.get("model") or "")
                     else:
                         # 未命中：只对这一张图跑简化档 harness（S0→S1→S2→S4，无 critic）
+                        # P1-B：显式契约（参考资产/目标分支）存在时注入项目领域提示，
+                        # 否则空串语义不变（benchmark/CLI prompt 语料安全）。
+                        from openbrep.vision.harness import build_project_hints
+
+                        hints = build_project_hints(project, effect_contract) if effect_contract else ""
                         plans = vision_harness_run(
                             [img], "MODIFY", request.user_input, llm,
                             on_event=on_event, critic_pass=False,
+                            project_hints=hints,
                         )
                         plan = plans[0] if plans else None
                         if plan is not None:
@@ -448,6 +458,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         output_gsm=gsm_path,
         apply_changes=agent._apply_changes,
         on_event=on_event,
+        effect_contract=effect_contract,
     )
     tools = registry.definitions()
 
@@ -721,6 +732,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         compile_result=compile_result,
         semantic_issues=[issue.detail for issue in semantic_result.blocking_issues],
         revision_id=before_revision_id or None,
+        effect_contract=effect_contract,
     )
 
     # diff 范围护栏（v1 advisory）：update_script 全量替换且变更行 > 50% 时警告
@@ -745,8 +757,15 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         auto_repair_info="",
         graph_powered=False,
         reserved_conflicts=detect_reserved_param_misuse(project),
+        effect_result=acceptance.get("effect"),
     )
     output_parts.append(verification_report.to_summary_text())
+    # P0-A：契约与判定进 metadata（working_intent/quality 消费；不进 prompt）
+    metadata_effect = None
+    if effect_contract is not None:
+        metadata_effect = dict(effect_contract)
+        if acceptance.get("effect") is not None:
+            metadata_effect["evaluation"] = acceptance["effect"]
 
     # ST02：验证后捕获源指纹；after 由 pipeline delivery finalizer 创建
     loop_metadata = _agent_loop_metadata(
@@ -769,6 +788,8 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         loop_metadata["verified_source_fingerprint"] = compute_source_fingerprint(project.root)
     except Exception:
         pass
+    if metadata_effect is not None:
+        loop_metadata["effect_contract"] = metadata_effect
 
     return TaskResult(
         success=verification_report.passed,

@@ -252,7 +252,7 @@ class WorkbenchConversationService:
         if self.last_context_fingerprint is not None and self.last_context_fingerprint != snapshot.context_fingerprint:
             self.working_intent = reduce_intent(self.working_intent, {'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
         self.last_context_fingerprint = snapshot.context_fingerprint
-        allowed = {'client_turn_id', 'message', 'history', 'images', 'image_b64', 'image_mime', 'requested_mode', 'project_epoch', 'draft_scripts', 'proposal_id', 'continue_from', 'proposal_action', 'assistant_settings', 'output_dir', 'project_name'}
+        allowed = {'client_turn_id', 'message', 'history', 'images', 'image_b64', 'image_mime', 'requested_mode', 'project_epoch', 'draft_scripts', 'proposal_id', 'continue_from', 'proposal_action', 'assistant_settings', 'output_dir', 'project_name', 'effect_contract'}
         turn = PreparedTurn(uuid.uuid4().hex, client_id, copy.deepcopy({k: v for k, v in body.items() if k in allowed}), policy, snapshot, self.clock())
         self.working_intent = reduce_intent(self.working_intent, {'kind': 'turn', 'message_id': turn.turn_id, 'message': message,
             'constraints': [c for c in policy.constraints if c in message], 'execute': policy.mode == 'execute' and not policy.error, 'task_intent': policy.task_intent})
@@ -421,6 +421,21 @@ class WorkbenchConversationService:
                    'execution_policy': {**turn.policy.to_dict(), 'mode': 'execute'},
                    '_turn_should_cancel': should_cancel, '_turn_on_event': emit,
                    'conversation_context': intent_context(self.working_intent)}
+        # P1-A：执行注入已采用的参考资产（允许列表语义——模型不自取任意地址）。
+        # 下一轮无新附件也能拿到同一 hash 的图；轮 body 的 images（用户新附件）
+        # 优先，显式契约不被覆盖。no-attachment 续接"按图改"是本闭环的目标场景。
+        try:
+            reference_images = self.session.reference_service.execution_images()
+        except AttributeError:
+            reference_images = []
+        if reference_images and not request.get('images') and not request.get('image_b64'):
+            request['images'] = reference_images
+            contract = request.get('effect_contract') if isinstance(request.get('effect_contract'), dict) else {}
+            request['effect_contract'] = {
+                **contract,
+                'change_kind': contract.get('change_kind') or 'geometry',
+                'reference_asset_ids': [asset.id for asset in self.session.reference_service.selected_assets()],
+            }
         try:
             request['assistant_settings'] = gui_instruction(str(turn.body.get('assistant_settings') or self.session.assistant_settings), request['conversation_context'])
         except ValueError:

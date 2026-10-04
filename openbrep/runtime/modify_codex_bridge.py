@@ -713,6 +713,10 @@ class CodexModifyBridge:
             + _MODIFY_BRIDGE_PROTOCOL.format(budget=self.budget)
         )
 
+        # P0-A：显式效果契约 normalize（vision 块、preview 工具与验收门都消费）
+        from openbrep.runtime.effect_contract import normalize_effect_contract
+        self.effect_contract = normalize_effect_contract(getattr(request, "effect_contract", None))
+
         # ── HF2：带图 MODIFY —— 与 modify_agent_loop P5e 同口径的 hint 注入 ──
         # 无图 → 全流程零变化（硬门禁，wire 与基线逐字节一致）。有图 → 同一套
         # S0 预处理（resolve_and_preprocess）→ 逐图分流：sha256 命中
@@ -764,10 +768,19 @@ class CodexModifyBridge:
                             reused_from_model = str(stored.get("model") or "")
                         else:
                             # 未命中：只对这一张图跑简化档 harness（无 critic）
+                            # P1-B：显式契约存在时注入项目领域提示（GUI 门控）
+                            from openbrep.vision.harness import build_project_hints
+
+                            hints = (
+                                build_project_hints(project, self.effect_contract)
+                                if self.effect_contract
+                                else ""
+                            )
                             plans = vision_harness_run(
                                 [img], "MODIFY", request.user_input, llm,
                                 on_event=self.on_event, critic_pass=False,
                                 llm_kwargs=codex_kwargs,
+                                project_hints=hints,
                             )
                             plan = plans[0] if plans else None
                             if plan is not None:
@@ -832,6 +845,7 @@ class CodexModifyBridge:
 
         self.registry = ModifyToolRegistry(
             project=project,
+            effect_contract=self.effect_contract,
             compiler=compiler,
             output_gsm=self.gsm_path,
             apply_changes=agent._apply_changes,
@@ -1236,6 +1250,7 @@ class CodexModifyBridge:
             changed_files=list(self.registry.changed_files.keys()),
             compile_result=compile_result,
             semantic_issues=[i.detail for i in semantic_result.blocking_issues],
+            effect_contract=self.effect_contract,
         )
 
         diff_warnings, diff_ratios = self.registry.diff_scope_warnings()
@@ -1258,6 +1273,7 @@ class CodexModifyBridge:
             auto_repair_info="",
             graph_powered=False,
             reserved_conflicts=detect_reserved_param_misuse(self.project),
+            effect_result=acceptance.get("effect"),
         )
         output_parts.append(verification_report.to_summary_text())
 
@@ -1315,6 +1331,12 @@ class CodexModifyBridge:
         # schema/fields/confidence/skipped，前端只读卡片数据源；无图不写）
         if self.vision_extractions:
             metadata["vision_extractions"] = self.vision_extractions
+        # P0-A：契约与判定进 metadata（working_intent/quality 消费；不进 prompt）
+        if self.effect_contract is not None:
+            metadata_effect = dict(self.effect_contract)
+            if acceptance.get("effect") is not None:
+                metadata_effect["evaluation"] = acceptance["effect"]
+            metadata["effect_contract"] = metadata_effect
         # ST02：验证后捕获源指纹；after 由 pipeline delivery finalizer 绑定
         try:
             from openbrep.source_fingerprint import compute_source_fingerprint

@@ -96,13 +96,14 @@ class TestModifyVisionHarness(_TempDirMixin, unittest.TestCase):
 
         original_run = harness_module.run
 
-        def spy_run(images, intent, user_input, llm, on_event=None, critic_pass=True):
+        def spy_run(images, intent, user_input, llm, on_event=None, critic_pass=True, project_hints=""):
             calls.append({
                 "intent": intent,
                 "critic_pass": critic_pass,
                 "n_images": len(images),
+                "project_hints": project_hints,
             })
-            return original_run(images, intent, user_input, llm, on_event=on_event, critic_pass=critic_pass)
+            return original_run(images, intent, user_input, llm, on_event=on_event, critic_pass=critic_pass, project_hints=project_hints)
 
         mock_llm = MockLLM(responses=[
             _GENERIC_JSON,  # generic 提取（analyze_reference_image 走 llm.generate）

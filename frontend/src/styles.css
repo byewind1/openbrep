@@ -2161,6 +2161,174 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+/* ── P0-B：助手 Markdown 渲染（受限子集，无 HTML 注入面） ── */
+.assistant-md p,
+.assistant-md ul,
+.assistant-md ol {
+  margin: 0 0 6px;
+}
+.assistant-md ul,
+.assistant-md ol {
+  padding-left: 18px;
+}
+.assistant-md code {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 12px;
+}
+.assistant-md-code {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  margin: 0 0 6px;
+}
+.assistant-md-code code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.assistant-md-link {
+  color: var(--accent, #4c8dff);
+  text-decoration: underline;
+  word-break: break-all;
+}
+.assistant-md-link-unsafe {
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+/* Markdown 图片 → 参考图卡（缩略 + 点击大图 + 失败态） */
+.assistant-ref-image {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 6px 4px 0;
+  max-width: 200px;
+  vertical-align: top;
+}
+.assistant-ref-image-thumb {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: zoom-in;
+  background: var(--bg-card);
+}
+.assistant-ref-image-thumb img {
+  display: block;
+  max-width: 200px;
+  max-height: 140px;
+  object-fit: cover;
+}
+.assistant-ref-image figcaption {
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+.assistant-ref-image-failed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+.assistant-ref-image-url {
+  opacity: 0.7;
+}
+
+/* P0-B：点击大图 */
+.assistant-md-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+.assistant-md-lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* P0-B：可展开参考图库（并排比较 + 采用） */
+.assistant-reference-gallery {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+.assistant-reference-gallery summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+.assistant-reference-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 4px 10px 10px;
+}
+.assistant-reference-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 168px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.assistant-reference-item.is-adopted {
+  border-color: var(--accent, #4c8dff);
+  box-shadow: 0 0 0 1px var(--accent, #4c8dff);
+}
+.assistant-reference-thumb img {
+  display: block;
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.assistant-reference-item figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.assistant-reference-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant-reference-adopt {
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.assistant-reference-item.is-adopted .assistant-reference-adopt {
+  border-color: var(--accent, #4c8dff);
+  color: var(--accent, #4c8dff);
+}
+
 .assistant-input-wrap {
   position: relative;
 }
@@ -5386,3 +5554,14 @@ button:focus-visible {
 
 .settings-modal fieldset { min-width: 0; margin: 0; border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
 .settings-row input[type='checkbox'] { width: 16px; height: 16px; justify-self: start; accent-color: var(--accent); }
+
+.assistant-advisor-omitted {
+  color: var(--warning, #b8860b);
+  font-size: 12px;
+}
+
+.acceptance-effect {
+  margin: 6px 0 2px;
+  font-weight: 600;
+  color: var(--danger, #e5484d);
+}

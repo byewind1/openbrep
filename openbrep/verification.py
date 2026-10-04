@@ -90,11 +90,13 @@ class VerificationReport:
 
         Blocking = static / compile / plan_check that ran. UNKNOWN and
         NOT_RUN do not fail the report (they lower confidence instead).
+        effect_contract（P0-A）：显式效果契约判定为 no_effect 时阻断交付
+        （"已改文件但无形态效果"不算完成）；unverifiable 不阻断但降级。
         """
         for c in self.checks:
             if c.status == CheckStatus.FAIL and c.check_type in (
                 "static", "compile", "plan_check", "semantic", "reserved_param_semantic_bug",
-                "project_contract",
+                "project_contract", "effect_contract",
             ):
                 return False
         return True
@@ -208,6 +210,14 @@ class VerificationReport:
             lines.append(
                 f"- 项目合同：{_status_icon(contract_chk.status)} "
                 f"{contract_chk.detail or contract_chk.status.value}"
+            )
+
+        effect_chk = _find(self.checks, "effect_contract")
+        if effect_chk:
+            # P0-A：通用编译通过与目标效果分开呈现——编译绿不代表按图完成。
+            lines.append(
+                f"- 目标效果：{_status_icon(effect_chk.status)} "
+                f"{effect_chk.detail or effect_chk.status.value}"
             )
 
         plan_checks = [c for c in self.checks if c.check_type == "plan_check"]
@@ -377,6 +387,7 @@ def build_verification_report(
     graph_powered: bool = False,
     reserved_conflicts: list | None = None,
     enable_delivery_integrity: Optional[bool] = None,
+    effect_result: Optional[dict] = None,
 ) -> VerificationReport:
     """Aggregate scattered checks into one :class:`VerificationReport`.
 
@@ -387,6 +398,10 @@ def build_verification_report(
     run CREATE 专属交付完整性检查——3D 脚本为空或仍为 create_new 占位脚本
     （placeholder_delivery）、paramlist 缺 A/B/ZZYZX（reserved_params_missing），
     均以 static FAIL 阻断。默认 None = 不启用（MODIFY 老项目打开即改是合法场景）。
+
+    ``effect_result`` (P0-A)：effect_contract.evaluate_effect_contract 的输出
+    （显式契约判定，None = 调用方未声明目标 → 不产生该检查，完成门不变）。
+    no_effect → effect_contract FAIL（blocking）；unverifiable → UNKNOWN。
     """
     report = VerificationReport(
         intent=intent,
@@ -394,6 +409,30 @@ def build_verification_report(
         graph_powered=graph_powered,
     )
     checks: list[VerificationCheck] = []
+
+    # 0. P0-A 目标效果（显式契约）：no_effect 阻断，unverifiable 如实降级。
+    # 通用编译通过 ≠ 用户目标完成——两者在报告里分开呈现。
+    if effect_result is not None and effect_result.get("required"):
+        status = {
+            "satisfied": CheckStatus.PASS,
+            "no_effect": CheckStatus.FAIL,
+            "shape_check_failed": CheckStatus.FAIL,
+            "unverifiable": CheckStatus.UNKNOWN,
+        }.get(effect_result.get("status"), CheckStatus.UNKNOWN)
+        detail = effect_result.get("reason") or (
+            "目标效果达成" if status == CheckStatus.PASS else "目标效果未验证"
+        )
+        checks.append(VerificationCheck(
+            name="目标效果", check_type="effect_contract", status=status, detail=detail,
+        ))
+        if status == CheckStatus.FAIL:
+            report.errors_caught.append(
+                f"[effect_no_effect] {detail}"
+            )
+        elif status == CheckStatus.UNKNOWN:
+            report.warnings_caught.append(
+                f"[effect_unverified] {detail}"
+            )
 
     # 1. plan validation checks (executed from natural language)
     plan_checks = run_plan_validation_checks(object_plan, project, static_result)

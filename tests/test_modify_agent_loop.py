@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from openbrep.compiler import MockHSFCompiler
 from openbrep.config import GDLAgentConfig
@@ -840,3 +841,85 @@ class TestAgentLoopBeforeRevision(unittest.TestCase):
         pipeline.execute(_make_request(proj, self.tmp))
 
         self.assertFalse((Path(proj.root) / ".openbrep" / "revisions").exists())
+
+
+class TestEffectContractGate(unittest.TestCase):
+    """P0-A：显式效果契约（request.effect_contract）——"改了文件但无形态效果"
+    不得作为成功交付；无契约时语义完全不变（CLI/benchmark 回归保障）。"""
+
+    def setUp(self):
+        import tempfile
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)  # noqa: Path imported at module top
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _request(self, project, **overrides):
+        kwargs = dict(
+            user_input="把回纹改成连续方折样式", intent="MODIFY", project=project,
+            work_dir=str(self.tmp), output_dir=str(self.tmp / "out"),
+            gsm_name=project.name, agent_loop=True,
+        )
+        kwargs.update(overrides)
+        return TaskRequest(**kwargs)
+
+    def test_no_effect_delivery_blocked(self):
+        """等效改写（几何签名不变）+ 契约 geometry → success=False，
+        验收报告含 no_effect 判定，metadata 记录契约与评估。"""
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "update_script", "arguments": {
+                "file_path": "scripts/3d.gdl",
+                "content": "! 仅调整注释与等价写法\nBLOCK A, B, ZZYZX\nEND\n",
+            }}]},
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            "已按参考图改为连续方折。",
+        ])
+        project = _make_project(self.tmp)
+        project.save_to_disk()
+        result = _make_pipeline(mock_llm, self.tmp).execute(
+            self._request(project, effect_contract={"change_kind": "geometry",
+                                                    "target_branch": "pattern_type=回纹"})
+        )
+        self.assertFalse(result.success)
+        acceptance = result.metadata["acceptance"]
+        self.assertEqual(acceptance["effect"]["status"], "no_effect")
+        self.assertEqual(result.metadata["effect_contract"]["change_kind"], "geometry")
+        self.assertEqual(result.metadata["effect_contract"]["evaluation"]["status"], "no_effect")
+        self.assertFalse(result.verification["passed"])
+        self.assertTrue(any(c["check_type"] == "effect_contract" and c["status"] == "fail"
+                            for c in result.verification["checks"]))
+        self.assertIn("目标效果", result.plain_text)
+
+    def test_real_geometry_change_satisfies_contract(self):
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "update_script", "arguments": {
+                "file_path": "scripts/3d.gdl",
+                "content": "BLOCK A * 0.5, B, ZZYZX\nEND\n",
+            }}]},
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            "几何已改变。",
+        ])
+        project = _make_project(self.tmp)
+        project.save_to_disk()
+        result = _make_pipeline(mock_llm, self.tmp).execute(
+            self._request(project, effect_contract={"change_kind": "geometry"})
+        )
+        self.assertTrue(result.success, result.plain_text)
+        self.assertEqual(result.metadata["acceptance"]["effect"]["status"], "satisfied")
+
+    def test_no_contract_keeps_legacy_success(self):
+        """无契约：同样的等效改写在 CLI/benchmark 语义下仍然 success（不误拦）。"""
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "update_script", "arguments": {
+                "file_path": "scripts/3d.gdl",
+                "content": "! 仅调整注释与等价写法\nBLOCK A, B, ZZYZX\nEND\n",
+            }}]},
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            "已调整。",
+        ])
+        project = _make_project(self.tmp)
+        project.save_to_disk()
+        result = _make_pipeline(mock_llm, self.tmp).execute(self._request(project))
+        self.assertTrue(result.success, result.plain_text)
+        self.assertNotIn("effect", result.metadata["acceptance"])

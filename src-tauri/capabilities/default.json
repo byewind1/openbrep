@@ -12,6 +12,7 @@
     "shell:allow-kill",
     "allow-app-version",
     "allow-open-releases-page",
+    "allow-open-external-url",
     "allow-updater-check",
     "allow-updater-download-and-install"
   ]
