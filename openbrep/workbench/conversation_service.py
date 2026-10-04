@@ -436,12 +436,20 @@ class WorkbenchConversationService:
         # 不来自"有没有图片/参考资产"（有图 ≠ 要求形状变化——材质/新增选项
         # 任务会被 geometry 门误拦）。确定性关键词推导（子句级否定过滤 +
         # 重构信号返回 None）；S2：续接型语句（"按你的建议修改"）继承
-        # working_intent 前文消息里的唯一明确目标——原始事故
+        # working_intent 前文消息里的最近明确目标——原始事故
         # "搜回纹图→按你的建议修改"由此重新进入效果门。显式契约（调用方
         # 传入）优先；推导不出明确意图 → 不设门，通用验证与用户复核兜底。
         if not request.get('effect_contract'):
             from openbrep.runtime.effect_contract import derive_change_kind
-            history_texts = tuple(
+            # A restarted backend has no message_refs yet. Restored user
+            # history supplies context, never assistant suggestions or authority.
+            restored_history = tuple(
+                entry['content']
+                for entry in (turn.body.get('history') or [])[-8:]
+                if isinstance(entry, dict) and entry.get('role') == 'user'
+                and isinstance(entry.get('content'), str)
+            )
+            history_texts = restored_history + tuple(
                 str(ref.get('text') or '')
                 for ref in self.working_intent.get('message_refs', [])[-8:]
                 if isinstance(ref, dict)

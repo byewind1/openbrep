@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { AssistantPanel } from './AssistantPanel'
 
@@ -975,9 +975,9 @@ describe('AssistantPanel reference adoption lifecycle (S3 deferred cancel)', () 
     const setSelection = client.setReferenceSelection as ReturnType<typeof vi.fn>
     fetchSelected.mockClear()
 
-    // A 恢复已有采用；B 无采用
+    // A、B 都有采用：迟到响应若误清 B，必须能被本用例发现。
     fetchSelected.mockResolvedValueOnce([{ id: 'ref_a', url: 'https://images.example.com/hw1.jpg' }])
-    fetchSelected.mockResolvedValueOnce([])
+    fetchSelected.mockResolvedValueOnce([{ id: 'ref_b', url: 'https://images.example.com/hw1.jpg' }])
     // A 的取消响应挂起（deferred），B 的恢复先完成
     let resolveCancel: (value: { ok: boolean }) => void = () => {}
     setSelection.mockImplementationOnce(() => new Promise((resolve) => { resolveCancel = resolve }))
@@ -989,16 +989,13 @@ describe('AssistantPanel reference adoption lifecycle (S3 deferred cancel)', () 
     fireEvent.click(screen.getByText(/参考图（1）/))
     fireEvent.click(screen.getByText('✓ 已采用'))  // 发起取消（挂起）
 
-    // 切到 B：恢复完成 → B 无采用 → UI 空
+    // 切到 B：恢复完成 → B 保持已采用
     rerender(<AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/B" />)
     await waitFor(() => expect(fetchSelected).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.getByText('采用')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('✓ 已采用')).toBeTruthy())
 
-    // A 的取消迟到 resolve：不得清掉 B 的 UI（B 本就无采用；守卫丢弃迟到响应）
-    resolveCancel({ ok: true })
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(screen.getByText('采用')).toBeTruthy()
+    await act(async () => { resolveCancel({ ok: true }) })
+    expect(screen.getByText('✓ 已采用')).toBeTruthy()
     expect(screen.queryByText(/取消采用失败/)).toBeNull()
   })
 
@@ -1010,9 +1007,9 @@ describe('AssistantPanel reference adoption lifecycle (S3 deferred cancel)', () 
 
     fetchSelected.mockResolvedValueOnce([{ id: 'ref_a', url: 'https://images.example.com/hw1.jpg' }])
     fetchSelected.mockResolvedValueOnce([])
-    let rejectCancel: (value: { ok: boolean; error?: string }) => void = () => {}
+    let resolveCancel: (value: { ok: boolean; error?: string }) => void = () => {}
     setSelection.mockImplementationOnce(
-      () => new Promise((resolve, reject) => { rejectCancel = reject }),
+      () => new Promise((resolve) => { resolveCancel = resolve }),
     )
 
     const { rerender } = render(
@@ -1025,9 +1022,8 @@ describe('AssistantPanel reference adoption lifecycle (S3 deferred cancel)', () 
     rerender(<AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/B" />)
     await waitFor(() => expect(fetchSelected).toHaveBeenCalledTimes(2))
 
-    rejectCancel({ ok: false, error: 'boom' })
-    await Promise.resolve()
-    await Promise.resolve()
+    // client 的失败契约是 resolve({ok:false})，不能制造未处理 rejection。
+    await act(async () => { resolveCancel({ ok: false, error: 'boom' }) })
     expect(screen.queryByText(/boom|取消采用失败/)).toBeNull()
   })
 })

@@ -521,6 +521,20 @@ class TestDeriveChangeKind(unittest.TestCase):
         """S1：肯定子句命中多个 kind（复合意图）→ None，不猜主目标。"""
         self.assertIsNone(derive_change_kind("把材质改成金属并把宽度改成2"))
 
+    def test_compound_objects_in_one_clause_are_not_a_single_goal(self):
+        self.assertIsNone(derive_change_kind("材质和形状一起改"))
+
+    def test_continuation_respects_current_keep_constraint(self):
+        self.assertIsNone(derive_change_kind(
+            "保持形状不变，按你的建议改", history_texts=("搜个回纹的图片参考一下",)))
+
+    def test_continuation_uses_latest_goal_not_unrelated_old_task(self):
+        self.assertEqual(derive_change_kind(
+            "按你的建议进行修改", history_texts=("把材质改为金属", "搜个回纹的图片参考一下")),
+            "geometry")
+        self.assertIsNone(derive_change_kind(
+            "继续", history_texts=("把回纹改成连续方折", "只重构代码，形状不变")))
+
     def test_continuation_inherits_unique_prior_goal(self):
         """S2（三轮 review）：续接语句继承前文唯一明确目标；歧义或无目标不继承。"""
         self.assertEqual(

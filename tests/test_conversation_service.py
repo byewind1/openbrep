@@ -514,3 +514,21 @@ def test_continuation_inherits_prior_goal_contract_and_blocks_no_effect(tmp_path
     tasks = conversation.working_intent['tasks']
     assert tasks[-1]['state'] == 'incomplete'
     assert result['ok'] is True  # 有产出照常交付，验证报告如实 FAIL
+
+
+def test_continuation_recovers_goal_from_restored_user_history(tmp_path):
+    """Backend 重启后仍须使用前端恢复的用户目标，而非只看当前短句。"""
+    import json
+    from openbrep.runtime.pipeline import TaskResult
+
+    session = _real_session(tmp_path, TaskResult(success=True, plain_text='done'))
+    session.conversation_service.semantic_decision = lambda payload: json.dumps(
+        {'mode': 'execute', 'task_intent': 'MODIFY', 'constraints': []})
+    ready = prepare(session, message='按你的建议进行修改', history=[
+        {'role': 'user', 'content': '搜个回纹的图片参考一下'},
+        {'role': 'assistant', 'content': '也可以改材质，但先按参考修回纹'},
+    ])
+    assert ready['result_kind'] == 'ready_to_execute', ready
+    session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    request = [p.request for p in _RecordingPipeline.captured if p.request is not None][-1]
+    assert request.effect_contract == {'change_kind': 'geometry'}

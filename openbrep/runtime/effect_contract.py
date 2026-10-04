@@ -398,7 +398,7 @@ _CONTINUATION_RE = re.compile(
     r"按[^，。;；！!？?]{0,12}(建议|图|参考|方案|计划)|按照|照你|如你所说|接着|继续|好的",
     re.IGNORECASE,
 )
-_CLAUSE_SPLIT_RE = re.compile(r"[，,。；;！!？?\n并而且]+")
+_CLAUSE_SPLIT_RE = re.compile(r"[，,。；;！!？?\n]+|并且|而且|但是|同时|并|但")
 # S2：观察类子句不构成修改目标——history 继承时排除以观察动词开头的
 # 子句（当轮消息不排除，保持 R2 口径："检查一下参数面板"当轮仍推导
 # parameter）；"搜个回纹的图片参考一下"这类带明确对象的请求保留。
@@ -407,21 +407,35 @@ _OBSERVATION_RE = re.compile(
 )
 
 
-def _kinds_in_text(text: str, *, exclude_inquiry: bool = False) -> set[str]:
+def _clause_kinds(clause: str) -> set[str]:
+    """Specific objects take precedence over generic '改成/改为' verbs.
+
+    A new option may name its geometry; that is still an option task. Multiple
+    other objects in one clause are ambiguous, rather than first-match wins.
+    """
+    kinds = {
+        kind for kind, matchers in _KIND_MATCHERS
+        if any(matcher.search(clause) for matcher in matchers)
+    }
+    if 'new-option' in kinds:
+        kinds.discard('geometry')
+    if len(kinds) > 1:
+        kinds.discard('parameter')
+    return kinds
+
+
+def _kinds_in_text(text: str, *, exclude_inquiry: bool = False, negated: bool = False) -> set[str]:
     """S1：按子句推导 kind——否定子句中的命中排除，不作为变化目标。"""
     kinds: set[str] = set()
     for clause in _CLAUSE_SPLIT_RE.split(text or ""):
         clause = clause.strip()
         if not clause:
             continue
-        if _NEGATION_RE.search(clause):
+        if bool(_NEGATION_RE.search(clause)) != negated:
             continue
         if exclude_inquiry and _OBSERVATION_RE.match(clause):
             continue
-        for kind, matchers in _KIND_MATCHERS:
-            if any(matcher.search(clause) for matcher in matchers):
-                kinds.add(kind)
-                break
+        kinds |= _clause_kinds(clause)
     return kinds
 
 
@@ -432,8 +446,8 @@ def derive_change_kind(message: str, history_texts: tuple[str, ...] = ()) -> Opt
       只在否定子句出现的 kind 不会被推导。
     - S1：重构/整理类任务与复合意图（肯定子句命中多个 kind）返回 None。
     - S2：当轮无命中且语句是续接型（"按你的建议/按图/继续"）时，回看
-      前文（working_intent.message_refs）——前文唯一明确的 kind 被继承；
-      前文无命中或多 kind 混合仍返回 None（歧义不强加门）。
+      前文（working_intent.message_refs）——最近明确目标被继承；
+      歧义/重构目标和本轮保持约束阻止继承，旧任务不干扰新目标。
     """
     body = message or ""
     if not body.strip():
@@ -441,15 +455,21 @@ def derive_change_kind(message: str, history_texts: tuple[str, ...] = ()) -> Opt
     if _REFACTOR_RE.search(body):
         return None
     kinds = _kinds_in_text(body)
+    prohibited = _kinds_in_text(body, negated=True)
     if len(kinds) > 1:
         return None
     if kinds:
-        return next(iter(kinds))
+        kind = next(iter(kinds))
+        return None if kind in prohibited else kind
     # S2：当轮无明确 kind——仅续接语句继承前文目标
     if history_texts and _CONTINUATION_RE.search(body):
-        history_kinds: set[str] = set()
-        for text in history_texts:
-            history_kinds |= _kinds_in_text(text, exclude_inquiry=True)
-        if len(history_kinds) == 1:
-            return next(iter(history_kinds))
+        for text in reversed(history_texts):
+            if _REFACTOR_RE.search(text):
+                return None
+            history_kinds = _kinds_in_text(text, exclude_inquiry=True)
+            if len(history_kinds) > 1:
+                return None
+            if history_kinds:
+                kind = next(iter(history_kinds))
+                return None if kind in prohibited else kind
     return None
