@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "source_notice": "全部为固定公共语法构造的合成脱敏快照，无个人项目源码或凭据；不以合成源冒充真实项目质量结论。",
+  "sources": {
+    "none": null,
+    "box": {
+      "guid": "00000000-0000-0000-0000-000000000001",
+      "scripts": {
+        "3d.gdl": "BLOCK A, B, ZZYZX\n",
+        "2d.gdl": "PROJECT2 3, 270, 2\n"
+      }
+    },
+    "invalid_if": {
+      "guid": "00000000-0000-0000-0000-000000000002",
+      "scripts": {
+        "3d.gdl": "IF A > 0 THEN\nBLOCK A, B, ZZYZX\n"
+      }
+    },
+    "macro": {
+      "guid": "00000000-0000-0000-0000-000000000003",
+      "scripts": {
+        "3d.gdl": "CALL \"PublicExampleMacro\"\n"
+      }
+    },
+    "values": {
+      "guid": "00000000-0000-0000-0000-000000000004",
+      "scripts": {
+        "3d.gdl": "BLOCK A, B, ZZYZX\n",
+        "vl.gdl": "VALUES \"A\" RANGE [0.5, 2.0]\n"
+      }
+    }
+  },
+  "questions": [
+    {
+      "id": "advisor_001",
+      "source": "box",
+      "message": "当前对象的宽高比显得笨重，有哪些优化思路？"
+    },
+    {
+      "id": "advisor_002",
+      "source": "box",
+      "message": "只解释A参数如何影响几何，不要修改。"
+    },
+    {
+      "id": "advisor_003",
+      "source": "box",
+      "message": "如果增加踢脚，参数应如何组织？"
+    },
+    {
+      "id": "advisor_004",
+      "source": "box",
+      "message": "薄板柜体应该用BLOCK还是PRISM？说说取舍。"
+    },
+    {
+      "id": "advisor_005",
+      "source": "box",
+      "message": "2D符号使用PROJECT2有哪些限制？"
+    },
+    {
+      "id": "advisor_006",
+      "source": "box",
+      "message": "如果需要门扇开启角度，参数化策略是什么？"
+    },
+    {
+      "id": "advisor_007",
+      "source": "box",
+      "message": "如何让热点可拖拽但避免破坏尺寸约束？"
+    },
+    {
+      "id": "advisor_008",
+      "source": "box",
+      "message": "只讨论材质参数的命名和组织。"
+    },
+    {
+      "id": "advisor_009",
+      "source": "box",
+      "message": "对象在不同尺度下保持可读性的思路是什么？"
+    },
+    {
+      "id": "advisor_010",
+      "source": "box",
+      "message": "是否应该拆分主脚本和子程序？请解释代价。"
+    },
+    {
+      "id": "advisor_011",
+      "source": "invalid_if",
+      "message": "只分析这段IF为什么报错，不修复。"
+    },
+    {
+      "id": "advisor_012",
+      "source": "invalid_if",
+      "message": "现有检查能证明几何正确吗？哪些没有覆盖？"
+    },
+    {
+      "id": "advisor_013",
+      "source": "invalid_if",
+      "message": "如何区分编译成功和语义验证通过？"
+    },
+    {
+      "id": "advisor_014",
+      "source": "macro",
+      "message": "CALL缺少依赖时，空预览能说明对象为空吗？"
+    },
+    {
+      "id": "advisor_015",
+      "source": "macro",
+      "message": "依赖宏使用GUID还是名称定位更稳妥？"
+    },
+    {
+      "id": "advisor_016",
+      "source": "macro",
+      "message": "只讨论宏的参数传递，不要创建宏文件。"
+    },
+    {
+      "id": "advisor_017",
+      "source": "values",
+      "message": "只解释VALUES RANGE对A参数有什么约束。"
+    },
+    {
+      "id": "advisor_018",
+      "source": "values",
+      "message": "静态VALUES声明能代表运行时全部枚举吗？"
+    },
+    {
+      "id": "advisor_019",
+      "source": "values",
+      "message": "如何兼容旧参数值与新增选项？"
+    },
+    {
+      "id": "advisor_020",
+      "source": "values",
+      "message": "怎样避免字符串值被当成数值表达式？"
+    },
+    {
+      "id": "advisor_021",
+      "source": "none",
+      "message": "PRISM_与EXTRUDE分别适合什么场景？"
+    },
+    {
+      "id": "advisor_022",
+      "source": "none",
+      "message": "什么时候使用TUBE而不是多个CYLIND？"
+    },
+    {
+      "id": "advisor_023",
+      "source": "none",
+      "message": "POLY2填充和轮廓位有哪些实现取舍？"
+    },
+    {
+      "id": "advisor_024",
+      "source": "none",
+      "message": "只讨论楼梯对象的参数化方案。"
+    },
+    {
+      "id": "advisor_025",
+      "source": "none",
+      "message": "保持A/B/ZZYZX语义正确有哪些原则？"
+    },
+    {
+      "id": "advisor_026",
+      "source": "none",
+      "message": "HSF为什么比单个GDL脚本更适合作为源格式？"
+    },
+    {
+      "id": "advisor_027",
+      "source": "none",
+      "message": "如何组织字符串枚举及其向后兼容？"
+    },
+    {
+      "id": "advisor_028",
+      "source": "none",
+      "message": "BINARY几何和参数化命令各有什么限制？"
+    },
+    {
+      "id": "advisor_029",
+      "source": "none",
+      "message": "曲面细分提高后，如何评估性能代价？"
+    },
+    {
+      "id": "advisor_030",
+      "source": "none",
+      "message": "只讨论端面圆角的几何策略和退化风险。"
+    }
+  ],
+  "multi_rounds": [
+    {
+      "id": "multi_001",
+      "source": "box",
+      "messages": [
+        "只讨论加背板方案，不改宽度。",
+        "讲讲两种方案的重量取舍。",
+        "我更喜欢轻量方案，仍然只讨论。"
+      ]
+    },
+    {
+      "id": "multi_002",
+      "source": "values",
+      "messages": [
+        "只分析当前比例。",
+        "我说的是高度不是宽度，先别修改。",
+        "总结仍未验证的假设。"
+      ]
+    },
+    {
+      "id": "multi_003",
+      "source": "macro",
+      "messages": [
+        "讲讲热点拖拽。",
+        "本轮不新增参数。",
+        "哪些做法会破坏现有约束？"
+      ]
+    },
+    {
+      "id": "multi_004",
+      "source": "invalid_if",
+      "messages": [
+        "只分析CALL依赖问题。",
+        "现在不能访问图库。",
+        "请说明本轮检查覆盖限制。"
+      ]
+    },
+    {
+      "id": "multi_005",
+      "source": "box",
+      "messages": [
+        "讲讲VALUES范围。",
+        "不要改参数名。",
+        "如何兼容旧值？"
+      ]
+    },
+    {
+      "id": "multi_006",
+      "source": "values",
+      "messages": [
+        "只讨论门扇开启角度。",
+        "这次不改材质。",
+        "给出取舍但不要执行。"
+      ]
+    },
+    {
+      "id": "multi_007",
+      "source": "macro",
+      "messages": [
+        "只讨论二维符号方案。",
+        "先考虑粗略尺度。",
+        "哪些假设需要用户确认？"
+      ]
+    },
+    {
+      "id": "multi_008",
+      "source": "invalid_if",
+      "messages": [
+        "讲讲TUBE建模。",
+        "不要建议写文件。",
+        "给一个标注未写入项目的示意。"
+      ]
+    },
+    {
+      "id": "multi_009",
+      "source": "box",
+      "messages": [
+        "只解释IF错误。",
+        "不要自动修复。",
+        "如果修复，需要哪些验证？"
+      ]
+    },
+    {
+      "id": "multi_010",
+      "source": "values",
+      "messages": [
+        "先讨论柜体厚度。",
+        "不改外包围盒。",
+        "怎样把这个限制保留到实施？"
+      ]
+    },
+    {
+      "id": "multi_011",
+      "source": "macro",
+      "messages": [
+        "只讨论子程序拆分。",
+        "不重新命名现有参数。",
+        "哪些建议可以独立实施？"
+      ]
+    },
+    {
+      "id": "multi_012",
+      "source": "invalid_if",
+      "messages": [
+        "讲讲曲面细分策略。",
+        "本轮优先性能。",
+        "有哪些未覆盖的几何风险？"
+      ]
+    }
+  ]
+}
