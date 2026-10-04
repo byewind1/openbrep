@@ -151,6 +151,9 @@ export function AssistantPanel({
     if (!url) {
       if (adoptedReference) {
         const result = await setReferenceSelection(adoptedReference.id, false)
+        // S3（三轮 review）：取消与采用同守卫——项目已切换的迟到响应丢弃，
+        // 不清掉新项目的显示状态，也不把旧项目的错误显示到新项目。
+        if (projectRef.current !== projectAtStart) return
         if (result.ok) setAdoptedReference(null)
         else setAdoptError(result.error || '取消采用失败，请重试。')
       }

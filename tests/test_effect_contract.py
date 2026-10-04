@@ -507,6 +507,39 @@ class TestDeriveChangeKind(unittest.TestCase):
         for text in ("你好", "继续", "按这张图调整这个构件", "帮我看看这个构件", ""):
             self.assertIsNone(derive_change_kind(text), text)
 
+    def test_negated_objects_are_not_goals(self):
+        """S1（三轮 review）：否定/保持约束中的对象不是变化目标。"""
+        self.assertEqual(derive_change_kind("保持材质不变，把回纹改成连续方折"), "geometry")
+        self.assertEqual(derive_change_kind("不要改材质，把回纹改成方折"), "geometry")
+
+    def test_refactor_intent_gets_no_contract(self):
+        """S1：重构类任务正确性不依赖几何签名变化——返回 None 不设门。"""
+        self.assertIsNone(derive_change_kind("只重构参数代码，参数值和形状不变"))
+        self.assertIsNone(derive_change_kind("重构一下这段 GDL 代码"))
+
+    def test_compound_intents_get_no_contract(self):
+        """S1：肯定子句命中多个 kind（复合意图）→ None，不猜主目标。"""
+        self.assertIsNone(derive_change_kind("把材质改成金属并把宽度改成2"))
+
+    def test_continuation_inherits_unique_prior_goal(self):
+        """S2（三轮 review）：续接语句继承前文唯一明确目标；歧义或无目标不继承。"""
+        self.assertEqual(
+            derive_change_kind("按你的建议进行修改", history_texts=("你能不能搜个回纹的图片参考一下？",)),
+            "geometry",
+        )
+        self.assertEqual(
+            derive_change_kind("按这张图修改", history_texts=("漏窗回字纹按这个样式",)),
+            "geometry",
+        )
+        # 前文只有观察类/无命中 → 不继承
+        self.assertIsNone(
+            derive_change_kind("按你的建议进行修改", history_texts=("检查一下参数", "看看结构")),
+        )
+        # 当轮有明确 kind 时不回看前文
+        self.assertEqual(derive_change_kind("把宽度改成2", history_texts=("回纹",)), "parameter")
+        # 非续接语句不回看前文（防误挂历史目标）
+        self.assertIsNone(derive_change_kind("优化一下脚本", history_texts=("回纹",)))
+
     def test_material_task_with_gui_geometry_gate_would_fail_but_correct_kind_passes(self):
         """R2 探针回归：材质变化、几何签名相同——material 契约 satisfied，
         geometry 契约 no_effect（这正是旧 GUI 强加 geometry 的误拦场景）。"""

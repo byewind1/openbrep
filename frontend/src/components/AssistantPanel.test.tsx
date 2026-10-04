@@ -967,3 +967,67 @@ describe('AssistantPanel reference adoption lifecycle (R3)', () => {
     await waitFor(() => expect(screen.getByText(/参考图采用失败|已拒绝获取/)).toBeTruthy())
   })
 })
+
+describe('AssistantPanel reference adoption lifecycle (S3 deferred cancel)', () => {
+  test('late cancel response from project A does not clear project B state', async () => {
+    const client = await import('../api/client')
+    const fetchSelected = client.fetchSelectedReferences as ReturnType<typeof vi.fn>
+    const setSelection = client.setReferenceSelection as ReturnType<typeof vi.fn>
+    fetchSelected.mockClear()
+
+    // A 恢复已有采用；B 无采用
+    fetchSelected.mockResolvedValueOnce([{ id: 'ref_a', url: 'https://images.example.com/hw1.jpg' }])
+    fetchSelected.mockResolvedValueOnce([])
+    // A 的取消响应挂起（deferred），B 的恢复先完成
+    let resolveCancel: (value: { ok: boolean }) => void = () => {}
+    setSelection.mockImplementationOnce(() => new Promise((resolve) => { resolveCancel = resolve }))
+
+    const { rerender } = render(
+      <AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/A" />,
+    )
+    await waitFor(() => expect(fetchSelected).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByText(/参考图（1）/))
+    fireEvent.click(screen.getByText('✓ 已采用'))  // 发起取消（挂起）
+
+    // 切到 B：恢复完成 → B 无采用 → UI 空
+    rerender(<AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/B" />)
+    await waitFor(() => expect(fetchSelected).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByText('采用')).toBeTruthy())
+
+    // A 的取消迟到 resolve：不得清掉 B 的 UI（B 本就无采用；守卫丢弃迟到响应）
+    resolveCancel({ ok: true })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(screen.getByText('采用')).toBeTruthy()
+    expect(screen.queryByText(/取消采用失败/)).toBeNull()
+  })
+
+  test('late cancel failure from project A does not surface error in project B', async () => {
+    const client = await import('../api/client')
+    const fetchSelected = client.fetchSelectedReferences as ReturnType<typeof vi.fn>
+    const setSelection = client.setReferenceSelection as ReturnType<typeof vi.fn>
+    fetchSelected.mockClear()
+
+    fetchSelected.mockResolvedValueOnce([{ id: 'ref_a', url: 'https://images.example.com/hw1.jpg' }])
+    fetchSelected.mockResolvedValueOnce([])
+    let rejectCancel: (value: { ok: boolean; error?: string }) => void = () => {}
+    setSelection.mockImplementationOnce(
+      () => new Promise((resolve, reject) => { rejectCancel = reject }),
+    )
+
+    const { rerender } = render(
+      <AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/A" />,
+    )
+    await waitFor(() => expect(fetchSelected).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByText(/参考图（1）/))
+    fireEvent.click(screen.getByText('✓ 已采用'))
+
+    rerender(<AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/B" />)
+    await waitFor(() => expect(fetchSelected).toHaveBeenCalledTimes(2))
+
+    rejectCancel({ ok: false, error: 'boom' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(screen.queryByText(/boom|取消采用失败/)).toBeNull()
+  })
+})

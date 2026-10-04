@@ -432,13 +432,21 @@ class WorkbenchConversationService:
         if reference_images and not request.get('images') and not request.get('image_b64'):
             request['images'] = reference_images
             injected_reference_ids = [asset.id for asset in self.session.reference_service.selected_assets()]
-        # R2（二轮 review）：效果契约的 change_kind 必须来自本轮任务意图，
+        # R2/S1/S2（评审）：效果契约的 change_kind 必须来自本轮任务意图，
         # 不来自"有没有图片/参考资产"（有图 ≠ 要求形状变化——材质/新增选项
-        # 任务会被 geometry 门误拦）。确定性关键词推导；显式契约（调用方
+        # 任务会被 geometry 门误拦）。确定性关键词推导（子句级否定过滤 +
+        # 重构信号返回 None）；S2：续接型语句（"按你的建议修改"）继承
+        # working_intent 前文消息里的唯一明确目标——原始事故
+        # "搜回纹图→按你的建议修改"由此重新进入效果门。显式契约（调用方
         # 传入）优先；推导不出明确意图 → 不设门，通用验证与用户复核兜底。
         if not request.get('effect_contract'):
             from openbrep.runtime.effect_contract import derive_change_kind
-            derived_kind = derive_change_kind(turn.body.get('message') or '')
+            history_texts = tuple(
+                str(ref.get('text') or '')
+                for ref in self.working_intent.get('message_refs', [])[-8:]
+                if isinstance(ref, dict)
+            )
+            derived_kind = derive_change_kind(turn.body.get('message') or '', history_texts=history_texts)
             if derived_kind:
                 contract: dict = {'change_kind': derived_kind}
                 if injected_reference_ids:

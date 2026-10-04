@@ -466,3 +466,51 @@ def test_no_effect_result_keeps_task_incomplete_through_real_service(tmp_path):
     assert result['ok'] is True  # 有产出照常交付（verification 如实 FAIL）
     tasks = session.conversation_service.working_intent['tasks']
     assert tasks[-1]['state'] == 'incomplete'
+
+
+def test_continuation_inherits_prior_goal_contract_and_blocks_no_effect(tmp_path, monkeypatch):
+    """S2（三轮 review）：冻结原始事故聊天结构——轮1 搜参考图（consult），
+    轮2 "按你的建议进行修改"（语义判定为 execute）→ 继承前文唯一的 geometry
+    目标契约；零几何变化的结果不得把任务关闭为 completed。"""
+    import json as _json
+
+    from openbrep.runtime.pipeline import TaskResult
+
+    session = _real_session(tmp_path, TaskResult(
+        success=False, plain_text='已按参考调整（源码有变化）', scripts={'scripts/3d.gdl': 'x'},
+        metadata={'acceptance': {'effect': {'required': True, 'change_kind': 'geometry',
+                                             'satisfied': False, 'status': 'no_effect', 'reason': '几何签名相同'}}},
+    ))
+    conversation = session.conversation_service
+    # 真实链路中语义判定带完整历史：续接轮（"按你的建议修改"）判 execute，
+    # 纯咨询轮判 consult——离线冻结这两条判定。
+    def _frozen_semantic(payload):
+        message = str(payload.get('message') or '')
+        if '建议' in message and '修改' in message:
+            return _json.dumps({'mode': 'execute', 'task_intent': 'MODIFY', 'constraints': []})
+        return _json.dumps({'mode': 'consult', 'task_intent': 'CHAT', 'constraints': []})
+
+    conversation.semantic_decision = _frozen_semantic
+
+    # 轮1：原始事故的第一句（consult，不执行；进入 message_refs）
+    turn1 = session.route('POST', '/api/assistant/turn', {
+        'phase': 'prepare', 'client_turn_id': 'c-s2-1',
+        'message': '你能不能搜个回纹的图片参考一下？', 'project_epoch': session.project_epoch,
+    })
+    assert turn1['result_kind'] in {'advice', 'failed'}  # 咨询轮；顾问失败不影响前文引用留存
+    # 轮2：原始事故的第二句（续接执行）
+    turn2 = session.route('POST', '/api/assistant/turn', {
+        'phase': 'prepare', 'client_turn_id': 'c-s2-2',
+        'message': '按你的建议进行修改', 'project_epoch': session.project_epoch,
+    })
+    assert turn2['result_kind'] == 'ready_to_execute', turn2
+    result = session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': turn2['turn_id']})
+    pipelines = [p for p in _RecordingPipeline.captured if p.request is not None]
+    assert pipelines
+    request = pipelines[-1].request
+    # S2 断言：续接轮继承前文唯一的 geometry 目标 → 效果门启用
+    assert request.effect_contract == {'change_kind': 'geometry'}, request.effect_contract
+    # 零几何变化 → 任务不得 completed
+    tasks = conversation.working_intent['tasks']
+    assert tasks[-1]['state'] == 'incomplete'
+    assert result['ok'] is True  # 有产出照常交付，验证报告如实 FAIL

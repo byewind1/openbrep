@@ -358,11 +358,11 @@ def evaluate_effect_contract(
     return result
 
 
-# ── R2（二轮 review）：从本轮消息确定性推导期望变化种类 ──────────────
-# 有图片 ≠ 要求形状变化（"按图把材质改为金属，形状不变"是 material 任务）。
-# change_kind 必须来自任务意图；推导不出明确意图时返回 None（不强加几何门）。
-# 词序即优先级：material > new-option > geometry > parameter——复合/歧义任务
-# 取第一明确命中；全部未命中则不设门（由通用验证与用户复核兜底）。
+# ── R2/S1/S2：从本轮消息确定性推导期望变化种类 ──────────────────────
+# 有图片 ≠ 要求形状变化（R2）；否定/保持约束里的对象不是变化目标（S1）；
+# 前文已明确的目标在续接轮继承（S2）。推导不出明确意图时返回 None
+# （不强加几何门）——误加 geometry 门会把合法交付误判为 no_effect，
+# 这个代价不对称，所以宁可 None。
 
 _KIND_MATCHERS: tuple[tuple[str, tuple[Any, ...]], ...] = (
     ("material", tuple(_substr(w) for w in (
@@ -386,20 +386,70 @@ _KIND_MATCHERS: tuple[tuple[str, tuple[Any, ...]], ...] = (
     ))),
 )
 
+# S1：否定/保持子句——其中的 kind 关键词是被禁止变化的对象，不是目标
+_NEGATION_RE = re.compile(
+    r"不变|保持|维持|不要|不改|不许|别改|别动|禁止|照旧|原样|unchanged|keep|remain|stay|do not|don't|no change",
+    re.IGNORECASE,
+)
+# S1：重构/整理类任务——正确性不依赖几何签名变化，签名门不适用
+_REFACTOR_RE = re.compile(r"重构|重新组织|整理代码|清理代码|代码整理|refactor", re.IGNORECASE)
+# S2：续接型语句——当轮无明确 kind 时允许回看前文目标
+_CONTINUATION_RE = re.compile(
+    r"按[^，。;；！!？?]{0,12}(建议|图|参考|方案|计划)|按照|照你|如你所说|接着|继续|好的",
+    re.IGNORECASE,
+)
+_CLAUSE_SPLIT_RE = re.compile(r"[，,。；;！!？?\n并而且]+")
+# S2：观察类子句不构成修改目标——history 继承时排除以观察动词开头的
+# 子句（当轮消息不排除，保持 R2 口径："检查一下参数面板"当轮仍推导
+# parameter）；"搜个回纹的图片参考一下"这类带明确对象的请求保留。
+_OBSERVATION_RE = re.compile(
+    r"^(?:请|麻烦|帮我)?(?:检查|看看|查看|观察|核实|核对|审阅|讲讲|说说|解释)", re.IGNORECASE,
+)
 
-def derive_change_kind(message: str) -> Optional[str]:
+
+def _kinds_in_text(text: str, *, exclude_inquiry: bool = False) -> set[str]:
+    """S1：按子句推导 kind——否定子句中的命中排除，不作为变化目标。"""
+    kinds: set[str] = set()
+    for clause in _CLAUSE_SPLIT_RE.split(text or ""):
+        clause = clause.strip()
+        if not clause:
+            continue
+        if _NEGATION_RE.search(clause):
+            continue
+        if exclude_inquiry and _OBSERVATION_RE.match(clause):
+            continue
+        for kind, matchers in _KIND_MATCHERS:
+            if any(matcher.search(clause) for matcher in matchers):
+                kinds.add(kind)
+                break
+    return kinds
+
+
+def derive_change_kind(message: str, history_texts: tuple[str, ...] = ()) -> Optional[str]:
     """确定性推导本轮期望变化种类；无明确意图返回 None（不设效果门）。
 
-    只做关键词命中，不做语义理解；误判方向的代价不对称：
-    - 误加 geometry 门：形态没变的合法任务会被拦（R2 的教训）——所以
-      宁可 None 也不要在含义模糊时给 geometry；
-    - 漏加门：退化为"变化探测门不启用"，通用验证仍然兜底。
+    - S1：否定/保持约束中的对象（"保持材质不变"）不作为变化目标；
+      只在否定子句出现的 kind 不会被推导。
+    - S1：重构/整理类任务与复合意图（肯定子句命中多个 kind）返回 None。
+    - S2：当轮无命中且语句是续接型（"按你的建议/按图/继续"）时，回看
+      前文（working_intent.message_refs）——前文唯一明确的 kind 被继承；
+      前文无命中或多 kind 混合仍返回 None（歧义不强加门）。
     """
-    text = (message or "")
-    if not text.strip():
+    body = message or ""
+    if not body.strip():
         return None
-    for kind, matchers in _KIND_MATCHERS:
-        for matcher in matchers:
-            if matcher.search(text):
-                return kind
+    if _REFACTOR_RE.search(body):
+        return None
+    kinds = _kinds_in_text(body)
+    if len(kinds) > 1:
+        return None
+    if kinds:
+        return next(iter(kinds))
+    # S2：当轮无明确 kind——仅续接语句继承前文目标
+    if history_texts and _CONTINUATION_RE.search(body):
+        history_kinds: set[str] = set()
+        for text in history_texts:
+            history_kinds |= _kinds_in_text(text, exclude_inquiry=True)
+        if len(history_kinds) == 1:
+            return next(iter(history_kinds))
     return None
