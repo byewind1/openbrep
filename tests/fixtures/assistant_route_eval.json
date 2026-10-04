@@ -6,7 +6,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_002",
@@ -15,7 +16,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_003",
@@ -26,7 +28,9 @@
       "previous_outcome": "completed"
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false,
+    "depends_on_history": true
   },
   {
     "id": "route_004",
@@ -35,7 +39,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_005",
@@ -44,7 +49,8 @@
       "has_project": true
     },
     "expected_mode": "plan",
-    "expected_outcome": "awaiting_confirmation"
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true
   },
   {
     "id": "route_006",
@@ -53,7 +59,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_007",
@@ -62,7 +69,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_008",
@@ -71,7 +79,8 @@
       "has_project": true
     },
     "expected_mode": "plan",
-    "expected_outcome": "awaiting_confirmation"
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true
   },
   {
     "id": "route_009",
@@ -80,7 +89,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_010",
@@ -89,7 +99,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_011",
@@ -98,7 +109,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_012",
@@ -107,7 +119,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_013",
@@ -116,7 +129,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_014",
@@ -131,7 +145,9 @@
       ]
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false,
+    "depends_on_history": true
   },
   {
     "id": "route_015",
@@ -140,7 +156,8 @@
       "has_project": false
     },
     "expected_mode": "plan",
-    "expected_outcome": "awaiting_confirmation"
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true
   },
   {
     "id": "route_016",
@@ -149,7 +166,8 @@
       "has_project": false
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_017",
@@ -159,7 +177,8 @@
       "has_images": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_018",
@@ -168,7 +187,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_019",
@@ -177,7 +197,8 @@
       "has_project": false
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_020",
@@ -186,7 +207,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_021",
@@ -195,7 +217,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_022",
@@ -204,7 +227,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_023",
@@ -213,7 +237,8 @@
       "has_project": true
     },
     "expected_mode": "plan",
-    "expected_outcome": "awaiting_confirmation"
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true
   },
   {
     "id": "route_024",
@@ -222,7 +247,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_025",
@@ -231,7 +257,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_026",
@@ -240,7 +267,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_027",
@@ -249,7 +277,8 @@
       "has_project": false
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_028",
@@ -258,7 +287,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_029",
@@ -267,7 +297,8 @@
       "has_project": true
     },
     "expected_mode": "plan",
-    "expected_outcome": "awaiting_confirmation"
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true
   },
   {
     "id": "route_030",
@@ -276,7 +307,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_031",
@@ -285,7 +317,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_032",
@@ -294,7 +327,8 @@
       "has_project": true
     },
     "expected_mode": "plan",
-    "expected_outcome": "awaiting_confirmation"
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true
   },
   {
     "id": "route_033",
@@ -303,7 +337,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_034",
@@ -312,7 +347,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_035",
@@ -321,7 +357,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_036",
@@ -330,7 +367,8 @@
       "has_project": true
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false
   },
   {
     "id": "route_037",
@@ -339,7 +377,8 @@
       "has_project": false
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_038",
@@ -348,7 +387,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_039",
@@ -361,7 +401,9 @@
       }
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false,
+    "depends_on_history": true
   },
   {
     "id": "route_040",
@@ -370,7 +412,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_041",
@@ -383,7 +426,9 @@
       }
     },
     "expected_mode": "execute",
-    "expected_outcome": "ready_to_execute"
+    "expected_outcome": "ready_to_execute",
+    "forbid_write": false,
+    "depends_on_history": true
   },
   {
     "id": "route_042",
@@ -398,7 +443,9 @@
       ]
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "depends_on_history": true
   },
   {
     "id": "route_043",
@@ -411,7 +458,9 @@
       }
     },
     "expected_mode": "consult",
-    "expected_outcome": "cancelled"
+    "expected_outcome": "cancelled",
+    "forbid_write": true,
+    "depends_on_history": true
   },
   {
     "id": "route_044",
@@ -421,7 +470,8 @@
       "has_drafts": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_045",
@@ -430,7 +480,8 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
   },
   {
     "id": "route_046",
@@ -439,6 +490,1148 @@
       "has_project": true
     },
     "expected_mode": "consult",
-    "expected_outcome": "advice"
+    "expected_outcome": "advice",
+    "forbid_write": true
+  },
+  {
+    "id": "route_047",
+    "input": "不要改宽度，解释一下A的作用",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_048",
+    "input": "只分析这个对象的主脚本",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_049",
+    "input": "先别改参数，给我计划",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_050",
+    "input": "不要保存，先出计划",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_051",
+    "input": "只讨论这个柜子的材料选择",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_052",
+    "input": "讲讲POLY2和PROJECT2的区别",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_053",
+    "input": "解释CALL为什么找不到宏",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_054",
+    "input": "只解释数组越界，不要修复",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_055",
+    "input": "不要新增参数，只说说代价",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_056",
+    "input": "不要关闭显示开关",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_057",
+    "input": "不用增加层板数",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_058",
+    "input": "不要把层板数改为8",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_059",
+    "input": "别改脚本中的字符串",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_060",
+    "input": "先别生成对象，讨论功能",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_061",
+    "input": "计划先行，不要动手",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_062",
+    "input": "先出计划，保留全部参数名",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_063",
+    "input": "只分析宽度改变会影响什么",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_064",
+    "input": "讲讲热点拖拽如何实现",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_065",
+    "input": "只讨论圆角方案的优缺点",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_066",
+    "input": "例如“把A改成2”，是什么意思",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_067",
+    "input": "Do not set A to 2; explain the width parameter.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_068",
+    "input": "Do not add shelves.",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_069",
+    "input": "Never change the height.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_070",
+    "input": "Explain CALL without changing the source.",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_071",
+    "input": "Plan only: add a back panel.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_072",
+    "input": "Only discuss the material choices.",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_073",
+    "input": "What happens if I increase A?",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_074",
+    "input": "If I create a cabinet, what are the tradeoffs?",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_075",
+    "input": "For example, \"set A to 2\", what does this mean?",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_076",
+    "input": "Explain the error without fixing it.",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_077",
+    "input": "Plan first, do not save drafts.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_078",
+    "input": "Only discuss the 2D symbol.",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_079",
+    "input": "先别动手，出个计划",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "forbid_write": true,
+    "review_note": "只读或计划请求；不得进入执行。"
+  },
+  {
+    "id": "route_080",
+    "input": "把A改成1.2",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_081",
+    "input": "把B改为0.6",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_082",
+    "input": "把ZZYZX设置为2.4",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_083",
+    "input": "把shelf_count改成6",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_084",
+    "input": "给柜子添加背板",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_085",
+    "input": "给柜子加踢脚",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_086",
+    "input": "增加一个定位热点",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_087",
+    "input": "删除未使用的临时变量",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_088",
+    "input": "请修复这处语法错误",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_089",
+    "input": "请修改参数描述",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_090",
+    "input": "直接帮我优化这个对象",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_091",
+    "input": "请为柜子添加圆角",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_092",
+    "input": "创建一个参数化桌子",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_093",
+    "input": "生成一个简单花盆",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_094",
+    "input": "新建一个带盖盒子",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_095",
+    "input": "添加参数cabinet_depth",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_096",
+    "input": "启用阴影显示开关",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_097",
+    "input": "关闭show_handle",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_098",
+    "input": "请删除重复的ADD语句",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_099",
+    "input": "把层板数改为4",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_100",
+    "input": "把宽度设为900毫米",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_101",
+    "input": "把高度改成2米",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_102",
+    "input": "请修复字符串比较条件",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_103",
+    "input": "把depth改成0.45",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_104",
+    "input": "请给书柜添加门板",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_105",
+    "input": "Set A to 1.8.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_106",
+    "input": "Change B to 0.7.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_107",
+    "input": "Update shelf_count to 3.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_108",
+    "input": "Add a back panel.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_109",
+    "input": "Fix the compile error.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_110",
+    "input": "Create a parametric stool.",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_111",
+    "input": "Generate a simple box.",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_112",
+    "input": "Enable show_handle.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_113",
+    "input": "Disable show_back.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_114",
+    "input": "Increase the number of shelves to 7.",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "review_note": "本轮明确授权修改或创建。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_115",
+    "input": "继续",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "state": "failed",
+        "goal": "添加背板"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_116",
+    "input": "好的",
+    "context": {
+      "has_project": true,
+      "pending_plan": {
+        "plan_id": "p1",
+        "task_intent": "MODIFY"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_117",
+    "input": "按方案一做",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p1",
+          "target_intent": "MODIFY",
+          "goal": "加背板"
+        }
+      ]
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_118",
+    "input": "按方案二执行，不改宽度",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p1",
+          "target_intent": "MODIFY"
+        },
+        {
+          "proposal_id": "p2",
+          "target_intent": "MODIFY"
+        }
+      ]
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_119",
+    "input": "只讲讲方案二的代价",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p2"
+        }
+      ]
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_120",
+    "input": "我更喜欢方案一",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p1"
+        }
+      ]
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_121",
+    "input": "好的",
+    "context": {
+      "has_project": true,
+      "previous_outcome": "completed"
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_122",
+    "input": "继续",
+    "context": {
+      "has_project": true,
+      "previous_outcome": "completed"
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_123",
+    "input": "别继续了，只解释原因",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "state": "failed"
+      }
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_124",
+    "input": "取消刚才的计划",
+    "context": {
+      "has_project": true,
+      "pending_plan": {
+        "plan_id": "p1",
+        "task_intent": "MODIFY"
+      }
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "cancelled",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_125",
+    "input": "先别执行方案二，给我计划",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p2",
+          "target_intent": "MODIFY"
+        }
+      ]
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_126",
+    "input": "还是太重了",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "state": "incomplete",
+        "goal": "优化比例"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_127",
+    "input": "还是太重了",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_128",
+    "input": "把刚才的高度改成2米",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "state": "failed"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_129",
+    "input": "现在只考虑平面符号",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "goal": "优化比例"
+      }
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_130",
+    "input": "Continue",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "state": "failed"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_131",
+    "input": "OK",
+    "context": {
+      "has_project": true,
+      "pending_plan": {
+        "plan_id": "p1",
+        "task_intent": "MODIFY"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_132",
+    "input": "Execute the chosen proposal.",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p1",
+          "target_intent": "MODIFY"
+        }
+      ]
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_133",
+    "input": "Only discuss the second proposal.",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p2"
+        }
+      ]
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_134",
+    "input": "Do not continue editing.",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "state": "incomplete"
+      }
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_135",
+    "input": "Plan first, based on the chosen proposal.",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p1"
+        }
+      ]
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": true
+  },
+  {
+    "id": "route_136",
+    "input": "再加一层层板",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "goal": "加层板"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_137",
+    "input": "我说的是高度不是宽度",
+    "context": {
+      "has_project": true,
+      "active_task": {
+        "task_intent": "MODIFY",
+        "goal": "调整尺寸"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
+  },
+  {
+    "id": "route_138",
+    "input": "按计划生成",
+    "context": {
+      "has_project": true,
+      "pending_plan": {
+        "plan_id": "p1",
+        "task_intent": "CREATE"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute",
+    "depends_on_history": true,
+    "review_note": "按所给唯一有效引用与本轮权限复核；完成任务不自动重做。",
+    "forbid_write": false
   }
 ]

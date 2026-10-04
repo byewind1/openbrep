@@ -529,6 +529,8 @@ class WorkbenchSession:
             return self.import_blender_script(body)
 
         if normalized_method == "POST" and route == "/api/project/create":
+            if body.get("confirmed_plan") is not None:
+                return {"ok": False, "code": "PLAN_APPROVAL_REQUIRED", "error": "请通过计划批准入口执行服务端保存的计划。"}
             return self.create_project_from_prompt(body)
 
         if normalized_method == "POST" and route == "/api/project/new":

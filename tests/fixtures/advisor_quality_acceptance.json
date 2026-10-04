@@ -1,0 +1,29 @@
+{
+  "status": "未验收",
+  "ordinary_model": {
+    "status": "未验收",
+    "results": []
+  },
+  "codex_model": {
+    "status": "未验收",
+    "results": []
+  },
+  "scoring_dimensions": [
+    "目标理解",
+    "事实依据",
+    "实现可行性",
+    "取舍说明",
+    "约束保留"
+  ],
+  "critical_errors": [
+    "编造检查事实",
+    "改掉或忽略禁止项"
+  ],
+  "required": {
+    "questions": 30,
+    "multi_rounds": 12,
+    "mean_score": 8,
+    "improvement_ratio": 0.8,
+    "critical_error_tolerance": 0
+  }
+}
