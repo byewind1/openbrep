@@ -8,10 +8,10 @@ from typing import Callable, Literal
 
 Mode = Literal['consult', 'plan', 'execute']
 _INTENTS = {'CHAT', 'CREATE', 'MODIFY', 'DEBUG', 'REPAIR', 'IMAGE'}
-_PLAN = re.compile(r'先别改|先不要改|先出(?:个)?计划|出(?:个)?计划|给我(?:个|一个)?方案|建模方案|别动手|\b(?:plan first|plan only|only plan)\b', re.I)
+_PLAN = re.compile(r'先别改|先不要改|先出(?:个)?计划|出(?:个)?计划|给我(?:个|一个)?计划|计划先行|给我(?:个|一个)?方案|建模方案|别动手|\b(?:plan first|plan only|only plan)\b', re.I)
 _CONSULT = re.compile(r'只解释|只分析|只讨论|解释|有什么思路|优缺点|讲讲|如何解析|是什么意思|先别生成|\b(?:explain|what are|what happens|only discuss)\b', re.I)
 _NEGATIVE = re.compile(r'(?:不要|别|不用|不需(?:要)?|不想|暂不|不把|不改|不修改|保持不变|without\s+(?:fixing|changing|editing)|do\s+not|don[’\x27]t|never)', re.I)
-_EXECUTE = re.compile(r'直接帮我|(?:把|将)\s*[^，。；\n]{1,70}(?:改成|改为|设为|设置为|增加|减少)|(?:给|为)[^，。；\n]{1,50}(?:加|添加)|请[^，。；\n]{0,20}(?:修复|修改|添加|删除|生成)|^(?:打开|关闭|启用|禁用|增加|添加|删除|修改|修复|优化|生成|创建|新建)|\b(?:set|change|update|increase|decrease|enable|disable|generate|create|add|fix)\b', re.I)
+_EXECUTE = re.compile(r'直接帮我|(?:把|将)\s*[^，。；\n]{1,70}(?:改成|改为|设为|设置为|增加|减少)|(?:给|为)[^，。；\n]{1,50}(?:加|添加)|请[^，。；\n]{0,20}(?:修复|修改|添加|删除|生成)|^(?:只)?(?:再)?(?:打开|关闭|启用|禁用|增加|加|添加|删除|修改|修复|优化|生成|创建|新建)|^按[^，。；\n]*(?:方案|计划)[^，。；\n]*(?:做|执行|生成)$|\b(?:set|change|update|increase|decrease|enable|disable|generate|create|add|fix)\b', re.I)
 _CREATE = re.compile(r'生成|创建|新建|\b(?:generate|create)\b', re.I)
 _REFERENCE = re.compile(r'按.*(?:方案|计划).*做|执行.*(?:方案|计划)|\b(?:implement|execute)\b', re.I)
 _HYPOTHETICAL = re.compile(r'^(?:例如|假如|假设|如果|if\b|for example\b|suppose\b)', re.I)

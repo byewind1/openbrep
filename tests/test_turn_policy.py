@@ -118,3 +118,15 @@ def test_parameter_plan_remains_zero_llm_and_zero_write(tmp_path):
     assert result.metadata['pending_plan']['affected_files'] == ['paramlist.xml']
     assert project.parameters[-1].value == '4'
     assert not project.root.exists()
+
+
+@pytest.mark.parametrize('message', ['计划先行，不要动手', '先别执行方案二，给我计划'])
+def test_explicit_plan_aliases_are_readonly(message):
+    assert explicit_policy(message).mode == 'plan'
+
+
+@pytest.mark.parametrize('message', ['这次不改材质，只增加背板', '按刚才方案二做，宽度保持不变', '按方案二执行，不改宽度'])
+def test_explicit_positive_clause_keeps_negative_scope(message):
+    policy = explicit_policy(message)
+    assert policy.mode == 'execute'
+    assert policy.constraints
