@@ -302,12 +302,12 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     """
     # 延迟导入 pipeline 内部工具函数，避免模块级循环依赖
     from openbrep.runtime.pipeline import TaskResult, _normalize_modify_request
-    from openbrep.static_checker import StaticChecker
-    from openbrep.verification import build_verification_report
 
     # Direct callers share the pipeline's authorization gate too. In particular,
     # plan requests must not create an output directory or mutation registry.
     from openbrep.runtime.turn_policy import explicit_policy
+    from openbrep.static_checker import StaticChecker
+    from openbrep.verification import build_verification_report
     policy = explicit_policy(request.user_input)
     supplied = getattr(request, "execution_policy", None)
     mode = supplied.get("mode") if isinstance(supplied, dict) else None

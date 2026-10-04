@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.11.1 — 统一对话入口与顾问能力、修改效果验收门与参考图闭环修复。
+> 正式发布版本 v0.11.2 — 修复效果目标续接、重启恢复与跨项目参考图取消隔离。
 
 ---
 
@@ -45,12 +45,12 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.11.1_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.11.1_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.11.1_x64_en-US.msi` 或 `OpenBrep_0.11.1_x64-setup.exe`
+- macOS：`OpenBrep_0.11.2_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.11.2_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.11.2_x64_en-US.msi` 或 `OpenBrep_0.11.2_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
-Current macOS package compatibility: both Apple Silicon (`arm64`, M1/M2/M3/M4) and Intel (`x86_64`) packages are provided, requiring macOS 11 Big Sur or later (measured from the published binary, `minos 11.0`). The Intel build runs on the GitHub `macos-15-intel` runner (supported until 2027-08).
+Current macOS package compatibility, measured across all bundled Mach-O dependencies in v0.11.0: Apple Silicon (`arm64`, M1/M2/M3/M4) requires macOS 13.5 or later; Intel (`x86_64`) requires macOS 15.0 or later. The Intel build runs on the GitHub `macos-15-intel` runner (supported until 2027-08). Each release rechecks the packaged binaries before publication.
 
 On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer.
 
@@ -396,6 +396,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.11.2 | 修复效果目标续接、后端重启后的用户目标恢复，以及跨项目参考图取消响应隔离（见 docs/releases/v0.11.2.md） |
 | v0.11.1 | 统一对话入口与顾问能力、修改效果验收门、参考图采用闭环修复（见 docs/releases/v0.11.1.md） |
 | v0.11.0 | 服务商管理、模型发现与连接诊断、配置导入导出、设置弹窗与统一排版（见 docs/releases/v0.11.0.md） |
 | v0.10.12 | 修复桌面环境 Codex 启动退出、cc-switch 官方登录凭据过期与对话重试处理（见 docs/releases/v0.10.12.md） |

@@ -806,7 +806,10 @@ class ModifyToolRegistry:
 
     def _preview_geometry(self, _args: dict) -> ToolExecutionResult:
         from openbrep.gdl_previewer import preview_3d_script
-        from openbrep.runtime.effect_contract import compute_geometry_signature, count_mesh_components
+        from openbrep.runtime.effect_contract import (
+            compute_geometry_signature,
+            count_mesh_components,
+        )
         from openbrep.workbench.project_parameter_service import parameter_values
 
         script_3d = self.project.get_script(ScriptType.SCRIPT_3D) or ""

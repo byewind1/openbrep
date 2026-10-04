@@ -529,8 +529,9 @@ class WorkbenchAssistantService:
         result = self._merge_continue_from(result, continue_from)
         if result.metadata.get("awaiting_confirmation"):
             # 存 session pending_plan（含原始 body 与项目代次，确认时校验不跨项目）
-            from openbrep.source_snapshot import capture_snapshot
             import uuid
+
+            from openbrep.source_snapshot import capture_snapshot
             bound = {**result.metadata["pending_plan"], "plan_id": uuid.uuid4().hex, "plan_version": 1}
             result.metadata["pending_plan"] = bound
             self.session.pending_plan = {

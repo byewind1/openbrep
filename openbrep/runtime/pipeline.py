@@ -983,9 +983,9 @@ class TaskPipeline:
 
     def _handle_read_only_plan(self, request: TaskRequest, run_id: str) -> TaskResult:
         """Plan before any compiler/output/registry setup, including fast paths."""
-        from openbrep.runtime.micro_modify import detect_micro_modify
-        from openbrep.runtime.modify_agent_loop import _parse_confirm_plan, _PLAN_CONFIRM_PROTOCOL
         from openbrep.llm import codex_chat_generate_kwargs
+        from openbrep.runtime.micro_modify import detect_micro_modify
+        from openbrep.runtime.modify_agent_loop import _PLAN_CONFIRM_PROTOCOL, _parse_confirm_plan
 
         metadata = {"run_id": run_id, "mode": "plan"}
         if request.should_cancel and request.should_cancel():
@@ -1186,8 +1186,8 @@ class TaskPipeline:
                     on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
                     # P1-B：显式效果契约存在时注入项目领域提示（GUI 门控，
                     # benchmark/CLI 不传 → 分型与 prompt 与基线逐字节一致）。
-                    from openbrep.vision.harness import build_project_hints
                     from openbrep.runtime.effect_contract import normalize_effect_contract
+                    from openbrep.vision.harness import build_project_hints
 
                     contract = normalize_effect_contract(getattr(request, "effect_contract", None))
                     plans = vision_harness_run(
@@ -2176,8 +2176,8 @@ class TaskPipeline:
             pass
 
         # 确定性验收摘要（不调 LLM）：参数变更 + 前后几何对比 + 验证结论
-        from openbrep.runtime.modify_acceptance import build_modify_acceptance
         from openbrep.runtime.effect_contract import normalize_effect_contract
+        from openbrep.runtime.modify_acceptance import build_modify_acceptance
         acceptance = build_modify_acceptance(
             before=before_preview,
             after=after_preview,
@@ -2432,11 +2432,11 @@ class TaskPipeline:
             pass
 
         # 确定性验收摘要（不调 LLM）：参数变更 + 前后几何对比 + 验证结论
+        from openbrep.runtime.effect_contract import normalize_effect_contract
         from openbrep.runtime.modify_acceptance import (
             build_modify_acceptance,
             preview_geometry_summary,
         )
-        from openbrep.runtime.effect_contract import normalize_effect_contract
         after_preview = preview_geometry_summary(project)
         acceptance = build_modify_acceptance(
             before=before_preview,

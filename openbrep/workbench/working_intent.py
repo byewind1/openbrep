@@ -1,5 +1,6 @@
 """Pure, evidence-driven conversation state; never grants execution permission."""
 from __future__ import annotations
+
 import copy
 import re
 
@@ -34,10 +35,12 @@ def reduce_intent(state: dict, event: dict) -> dict:
                                       'run_id': None, 'delivery_ref': None, 'task_intent': event.get('task_intent', 'MODIFY')})
     elif kind == 'supersede_task':
         for task in next_state['tasks']:
-            if task['id'] == event['task_id']: task['state'] = 'superseded'
+            if task['id'] == event['task_id']:
+                task['state'] = 'superseded'
     elif kind == 'set_goal':
         for goal in next_state['goals']:
-            if goal['id'] == event['task_id']: goal['text'] = event['goal']
+            if goal['id'] == event['task_id']:
+                goal['text'] = event['goal']
     elif kind == 'assumptions':
         next_state['assumptions'] = [a for a in next_state['assumptions'] if a['scope'] != 'turn']
         next_state['assumptions'].extend({'id': f"{event['message_id']}:assumption:{i}", 'value': value, 'scope': 'turn', 'status': 'active', 'source_message_id': event['message_id']} for i, value in enumerate(event['values']))
@@ -85,10 +88,12 @@ def reduce_intent(state: dict, event: dict) -> dict:
                         run_id=run_id, delivery_ref=copy.deepcopy(source))
             if complete:
                 for c in next_state['constraints']:
-                    if c['scope'] == 'task': c['status'] = 'expired'
+                    if c['scope'] == 'task':
+                        c['status'] = 'expired'
     elif kind == 'source_changed':
         for task in next_state['tasks']:
-            if task['state'] == 'completed': task['state'] = 'invalidated'
+            if task['state'] == 'completed':
+                task['state'] = 'invalidated'
         next_state['project_epoch'] = event.get('project_epoch', next_state['project_epoch'])
     elif kind == 'rollback':
         for task in next_state['tasks']:

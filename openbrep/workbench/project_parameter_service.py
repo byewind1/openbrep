@@ -7,6 +7,7 @@ from openbrep.hsf_project import VALID_PARAM_TYPES, GDLParameter, HSFProject
 from openbrep.parameter_mutations import mutate_parameters
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.source_fingerprint import compute_source_fingerprint
+from openbrep.values_declarations import parse_values_declarations  # compatibility export
 
 GDL_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 AUTHORABLE_PARAM_TYPES = {"Length", "RealNum", "Integer", "Boolean", "String"}
@@ -232,8 +233,6 @@ class WorkbenchProjectParameterService:
 # 轻量行解析：只关心 `VALUES "name" ...` 声明，其余行（注释/IF/LOCK 等）
 # 一律跳过。解析失败只影响本参数（不进入结果 → payload 字段为 None），
 # 绝不抛出异常，不影响既有参数链路。
-
-from openbrep.values_declarations import parse_values_declarations  # compatibility export
 
 
 def parameter_to_dict(param: GDLParameter, values: dict[str, Any] | None = None) -> dict[str, Any]:

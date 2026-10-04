@@ -1,7 +1,7 @@
-# openbrep v0.11.1 安装指南（中文）
+# openbrep v0.11.2 安装指南（中文）
 
 > 针对设计师用户的分步骤安装教程
-> 当前正式版本：v0.11.1
+> 当前正式版本：v0.11.2
 > 难度：⭐️ 小白可用
 
 ---
@@ -26,12 +26,12 @@ https://github.com/byewind1/openbrep/releases/latest
 
 下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.11.1_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.11.1_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.11.1_x64_en-US.msi` 或 `OpenBrep_0.11.1_x64-setup.exe`
+- macOS：`OpenBrep_0.11.2_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.11.2_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.11.2_x64_en-US.msi` 或 `OpenBrep_0.11.2_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
-当前 macOS 包兼容性：Apple Silicon 包（`arm64`，M1/M2/M3/M4）与 Intel 包（`x86_64`）均提供，需要 macOS 11 Big Sur 或更高版本（按发布二进制实测 `minos 11.0`）；Intel 构建基于 GitHub `macos-15-intel` runner（官方支持到 2027-08）。
+当前 macOS 包兼容性按 v0.11.0 完整安装包内全部 Mach-O 依赖实测：Apple Silicon 包（`arm64`，M1/M2/M3/M4）需要 macOS 13.5 或更高版本；Intel 包（`x86_64`）需要 macOS 15.0 或更高版本。Intel 构建基于 GitHub `macos-15-intel` runner（官方支持到 2027-08）；每次发布前会重新核验本版产物。
 
 macOS 打开 dmg 后把 OpenBrep 拖入「应用程序」；Windows 运行 msi / setup.exe 按向导安装。
 
