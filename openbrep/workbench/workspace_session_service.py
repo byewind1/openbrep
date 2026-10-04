@@ -1,6 +1,7 @@
 """Workspace attachment, persistence and routes owned by one session service."""
 from pathlib import Path
 from typing import Any
+
 from openbrep.workbench.workspace_service import init_workspace as ws_init_workspace
 from openbrep.workbench.workspace_service import resolve_workspace as ws_resolve_workspace
 from openbrep.workbench.workspace_service import scan_workspace as ws_scan_workspace

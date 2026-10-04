@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import copy
-import re
 import queue
+import re
 import threading
 import time
 import uuid
@@ -11,10 +11,14 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace
 from typing import Any
 
-from openbrep.hsf_project import HSFProject
-from openbrep.workbench.working_intent import initial_intent, reduce_intent, intent_context, gui_instruction
 from openbrep.runtime.turn_policy import TurnPolicy, decide_turn
 from openbrep.source_snapshot import SourceSnapshot, capture_snapshot
+from openbrep.workbench.working_intent import (
+    gui_instruction,
+    initial_intent,
+    intent_context,
+    reduce_intent,
+)
 
 TURN_TTL_SECONDS = 1800
 MAX_RECENT_TURNS = 128
@@ -67,6 +71,7 @@ class WorkbenchConversationService:
 
     def _semantic_decision(self, payload):
         import json
+
         from openbrep.chat_history import trim_history_messages
         from openbrep.llm import codex_chat_generate_kwargs
         data = {**payload, 'history': trim_history_messages(payload.get('history'))}
@@ -79,10 +84,14 @@ class WorkbenchConversationService:
 
     def _answer(self, turn, *, should_cancel=None):
         from pathlib import Path
+
         from openbrep.knowledge_selector import select_gdl_knowledge
-        from openbrep.project_context import resolve_project_context, load_project_knowledge, load_project_skills
+        from openbrep.project_context import (
+            load_project_knowledge,
+            load_project_skills,
+            resolve_project_context,
+        )
         from openbrep.runtime.advisor import advise
-        from openbrep.runtime.inspection import inspect_snapshot
         from openbrep.workbench.project_session_service import validate_image_payload
         message = turn.body['message']
         project = turn.snapshot.project_copy()

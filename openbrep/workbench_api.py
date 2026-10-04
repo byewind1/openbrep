@@ -16,9 +16,9 @@ from openbrep.llm import LLMAdapter
 from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.runtime.pipeline import TaskPipeline
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
-from openbrep.workbench.conversation_service import WorkbenchConversationService
 from openbrep.workbench.blender_import_service import WorkbenchBlenderImportService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService
+from openbrep.workbench.conversation_service import WorkbenchConversationService
 from openbrep.workbench.copilot_service import WorkbenchCopilotService
 from openbrep.workbench.git_service import WorkbenchGitService
 from openbrep.workbench.host_verification_service import HostVerificationService

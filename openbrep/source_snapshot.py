@@ -6,12 +6,15 @@ import hashlib
 import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
 from openbrep.hsf_project import HSFProject, ScriptType
-from openbrep.paramlist_builder import build_paramlist_xml, parameters_semantically_equal, parse_paramlist_xml
+from openbrep.paramlist_builder import (
+    build_paramlist_xml,
+    parameters_semantically_equal,
+    parse_paramlist_xml,
+)
 from openbrep.source_fingerprint import collect_managed_source_files, compute_source_fingerprint
 
 MAX_DRAFT_BYTES = 2 * 1024 * 1024

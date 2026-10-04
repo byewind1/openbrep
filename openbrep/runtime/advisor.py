@@ -139,7 +139,7 @@ def _extract_relevant_sections(script: str, keywords: list[str]) -> str:
                 i += 1
             labels[label_match.group(1)] = (start, i)
         sub_match = re.match(r'^\s*([A-Za-z_]\w*)\s*\(', lines[i])
-        if sub_match and not sub_match.group(1).upper() in {"IF", "FOR", "WHILE"}:
+        if sub_match and sub_match.group(1).upper() not in {"IF", "FOR", "WHILE"}:
             name = sub_match.group(1)
             start = i
             while i < len(lines) and not re.match(r'^\s*ENDSUB\b', lines[i], re.I):
