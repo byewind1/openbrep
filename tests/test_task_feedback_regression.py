@@ -338,9 +338,9 @@ def test_agent_timeout_contract_keys_and_validation(tmp_path):
 # ── 契约三：任务事件与存储（卡04）────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="卡04：统一执行事件 schema 常量冻结")
 def test_task_event_schema_contract():
-    """事件契约（实施计划 §三）：字段全集 + kind 覆盖面 + seq 单调。"""
+    """事件 schema 契约（卡04 转绿）：字段全集 + kind 覆盖面。"""
+    """事件契约（实施计划 §三）：字段全集 + kind 覆盖面。"""
     from openbrep.workbench.task_events import (
         TASK_EVENT_FIELDS,
         TASK_EVENT_KINDS,
@@ -361,7 +361,6 @@ def test_task_event_schema_contract():
     }
 
 
-@pytest.mark.xfail(strict=True, reason="卡04：任务事件存储读写契约冻结")
 def test_task_event_store_contract(tmp_path):
     """存储契约（实施计划 §四）：每 turn 独立 JSONL、seq 按 turn 单调、
     终止幂等去重、读取容忍最后半行、目录按需创建。"""

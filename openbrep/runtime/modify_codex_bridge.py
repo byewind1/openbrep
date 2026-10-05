@@ -1097,6 +1097,8 @@ class CodexModifyBridge:
             self.audit.append(entry)
             return BUDGET_EXHAUSTED_TOOL_TEXT, False
         self.seen_call_ids.add(call_id)
+        # 卡04：工具开始事件（结束事件仍由下方 tool_call 发出）
+        self.on_event("tool_started", {"tool": tool, "tool_call_id": call_id, "stage": "think"})
         if tool in ("update_script", "patch_script"):
             # 写工具首次执行前惰性快照一次（零快照主洞修复，见 agent loop）
             self._ensure_before_revision()
