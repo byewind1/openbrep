@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 from openbrep.workbench.task_event_store import TaskEventStore
+from openbrep.workbench.task_events import utc_now_iso
 from openbrep.workbench.task_events import (
     EVENT_STATE_DELIVERED,
     EVENT_STATE_FAILED,
@@ -42,6 +44,9 @@ class WorkbenchTaskEventService:
         self._turn_project_root: dict[str, str | None] = {}
         # turn_id -> {"text": str, "at": float}（public_commentary 合并缓冲）
         self._commentary: dict[str, dict[str, Any]] = {}
+        # RF03：seq 单一权威在服务层（store 尊重已提供的 seq）；run_id 建立后绑定
+        self._seq: dict[str, int] = {}
+        self._run_ids: dict[str, str] = {}
 
     # ── 存储 ─────────────────────────────────────────────────
 
@@ -81,18 +86,26 @@ class WorkbenchTaskEventService:
         root = str(project.root) if project is not None and getattr(project, "root", None) else None
         self._turn_project_root[turn_id] = root
         self._commentary.pop(turn_id, None)
-        self._persist(turn_id, {
+        self._run_ids.pop(turn_id, None)
+        store = self._store_for(root)
+        try:
+            self._seq[turn_id] = len(store.read_turn(turn_id)) if store is not None else 0
+        except Exception:  # noqa: BLE001
+            self._seq[turn_id] = 0
+        self._persist(turn_id, self._canonicalize(turn_id, {
             "kind": "accepted",
             "session_id": self.session.session_id,
             "project_epoch": project_epoch,
             "message": clip_public_text(message or ""),
             "stage": requested_mode or None,
-        })
+        }))
 
     def drop_turn(self, turn_id: str) -> None:
         """清理会话内存缓冲（落盘记录保留，供复盘）。"""
         self._turn_project_root.pop(turn_id, None)
         self._commentary.pop(turn_id, None)
+        self._seq.pop(turn_id, None)
+        self._run_ids.pop(turn_id, None)
 
     def record_stage(
         self,
@@ -111,7 +124,7 @@ class WorkbenchTaskEventService:
             "message": clip_public_text(message) if message else None,
         }
         event.update({k: v for k, v in extra.items() if v is not None})
-        self._persist(turn_id, event)
+        self._persist(turn_id, self._canonicalize(turn_id, event))
 
     def _turn_epoch(self, turn_id: str) -> int:
         return int(getattr(self.session, "project_epoch", 0) or 0)
@@ -121,9 +134,13 @@ class WorkbenchTaskEventService:
     def build_pipeline_event(self, turn_id: str, kind: str, data: dict[str, Any]) -> dict[str, Any] | None:
         """把 pipeline/agent/桥接的原始事件映射为任务事件（返回 None = 不记录）。"""
         epoch = self._turn_epoch(turn_id)
+        run_id = data.get("run_id") or self._run_ids.get(turn_id)
+        if run_id:
+            self._run_ids[turn_id] = str(run_id)
         base = {
             "session_id": self.session.session_id,
             "project_epoch": epoch,
+            "run_id": run_id,
         }
         if kind == "tool_started":
             return {**base, "kind": "tool_started", "state": EVENT_STATE_RUNNING,
@@ -150,11 +167,51 @@ class WorkbenchTaskEventService:
             return None
         return None
 
+    def handle_pipeline_event(self, turn_id: str, kind: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """适配原始事件 → 规范任务事件：落盘并返回需广播的同一事件（先记录后广播）。
+
+        RF02/RF03：落盘与广播共用同一 event_id/seq/timestamp（canonical 事件）；
+        public_commentary 按窗口合并，段落收束（后续非 commentary 事件到达）时
+        flush 出规范事件；assistant_delta 是 final 文本流，不误记为公开思考。
+        """
+        data = data if isinstance(data, dict) else {}
+        out: list[dict[str, Any]] = []
+        if kind not in ("assistant_delta", "public_commentary"):
+            flushed = self.flush_commentary(turn_id)
+            if flushed:
+                out.append(flushed)
+        if kind == "assistant_delta":
+            return out  # final 文本流由最终答复承载，不逐 token 记录
+        if kind == "public_commentary":
+            self._buffer_commentary(turn_id, data)
+            return out
+        event = self.build_pipeline_event(turn_id, kind, data)
+        if event is None:
+            return out
+        canonical = self._canonicalize(turn_id, event)
+        self._persist_canonical(turn_id, canonical)
+        out.append(canonical)
+        return out
+
     def record_pipeline_event(self, turn_id: str, kind: str, data: dict[str, Any]) -> None:
-        """适配 + 落盘（广播由调用方在之后进行：先落盘再广播）。"""
-        event = self.build_pipeline_event(turn_id, kind, data if isinstance(data, dict) else {})
-        if event is not None:
-            self._persist(turn_id, event)
+        """兼容入口：适配 + 落盘（不广播）。"""
+        self.handle_pipeline_event(turn_id, kind, data)
+
+    def _canonicalize(self, turn_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        """补全公共身份字段（event_id/seq/timestamp；seq 单调由服务层保证）。"""
+        self._seq[turn_id] = self._seq.get(turn_id, 0) + 1
+        canonical = {
+            "schema_version": 1,
+            "event_id": uuid.uuid4().hex,
+            "seq": self._seq[turn_id],
+            "timestamp": utc_now_iso(),
+            "turn_id": turn_id,
+        }
+        canonical.update({k: v for k, v in event.items() if v is not None})
+        return canonical
+
+    def _persist_canonical(self, turn_id: str, canonical: dict[str, Any]) -> None:
+        self._persist(turn_id, canonical)
 
     def _buffer_commentary(self, turn_id: str, data: dict[str, Any]) -> None:
         text = data.get("content") if isinstance(data, dict) else None
@@ -166,19 +223,21 @@ class WorkbenchTaskEventService:
                 time.monotonic() - buffer["at"] >= _COMMENTARY_FLUSH_SECONDS:
             self.flush_commentary(turn_id)
 
-    def flush_commentary(self, turn_id: str) -> None:
-        """把合并缓冲的公开说明落盘（终止前调用）。"""
+    def flush_commentary(self, turn_id: str) -> dict[str, Any] | None:
+        """把合并缓冲的公开说明落盘，返回规范事件（供同体广播；无缓冲返回 None）。"""
         buffer = self._commentary.get(turn_id)
         if not buffer or not buffer.get("text"):
             self._commentary.pop(turn_id, None)
-            return
+            return None
         text = buffer.pop("text")
-        self._persist(turn_id, {
+        canonical = self._canonicalize(turn_id, {
             "kind": "public_commentary",
             "session_id": self.session.session_id,
             "project_epoch": self._turn_epoch(turn_id),
             "message": clip_public_text(text),
         })
+        self._persist(turn_id, canonical)
+        return canonical
 
     # ── 终止 ─────────────────────────────────────────────────
 

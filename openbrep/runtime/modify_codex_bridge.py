@@ -309,6 +309,7 @@ class CodexModifyTurnDriver:
         on_delta: Callable[[str], None] | None,
         reasoning_effort: str = "",
         logger: logging.Logger | None = None,
+        on_commentary: Callable[[str], None] | None = None,
         tool_timeout: float | None = None,
         task_deadline: float | None = None,
         clock: Callable[[], float] | None = None,
@@ -323,6 +324,9 @@ class CodexModifyTurnDriver:
         self._timeout = timeout
         self._should_cancel = should_cancel
         self._on_delta = on_delta
+        # RF02：公开 commentary 回调（与 final 分离；隐藏 reasoning 不采集）
+        self._on_commentary = on_commentary
+        self._commentary_delta_items: set[str] = set()
         self._reasoning_effort = reasoning_effort
         self._logger = logger or _LOGGER
         self._tool_timeout = tool_timeout
@@ -507,7 +511,18 @@ class CodexModifyTurnDriver:
                 elif kind == "delta":
                     idle_deadline = clock() + idle_window
                     item_id, delta = payload
-                    if not collector.is_commentary(item_id):
+                    if collector.is_commentary(item_id):
+                        # RF02：公开 commentary 增量——独立回调，与 final 不混流
+                        if isinstance(item_id, str):
+                            self._commentary_delta_items.add(item_id)
+                        if self._on_commentary is not None:
+                            try:
+                                self._on_commentary(delta)
+                            except Exception as exc:  # noqa: BLE001
+                                self._logger.warning(
+                                    "codex modify commentary 回调异常（%s）", exc.__class__.__name__
+                                )
+                    else:
                         if isinstance(item_id, str):
                             delta_buf.setdefault(item_id, []).append(delta)
                         if self._on_delta is not None:
@@ -521,6 +536,7 @@ class CodexModifyTurnDriver:
                     idle_deadline = clock() + idle_window
                 elif kind == "item_completed":
                     idle_deadline = clock() + idle_window
+                    self._forward_commentary_item(payload)
                     self._record_item(payload, candidates, delta_buf)
                 elif kind == "turn_completed":
                     idle_deadline = clock() + idle_window
@@ -741,6 +757,22 @@ class CodexModifyTurnDriver:
                     self._logger.warning(
                         "codex modify server request 回应失败（%s）", exc.__class__.__name__
                     )
+
+    def _forward_commentary_item(self, item: dict) -> None:
+        """RF02：完整 commentary item 到达模式——同 id 已有 delta 则去重跳过。"""
+        if item.get("type") != "agentMessage" or item.get("phase") != "commentary":
+            return
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id in self._commentary_delta_items:
+            return
+        text = str(item.get("text") or "")
+        if text and self._on_commentary is not None:
+            try:
+                self._on_commentary(text)
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "codex modify commentary 回调异常（%s）", exc.__class__.__name__
+                )
 
     @staticmethod
     def _record_item(
@@ -1246,6 +1278,10 @@ class CodexModifyBridge:
                 "executor": self.execute_tool_call,
                 "should_cancel": self.request.should_cancel,
                 "on_delta": None,
+                # RF02：公开 commentary 转为 public_commentary 事件（先记录再广播）
+                "on_commentary": lambda chunk: self.on_event(
+                    "public_commentary", {"content": str(chunk)}
+                ),
                 "reasoning_effort": self.reasoning_effort,
                 "logger": self.logger,
                 "timeout": idle_timeout,

@@ -517,9 +517,20 @@ class WorkbenchConversationService:
         def emit(kind, data):
             if kind == 'plan':
                 kind, data = 'status', {'stage': 'plan', 'message': '正在准备执行步骤…'}
-            # 卡04：关键事件先追加落盘，再广播（事件是唯一事实源）
+            # RF02/RF03：事件先规范落盘，再以同一 event_id/seq/timestamp 广播
+            # （canonical kind：preparing/tool_started/tool_finished/verification/
+            #  public_commentary——前端 live 与复盘恢复消费同一事件形状）。
             if events is not None:
-                events.record_pipeline_event(turn.turn_id, kind, data if isinstance(data, dict) else {})
+                for canonical in events.handle_pipeline_event(
+                    turn.turn_id, kind, data if isinstance(data, dict) else {}
+                ):
+                    if on_event:
+                        on_event(canonical['kind'], {
+                            **canonical,
+                            'turn_id': turn.turn_id,
+                            'project_epoch': turn.snapshot.project_epoch,
+                        })
+                return
             if on_event:
                 on_event(kind, {**data, 'turn_id': turn.turn_id, 'project_epoch': turn.snapshot.project_epoch})
         request = {**turn.body, 'intent': turn.policy.task_intent, 'stream': False, 'confirm_plan': False,

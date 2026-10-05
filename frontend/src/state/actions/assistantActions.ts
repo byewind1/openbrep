@@ -217,8 +217,45 @@ export function buildAssistantHistory(
     .map(({ role, content }) => ({ role, content }))
 }
 
-function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep | null {
+/** 导出供契约测试使用（RF02：canonical 事件 → 时间线步骤映射）。 */
+export function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep | null {
   const { type, data } = event
+  if (type === 'preparing') {
+    // RF02：canonical 事件（与复盘恢复同形状）——阶段/等待步骤
+    if (typeof data.message !== 'string' || !data.message) return null
+    return {
+      type: 'status',
+      stage: typeof data.stage === 'string' ? (data.stage as AssistantThinkingStep['stage']) : 'think',
+      message: data.message,
+    }
+  }
+  if (type === 'verification') {
+    const success = data.state === 'succeeded'
+    return {
+      type: 'status',
+      stage: 'compile',
+      message: success ? (typeof data.message === 'string' && data.message ? data.message : '✅ 验证通过') : '❌ 验证未通过',
+      detail: !success && typeof data.message === 'string' ? data.message : undefined,
+      ok: success,
+    }
+  }
+  if (type === 'tool_finished') {
+    // RF05 前置：canonical 工具结束事件（start/finish 同行收束在 RF05 完成）
+    const name = typeof data.tool_name === 'string' ? data.tool_name : 'tool'
+    return {
+      type: 'tool_call',
+      stage: 'think',
+      message: name,
+      detail: typeof data.summary === 'string' ? data.summary : undefined,
+      ok: data.state === 'succeeded',
+    }
+  }
+  if (type === 'public_commentary') {
+    // RF02：公开说明显示正文（与 final 分离；合并进最近一条说明行）
+    const content = typeof data.message === 'string' ? data.message : ''
+    if (!content) return null
+    return { type: 'status', stage: 'think', message: '💬 ' + content, commentary: true } as AssistantThinkingStep
+  }
   if (type === 'status' && typeof data.message === 'string') {
     return {
       type: 'status',

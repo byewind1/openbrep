@@ -64,8 +64,7 @@ class TaskEventStore:
             path = self.turn_path(turn_id)
             if not self._mark_truncated_if_needed(turn_id, path):
                 return stored
-            self._seq[turn_id] += 1
-            stored["seq"] = self._seq[turn_id]
+            self._assign_seq(turn_id, stored)
             line = json.dumps(self._sanitize(stored), ensure_ascii=False, sort_keys=True)
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as fh:
@@ -87,14 +86,24 @@ class TaskEventStore:
         stored = self._fill(turn_id, event)
         with self._lock:
             self._ensure_seq_loaded(turn_id)
-            self._seq[turn_id] += 1
-            stored["seq"] = self._seq[turn_id]
+            self._assign_seq(turn_id, stored)
             path = self.turn_path(turn_id)
             line = json.dumps(self._sanitize(stored), ensure_ascii=False, sort_keys=True)
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
         return stored
+
+    def _assign_seq(self, turn_id: str, stored: dict[str, Any]) -> None:
+        """RF03：seq 单一权威——调用方（服务层）已分配的 seq 原样保留；
+        未提供时按 turn 计数分配。保证落盘与广播同一 seq。"""
+        provided = stored.get("seq")
+        if isinstance(provided, int) and provided > 0:
+            self._seq[turn_id] = max(self._seq.get(turn_id, 0), provided)
+            stored["seq"] = provided
+            return
+        self._seq[turn_id] += 1
+        stored["seq"] = self._seq[turn_id]
 
     # ── 读取 ─────────────────────────────────────────────────
 
