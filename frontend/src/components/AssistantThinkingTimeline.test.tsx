@@ -9,7 +9,7 @@ import type { AssistantThinkingStep } from '../api/types'
  * 原始事故：时间线只渲染 slice(-12)，“…还有 N 步”按钮只把可见 12 步标记为
  * 展开，早期步骤永远无法查看 → 超过 12 步的执行过程不可复盘。
  *
- * 用 it.fails 记录预期红灯：卡05 实现“真正的查看全部”后必须换成 it。
+ * 卡05 已实现“真正的查看全部”：it.fails 预期红灯已转为正式测试。
  */
 
 function toolStep(index: number): AssistantThinkingStep {
@@ -23,7 +23,7 @@ function toolStep(index: number): AssistantThinkingStep {
 }
 
 describe('AssistantThinkingTimeline 查看全部（卡01 冻结 → 卡05 转绿）', () => {
-  it.fails('超过 12 步时“查看全部”展开全部早期步骤', () => {
+  it('超过 12 步时“查看全部”展开全部早期步骤', () => {
     const steps = Array.from({ length: 18 }, (_, i) => toolStep(i))
     render(<AssistantThinkingTimeline steps={steps} />)
     expect(screen.getByText(/还有 6 步/)).toBeTruthy()
@@ -32,6 +32,21 @@ describe('AssistantThinkingTimeline 查看全部（卡01 冻结 → 卡05 转绿
     expect(screen.getByText('tool_0')).toBeTruthy()
     expect(screen.getByText('tool_5')).toBeTruthy()
     expect(screen.getByText('tool_17')).toBeTruthy()
+  })
+
+  it('展开后可收起回最近 12 步', () => {
+    const steps = Array.from({ length: 18 }, (_, i) => toolStep(i))
+    render(<AssistantThinkingTimeline steps={steps} />)
+    fireEvent.click(screen.getByText(/还有 6 步/))
+    expect(screen.getByText('tool_0')).toBeTruthy()
+    fireEvent.click(screen.getByText(/收起，只看最近 12 步/))
+    expect(screen.queryByText('tool_0')).toBeNull()
+    expect(screen.getByText('tool_6')).toBeTruthy()
+  })
+
+  it('旧记录未保存执行过程时显示明确提示，不编造历史', () => {
+    render(<AssistantThinkingTimeline steps={[]} stale />)
+    expect(screen.getByText('旧记录未保存执行过程')).toBeTruthy()
   })
 
   it('默认只显示最近 12 步（已有行为冻结）', () => {

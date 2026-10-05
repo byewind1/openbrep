@@ -294,6 +294,9 @@ class WorkbenchConversationService:
             return self._failure(None, 'EMPTY_MESSAGE')
         if self.active_turn_id:
             return self._failure(None, 'TURN_BUSY')
+        if on_event:
+            # 卡05：prepare 流式反馈——语义路由等待
+            on_event('status', {'stage': 'route', 'message': '正在判断本轮执行方式…'})
         if should_cancel and should_cancel():
             return self._response(None, 'cancelled', cancelled=True)
         if re.search(r'撤回|取消.*限制|withdraw', message, re.I):
@@ -323,6 +326,10 @@ class WorkbenchConversationService:
         if events is not None:
             events.begin_turn(turn.turn_id, project_epoch=turn.snapshot.project_epoch,
                               message=message, requested_mode=policy.mode)
+        if on_event:
+            on_event('status', {'stage': policy.mode,
+                                'message': '本轮将执行修改。' if policy.mode == 'execute' else '正在准备回答…',
+                                'turn_id': turn.turn_id})
         while len(self.turns) > MAX_RECENT_TURNS:
             old_id, old = self.turns.popitem(last=False)
             self.client_ids.pop(old.client_turn_id, None)
@@ -410,8 +417,15 @@ class WorkbenchConversationService:
             turn.result = self._response(turn, 'ready_to_execute', mode='execute', task_intent=policy.task_intent, source_version=snapshot.source_version)
             self._record_task_stage(turn, stage='ready', message='任务已就绪，等待执行。')
         else:
+            turn._prepare_on_event = on_event
             turn.result = self._prepare_advice(turn, should_cancel=should_cancel)
             self._record_advice_outcome(turn, turn.result)
+            if on_event:
+                result_kind = turn.result.get('result_kind')
+                if result_kind == 'advice':
+                    on_event('status', {'stage': 'done', 'message': '回答完成。', 'turn_id': turn.turn_id})
+                elif result_kind == 'awaiting_confirmation':
+                    on_event('status', {'stage': 'plan_gate', 'message': '修改计划已生成，待确认。', 'turn_id': turn.turn_id})
         if should_cancel and should_cancel():
             turn.state = 'cancelled'
             turn.result = self._response(turn, 'cancelled', cancelled=True)
@@ -430,6 +444,10 @@ class WorkbenchConversationService:
         # 卡04：prepare 阶段流式可观测（咨询/计划生成中）
         self._record_task_stage(turn, stage='advice' if turn.policy.mode != 'plan' else 'plan',
                                 message='正在生成顾问回答…' if turn.policy.mode != 'plan' else '正在生成修改计划…')
+        on_event = getattr(turn, '_prepare_on_event', None)
+        if callable(on_event):
+            on_event('status', {'stage': 'advice' if turn.policy.mode != 'plan' else 'plan',
+                                'message': '正在生成顾问回答…' if turn.policy.mode != 'plan' else '正在生成修改计划…'})
         return self.advisor(turn, should_cancel=should_cancel)
 
     def execute(self, body: dict, *, should_cancel=None, on_event=None):

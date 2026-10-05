@@ -535,11 +535,13 @@ export function AssistantPanel({
                   ))}
                 </div>
               ) : null}
-              {message.role === 'assistant' && message.thinkingSteps ? (
+              {message.role === 'assistant' && (message.thinkingSteps || message.staleTimeline) ? (
                 <AssistantThinkingTimeline
-                  steps={message.thinkingSteps}
+                  steps={message.thinkingSteps ?? []}
                   busy={busy && index === messages.length - 1}
                   interrupted={message.interrupted}
+                  startedAt={message.createdAt}
+                  stale={message.staleTimeline}
                 />
               ) : null}
 

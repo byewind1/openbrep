@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AssistantThinkingStep, ThinkingStage } from '../api/types'
 
 interface AssistantThinkingTimelineProps {
   steps: AssistantThinkingStep[]
   busy?: boolean
   interrupted?: boolean
+  /** 卡05：等待计时起点（pending 消息 createdAt） */
+  startedAt?: number
+  /** 卡05：任务类旧记录没有过程数据（不编造历史） */
+  stale?: boolean
 }
 
 const STAGE_ICON: Record<ThinkingStage, string> = {
@@ -37,18 +41,31 @@ const STAGE_LABEL: Record<ThinkingStage, string> = {
   done: '完成',
 }
 
+/** 卡05：等待提示阈值（秒）——无新事件超过该时长显示等待原因 */
+const WAIT_NOTICE_SECONDS = 15
+
 function stepIcon(step: AssistantThinkingStep): string {
   if (step.type === 'plan') return STAGE_ICON.plan
-  if (step.type === 'tool_call') return step.ok ? '✅' : '❌'
-  if (step.type === 'assistant_delta') return '💭'
+  // 卡05：三态——成功 ✅ / 失败 ❌ / 运行中 ⟳（未返回的工具不显示为失败）
+  if (step.type === 'tool_call') {
+    if (step.ok === true) return '✅'
+    if (step.ok === false) return '❌'
+    return '⟳'
+  }
   return STAGE_ICON[step.stage ?? 'think'] ?? '•'
 }
 
 function stepLabel(step: AssistantThinkingStep): string {
   if (step.type === 'tool_call') return step.message
-  if (step.type === 'assistant_delta') return 'AI 思考中'
   if (step.type === 'plan') return step.message
   return STAGE_LABEL[step.stage ?? 'think'] ?? step.message
+}
+
+function elapsedText(startedAt: number, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000))
+  if (seconds < 60) return `${seconds} 秒`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes} 分 ${seconds % 60} 秒`
 }
 
 function PlanDetail({ step }: { step: AssistantThinkingStep }) {
@@ -87,12 +104,33 @@ function PlanDetail({ step }: { step: AssistantThinkingStep }) {
   )
 }
 
-export function AssistantThinkingTimeline({ steps, busy, interrupted }: AssistantThinkingTimelineProps) {
-  const [expanded, setExpanded] = useState<Set<number>>(new Set())
-  if (!steps.length && !busy) return null
+/** 卡05：等待计时器——顶层显示当前阶段与已耗时；超过阈值提示等待原因 */
+function useWaitTicker(busy: boolean, startedAt: number | undefined) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!busy || !startedAt) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [busy, startedAt])
+  if (!busy || !startedAt) return null
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+  const waiting = elapsedSeconds >= WAIT_NOTICE_SECONDS
+  return { elapsed: elapsedText(startedAt, now), waiting }
+}
 
-  const visibleSteps = steps.slice(-12)
-  const hasMore = steps.length > visibleSteps.length
+export function AssistantThinkingTimeline({ steps, busy, interrupted, startedAt, stale }: AssistantThinkingTimelineProps) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+  // 卡05：真正的“查看全部”——展开全部历史步骤（不只是标记可见 12 步）
+  const [showAll, setShowAll] = useState(false)
+  const isBusy = Boolean(busy && !interrupted)
+  // hooks 必须在条件返回之前调用
+  const wait = useWaitTicker(isBusy, startedAt)
+  if (!steps.length && !busy && !stale) return null
+
+  const visibleSteps = showAll ? steps : steps.slice(-12)
+  const hiddenCount = steps.length - visibleSteps.length
+  const lastStep = steps.at(-1)
 
   function toggle(index: number) {
     setExpanded((prev) => {
@@ -105,18 +143,41 @@ export function AssistantThinkingTimeline({ steps, busy, interrupted }: Assistan
 
   return (
     <div className="assistant-thinking-timeline">
-      {hasMore && (
+      {stale && !steps.length ? (
+        <div className="timeline-stale">旧记录未保存执行过程</div>
+      ) : null}
+      {busy && !interrupted && lastStep ? (
+        <div className="timeline-current" data-testid="timeline-current">
+          <span>当前：{stepLabel(lastStep)}</span>
+          {wait ? (
+            <span className={wait.waiting ? 'timeline-waiting' : 'timeline-elapsed'}>
+              {wait.waiting ? '⏳ 等待模型响应/工具仍在运行 · ' : '· 已进行 '}
+              {wait.elapsed}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {hiddenCount > 0 && (
         <button
           type="button"
           className="timeline-more"
-          onClick={() => setExpanded(new Set(visibleSteps.map((_, i) => i)))}
+          onClick={() => setShowAll(true)}
         >
-          …还有 {steps.length - visibleSteps.length} 步
+          …还有 {hiddenCount} 步
+        </button>
+      )}
+      {showAll && steps.length > 12 && (
+        <button
+          type="button"
+          className="timeline-less"
+          onClick={() => setShowAll(false)}
+        >
+          收起，只看最近 12 步
         </button>
       )}
       <ul className="timeline-list">
         {visibleSteps.map((step, i) => {
-          const globalIndex = steps.length - visibleSteps.length + i
+          const globalIndex = (showAll ? 0 : steps.length - visibleSteps.length) + i
           const isExpanded = expanded.has(globalIndex)
           const hasDetail = Boolean(step.detail) || step.type === 'plan'
           return (
