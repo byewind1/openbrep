@@ -12,7 +12,9 @@ The default entry is `unified`. In the workbench, consultation and planning are 
 
 每个 turn 的执行过程以真实事件为唯一事实源，追加写入 `<project>/.openbrep/memory/chats/tasks/<turn_id>.jsonl`（单条公开文本 ≤4KiB、单任务记录 ≤2MiB，超限写一次 `truncated` 事件；凭据、认证路径、完整 prompt、图像 base64 与工具完整源码永不入日志）。事件含 `accepted / preparing / waiting_model / public_commentary / tool_started / tool_finished / verification / source_changed / delivery / cancelled / failed / completed`；完成状态区分完整交付（delivered）、部分修改（partial）与无源码变化（no_change）——编译通过不等于任务完成。事件记录只用于展示与复盘，不进入任何 LLM prompt、质量评分或 benchmark。
 
-- 只读查询：`GET /api/assistant/turn/events/<turn_id>`（不占用会话执行锁，执行中可查询）。
+- 只读查询：`GET /api/assistant/turn/events/<turn_id>`（不占用会话执行锁，执行中可查询）；任务索引 `GET /api/assistant/turn/events` 列出已开始的任务（含未终止项）——进程退出后重开即可发现"已开始未结束"的任务并展示其执行过程，不伪造最终答复。
+- 持久化失败以结构化 `events_recording`（persisted/in_memory/degraded）随响应上报，界面明确提示"执行记录保存失败"；degraded 在 turn 内粘滞（丢失的事件无法补写）；无项目的咨询只保留会话内存记录，不创建任何目录。
+- 工具事件携带 `tool_call_id`（start/finish 关联）与真实 `duration_ms`/`elapsed_ms`；超时/取消后迟到的工具写入在提交点被授权检查拒绝并隔离（`execution.abandoned_write_workers` > 0 表示非完整交付）。
 - 聊天 meta 保存 `task_ref`（turn_id/run_id/schema_version）与时间线步骤；重开项目后据此恢复执行过程时间线。
 - 旧记录没有过程数据时显示“旧记录未保存执行过程”，不补造历史；进程中断后未终止的记录按 interrupted/unknown 展示，不推测为完成。
 - 事件记录保存失败不回滚已发生的源码修改，界面会提示执行记录保存失败。
@@ -29,6 +31,8 @@ agent_tool_timeout = 600    # 单工具执行上限；编译/预览沿用 compil
 ```
 
 达到阈值时区分 `idle_timeout / task_deadline / tool_timeout / connection_error / cancelled`，结果以结构化 `execution.timeout_reason` 记录（布尔 `execution.timeout` 保留兼容）。超时与取消都保留已发生的部分修改与交付证据；有写入任务的执行不会透明重跑。已发出的工具调用会先被排空再判定超时，避免调度延迟误报。
+
+`agent_task_timeout` 同时约束普通（非 Codex）agent loop 的整个任务：到期按当前进度如实收尾（非完整交付）。源码变更工具的写入在提交点做授权检查——任务已终止/取消/项目切换后，迟到的写入一律被拒绝并隔离，不会污染共享项目状态。
 
 ## Compatibility
 

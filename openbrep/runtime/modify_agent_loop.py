@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Optional
 
 from openbrep.core import GDLAgent
@@ -500,6 +501,19 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     llm_calls = 0
     tool_calls_used = 0
     budget_exhausted = False
+    # RF06：任务级截止（[agent] agent_task_timeout）——整个任务跨轮共享，
+    # 到期按当前进度如实收尾；取消与工具预算语义不变。
+    from openbrep.config import AGENT_TASK_TIMEOUT_DEFAULT
+
+    _agent_cfg = getattr(pipeline.config, "agent", None)
+    _raw_task_timeout = getattr(_agent_cfg, "agent_task_timeout", None)
+    _task_timeout = (
+        float(_raw_task_timeout)
+        if isinstance(_raw_task_timeout, (int, float)) and _raw_task_timeout > 0
+        else float(AGENT_TASK_TIMEOUT_DEFAULT)
+    )
+    _task_deadline = time.monotonic() + _task_timeout
+    task_timed_out = False
     cancelled = False
     final_text = ""
     gate_rejections = 0
@@ -573,6 +587,10 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         if request.should_cancel and request.should_cancel():
             cancelled = True
             on_event("status", _architect_status("cancel"))
+            break
+        if time.monotonic() >= _task_deadline:
+            task_timed_out = True
+            on_event("status", {"stage": "budget", "message": "⚠️ 任务时间预算耗尽，按当前进度如实收尾"})
             break
         on_event("status", _architect_status("think"))
         response = llm.generate_with_tools(messages, tools=tools)
@@ -779,6 +797,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         tool_calls=tool_calls_used,
         budget_exhausted=budget_exhausted,
         cancelled=cancelled,
+        task_timed_out=task_timed_out,
         before_revision_id=before_revision_id,
         changed_files=list(registry.changed_files.keys()),
     )
@@ -791,8 +810,13 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     if metadata_effect is not None:
         loop_metadata["effect_contract"] = metadata_effect
 
+    if task_timed_out:
+        output_parts.append(
+            "⚠️ 任务时间预算耗尽（agent_task_timeout），按当前进度如实收尾；"
+            "以上为部分进度，不是完整交付。"
+        )
     return TaskResult(
-        success=verification_report.passed,
+        success=verification_report.passed and not task_timed_out,
         intent=intent,
         scripts=registry.changed_files,
         plain_text="\n\n".join(part for part in output_parts if part),
@@ -816,6 +840,7 @@ def _agent_loop_metadata(
     cancelled: bool,
     before_revision_id: str | None,
     changed_files: list[str] | None = None,
+    task_timed_out: bool = False,
 ) -> dict:
     """agent loop 的 TaskResult.metadata 组装（vision_extractions 有值才写入）。
 
@@ -838,6 +863,9 @@ def _agent_loop_metadata(
             "tool_calls": tool_calls,
             "budget_exhausted": budget_exhausted,
             "cancelled": cancelled,
+            # RF06：任务级截止细分（与 Codex 桥接同口径）
+            "timeout": task_timed_out,
+            "timeout_reason": "task_deadline" if task_timed_out else None,
         },
         "before_revision_id": before_revision_id or None,
     }
