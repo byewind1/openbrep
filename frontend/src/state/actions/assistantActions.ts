@@ -46,8 +46,9 @@ function compactExtras<T extends Record<string, unknown>>(extras: T): Partial<T>
   return out as Partial<T>
 }
 
-/** ST03 F2：历史发送时附带 delivery/continue 元数据（LLM 载荷仍只用 role/content）。 */
-function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem {
+/** ST03 F2：历史发送时附带 delivery/continue 元数据（LLM 载荷仍只用 role/content）。
+ *  导出供契约测试使用（卡01：任务反馈与连续对话修复——thinkingSteps 往返）。 */
+export function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem {
   const meta: NonNullable<AssistantHistoryItem['meta']> = {}
   if (message.delivery) meta.delivery = message.delivery
   if (message.deliverySource) meta.delivery_source = message.deliverySource
