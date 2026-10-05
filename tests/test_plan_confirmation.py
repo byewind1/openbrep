@@ -15,6 +15,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+
+from tests.fake_workbench_session import attach_refresh_same_project
 from unittest.mock import MagicMock
 
 from openbrep.compiler import MockHSFCompiler
@@ -186,7 +188,7 @@ class TestPendingPlanLifecycle(unittest.TestCase):
             def __init__(self, *a, **k):
                 pass
 
-        return SimpleNamespace(
+        session = SimpleNamespace(
             source_path=self.project.root,
             project=self.project,
             project_epoch=1,
@@ -198,6 +200,8 @@ class TestPendingPlanLifecycle(unittest.TestCase):
             max_retries=5,
             pending_plan=pending_plan,
         )
+        attach_refresh_same_project(session)
+        return session
 
     def _awaiting_pipeline(self):
         """fake pipeline：首请求返回 awaiting，执行请求返回正常结果，记录 request。"""

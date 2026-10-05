@@ -125,6 +125,10 @@ class WorkbenchSession:
         self.blender_import_service = WorkbenchBlenderImportService(self)
         self.assistant_service = WorkbenchAssistantService(self)
         self.conversation_service = WorkbenchConversationService(self)
+        # 卡04：任务事件服务（事件记录/查询；composition root 只持有实例）
+        from openbrep.workbench.task_event_service import WorkbenchTaskEventService
+
+        self.task_event_service = WorkbenchTaskEventService(self)
         self.skill_proposal_service = SkillProposalService(self)
         self.copilot_service = WorkbenchCopilotService(self)
         self.memory_service = WorkbenchMemoryService(self)
@@ -149,6 +153,27 @@ class WorkbenchSession:
     def project(self, value: HSFProject | None) -> None:
         self._project = value
         self.project_epoch += 1
+
+    def refresh_same_project(self, project: HSFProject | None) -> None:
+        """同项目源刷新：换入同一活动项目的新内存对象，保持 project_epoch。
+
+        适用 AI 修改结果接入、XML 保存后重载等"当前项目产生了新副本"的收尾
+        ——这是源刷新，不是项目激活，不使已打开会话的旧请求失效。身份校验
+        （两侧均非 None 且 root 一致）不过关时回落普通 setter 语义（epoch+1）：
+        宁可失效旧任务，不误保持。项目激活入口（打开/关闭/新建/导入/切换/
+        恢复 revision）必须继续走 setter。
+        """
+        if project is None or self._project is None:
+            self.project = project
+            return
+        try:
+            same = Path(project.root).resolve() == Path(self._project.root).resolve()
+        except (TypeError, ValueError, OSError):
+            same = False
+        if same:
+            self._project = project
+        else:
+            self.project = project
 
     def restore_last_project(self) -> dict[str, Any]:
         """Backend 启动时恢复上次打开的项目；路径不存在或加载失败则保持空会话。"""
@@ -740,6 +765,11 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/assistant/turn":
             return self.conversation_service.route(body)
+
+        # 卡04：任务事件只读查询——GET 天然 lock-free，长执行不堵进度查询
+        if normalized_method == "GET" and route.startswith("/api/assistant/turn/events/"):
+            turn_id = unquote(route.rsplit("/", 1)[-1])
+            return self.conversation_service.read_turn_events(turn_id)
 
         # P1-A：参考图资产（adopt 取回/采用、选择状态、列表、字节读取）
         if route == "/api/references" or route.startswith("/api/references/"):

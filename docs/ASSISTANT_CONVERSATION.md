@@ -6,6 +6,30 @@ The default entry is `unified`. In the workbench, consultation and planning are 
 
 执行先由后端保存本轮任务与不可变源/草稿快照，再保存编辑器草稿，使用服务端令牌执行。保存失败会停止。普通执行遇到 `SOURCE_CHANGED` 最多重新准备一次；显式计划遇到 `PLAN_STALE` 保留原计划供比较，需要重新生成。计划生成失败不会回落执行。
 
+## 任务过程记录与连续对话
+
+同一项目内可以连续咨询、修改和续做：AI 修改结果接入与 XML 保存重载是**同项目源刷新**，不递增项目会话代次（`project_epoch`）；打开/关闭/新建/导入/切换/另存/恢复 revision 仍会使旧请求失效。执行响应携带 `session_id` 与 `current_project_epoch`，过期令牌返回 `PROJECT_CHANGED`（提示“项目状态已变化，请重新确认当前项目后重试”），前端不跨项目盲重发。
+
+每个 turn 的执行过程以真实事件为唯一事实源，追加写入 `<project>/.openbrep/memory/chats/tasks/<turn_id>.jsonl`（单条公开文本 ≤4KiB、单任务记录 ≤2MiB，超限写一次 `truncated` 事件；凭据、认证路径、完整 prompt、图像 base64 与工具完整源码永不入日志）。事件含 `accepted / preparing / waiting_model / public_commentary / tool_started / tool_finished / verification / source_changed / delivery / cancelled / failed / completed`；完成状态区分完整交付（delivered）、部分修改（partial）与无源码变化（no_change）——编译通过不等于任务完成。事件记录只用于展示与复盘，不进入任何 LLM prompt、质量评分或 benchmark。
+
+- 只读查询：`GET /api/assistant/turn/events/<turn_id>`（不占用会话执行锁，执行中可查询）。
+- 聊天 meta 保存 `task_ref`（turn_id/run_id/schema_version）与时间线步骤；重开项目后据此恢复执行过程时间线。
+- 旧记录没有过程数据时显示“旧记录未保存执行过程”，不补造历史；进程中断后未终止的记录按 interrupted/unknown 展示，不推测为完成。
+- 事件记录保存失败不回滚已发生的源码修改，界面会提示执行记录保存失败。
+
+## 超时语义
+
+普通 `llm.timeout` 只约束单次文本调用，不再限制整个工具回合。Agent 执行超时独立配置（`config.toml`，必须为正整数，0/负数/非法值回退默认并记警告）：
+
+```toml
+[agent]
+agent_idle_timeout = 180    # 无有效活动上限：公开模型输出、工具开始/结束、协议进展才续期
+agent_task_timeout = 1800   # 整个任务总上限，跨轮共享，不按轮重置
+agent_tool_timeout = 600    # 单工具执行上限；编译/预览沿用 compiler.timeout 独立预算
+```
+
+达到阈值时区分 `idle_timeout / task_deadline / tool_timeout / connection_error / cancelled`，结果以结构化 `execution.timeout_reason` 记录（布尔 `execution.timeout` 保留兼容）。超时与取消都保留已发生的部分修改与交付证据；有写入任务的执行不会透明重跑。已发出的工具调用会先被排空再判定超时，避免调度延迟误报。
+
 ## Compatibility
 
 Set the following in `config.toml`, then restart:
@@ -35,9 +59,12 @@ Offline smoke (no paid calls):
 python scripts/assistant_route_eval.py --mode mock
 python scripts/advisor_quality_eval.py --mode mock --limit 1
 python scripts/assistant_turn_browser_smoke.py
+python scripts/task_feedback_browser_smoke.py
 ```
 
 The browser runner uses the real React shell and local API with offline model/compiler doubles. Its screenshots and `result.json` default to `/private/tmp/assistant-turn-e2e/`. It covers consultation with/without a project, plan approval/cancellation, direct execution, negation, proposal discussion/reference, save failure, source changes, project switching, HTTP idempotency, legacy fallback and plan failure. It does not verify real Archicad compilation or hosted-model quality.
+
+`scripts/task_feedback_browser_smoke.py` covers the task-feedback contract on the same real-browser basis (evidence defaults to `/private/tmp/task-feedback-e2e/`): continuous same-project modify rounds, live process timeline from real events, reopen replay from chat meta + event records, view-all beyond 12 steps, the `PROJECT_CHANGED` message, partial-change presentation and the per-turn event store contract. Long-duration timeouts (180s idle / 1800s task) are covered by virtual-clock unit tests, not wall-clock browser runs.
 
 Maintainer-authorized real evaluation requires an explicit configuration and opt-in flag; run separately for an ordinary model and Codex:
 

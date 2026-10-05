@@ -580,7 +580,18 @@ def test_config_budget_over_cap_clamped_to_max_in_codex_bridge(tmp_path):
         harness.cleanup()
 
 
-# ── D12：桥接 turn 超时接 config.llm.timeout ─────────────────
+# ── 卡03：Agent 超时独立（idle/task/tool 三计时器）──────────────
+
+
+def _set_agent_timeouts(config, *, idle=None, task=None, tool=None):
+    """卡03：在 config 上设置 [agent] 超时三键（None = 不动）。"""
+    if idle is not None:
+        config.agent.agent_idle_timeout = idle
+    if task is not None:
+        config.agent.agent_task_timeout = task
+    if tool is not None:
+        config.agent.agent_tool_timeout = tool
+    return config
 
 
 def _run_hang_turn(tmp_path, config):
@@ -601,25 +612,26 @@ def _run_hang_turn(tmp_path, config):
     return result, elapsed
 
 
-def test_turn_timeout_five_seconds_from_config(tmp_path):
-    """D12：llm.timeout = 5 + fake hang → 桥接 turn 在 ~5s 超时收尾（稳定文案、无假成功）。"""
-    config = _codex_config()
-    config.llm.timeout = 5
+def test_idle_timeout_from_config_and_structured_reason(tmp_path):
+    """卡03：[agent] agent_idle_timeout = 5 + fake hang（零事件）→ turn 在
+    ~5s 以 idle_timeout 收尾；llm.timeout 不再参与（保持普通调用语义）。"""
+    config = _set_agent_timeouts(_codex_config(), idle=5)
+    config.llm.timeout = 3600  # 若仍被当作 turn 截止，本测试会超时失败
     result, elapsed = _run_hang_turn(tmp_path, config)
     assert result.success is False, result.plain_text
     assert "超时" in result.plain_text
     assert "Codex 对话超时，请稍后重试。" in result.plain_text
     assert 4.0 <= elapsed <= 8.0, f"elapsed={elapsed:.2f}s 应落在 ~5s 窗口"
+    assert result.metadata["execution"]["timeout"] is True
+    assert result.metadata["execution"]["timeout_reason"] == "idle_timeout"
     # 无残留临时 cwd（thread 清理 + 用完即删）
     leftovers = [p for p in Path(tempfile.gettempdir()).glob("openbrep-codex-modify-*")]
     assert leftovers == [], leftovers
 
 
-def test_zero_timeout_falls_back_to_default_window(tmp_path):
-    """D12：llm.timeout = 0（未设置等价）→ 回落 _DEFAULT_TURN_TIMEOUT（
-    monkeypatch 缩短窗口断言）。"""
-    config = _codex_config()
-    config.llm.timeout = 0
+def test_zero_idle_timeout_falls_back_to_default_window(tmp_path):
+    """卡03：agent_idle_timeout = 0 → 回落默认窗口（0 不得隐式表示无限）。"""
+    config = _set_agent_timeouts(_codex_config(), idle=0)
     with patch("openbrep.runtime.modify_codex_bridge._DEFAULT_TURN_TIMEOUT", 1.0):
         result, elapsed = _run_hang_turn(tmp_path, config)
     assert result.success is False
@@ -627,15 +639,161 @@ def test_zero_timeout_falls_back_to_default_window(tmp_path):
     assert 0.5 <= elapsed <= 4.0, f"elapsed={elapsed:.2f}s"
 
 
-def test_invalid_timeout_falls_back_to_default_window(tmp_path):
-    """D12：llm.timeout 非法（非数值）→ 回落 _DEFAULT_TURN_TIMEOUT，绝不崩。"""
+def test_invalid_idle_timeout_falls_back_to_default_window(tmp_path):
+    """卡03：agent_idle_timeout 非法（非数值）→ 回落默认窗口，绝不崩。"""
     config = _codex_config()
-    config.llm.timeout = "abc"  # type: ignore[assignment]
+    config.agent.agent_idle_timeout = "abc"  # type: ignore[assignment]
     with patch("openbrep.runtime.modify_codex_bridge._DEFAULT_TURN_TIMEOUT", 1.0):
         result, elapsed = _run_hang_turn(tmp_path, config)
     assert result.success is False
     assert "Codex 对话超时，请稍后重试。" in result.plain_text
     assert 0.5 <= elapsed <= 4.0, f"elapsed={elapsed:.2f}s"
+
+
+def test_llm_timeout_no_longer_bounds_tool_round(tmp_path):
+    """卡03 契约：llm.timeout=1 + 有活动（工具调用）的 turn 不再在 ~1s 被杀。"""
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(tmp_path, [[
+        _tool("read_parameters"),
+        _tool("read_parameters"),
+        _final("已按计划完成修改，编译通过。"),
+    ]])
+    config = _codex_config()
+    config.llm.timeout = 1
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(tmp_path, project))
+        assert result.success is True, result.plain_text
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+def test_driver_tool_timeout_bounded_and_join_pending(tmp_path):
+    """卡03：单工具执行超过 tool_timeout → 模型收到失败文本（turn 继续），
+    join_pending_tools 等待超时线程收尾后才返回仍在运行数。"""
+    import threading as _threading
+
+    from openbrep.runtime.modify_codex_bridge import TOOL_TIMEOUT_TEXT
+    from tests.fake_codex_modify_transport import (
+        _DelegatingClient,
+        _ServerRequestTransport,
+        driver_tool_call,
+        final_turn_frames,
+    )
+
+    release = _threading.Event()
+    finished = _threading.Event()
+
+    def slow_executor(_call_id, _ns, _tool, _args):
+        release.wait(5)
+        finished.set()
+        return "ok", True
+
+    transport = _ServerRequestTransport(
+        notifications=final_turn_frames(),
+        tool_calls=[driver_tool_call(1, "call-1")],
+    )
+    driver = CodexModifyTurnDriver(
+        client=_DelegatingClient(transport),
+        model="gpt-5.6-luna",
+        cwd=str(tmp_path),
+        system_text="sys",
+        dynamic_tools=[],
+        executor=slow_executor,
+        timeout=30.0,
+        should_cancel=None,
+        on_delta=None,
+        tool_timeout=0.5,
+    )
+    outcome = driver.run("hi")
+    assert outcome.finish_reason == "stop", (outcome.finish_reason, outcome.error)
+    assert outcome.content == "OK"
+    assert outcome.tool_timeouts == 1
+    # 模型收到的是工具超时失败文本
+    assert transport.responded[0][1]["contentItems"][0]["text"] == TOOL_TIMEOUT_TEXT
+    assert transport.responded[0][1]["success"] is False
+    # join：等待延迟完成的工作线程落地（证据先于门禁）
+    release.set()
+    assert driver.join_pending_tools(2.0) == 0
+    assert finished.wait(1)
+
+
+def test_driver_timeout_reasons_idle_vs_task():
+    """卡03：虚拟时钟下超时原因细分——零事件=idle_timeout；任务截止先到=
+    task_deadline（同一驱动，两个场景）。"""
+    from tests.fake_codex_modify_transport import _DelegatingClient, _ServerRequestTransport, _SteppingClock
+
+    # 场景一：无任何事件 → idle 窗口到期
+    transport = _ServerRequestTransport(notifications=[], tool_calls=[])
+    driver = CodexModifyTurnDriver(
+        client=_DelegatingClient(transport),
+        model="gpt-5.6-luna",
+        cwd="/tmp/openbrep-card03-idle",
+        system_text="sys",
+        dynamic_tools=[],
+        executor=lambda *_: ("", True),
+        timeout=90.0,
+        should_cancel=None,
+        on_delta=None,
+        clock=_SteppingClock(step=30.0),
+    )
+    outcome = driver.run("hi")
+    assert outcome.finish_reason == "timeout"
+    assert outcome.timeout_reason == "idle_timeout"
+
+    # 场景二：任务截止（40s 时刻）先于 idle 窗口（30+90）到期
+    transport2 = _ServerRequestTransport(notifications=[], tool_calls=[])
+    driver2 = CodexModifyTurnDriver(
+        client=_DelegatingClient(transport2),
+        model="gpt-5.6-luna",
+        cwd="/tmp/openbrep-card03-task",
+        system_text="sys",
+        dynamic_tools=[],
+        executor=lambda *_: ("", True),
+        timeout=90.0,
+        should_cancel=None,
+        on_delta=None,
+        task_deadline=40.0,
+        clock=_SteppingClock(step=30.0),
+    )
+    outcome2 = driver2.run("hi")
+    assert outcome2.finish_reason == "timeout"
+    assert outcome2.timeout_reason == "task_deadline"
+
+
+def test_task_deadline_shared_across_turns(tmp_path):
+    """卡03：agent_task_timeout 是整个任务的上限——第一轮门禁打回后，第二轮
+    挂起时任务级截止到期，超时原因为 task_deadline（而非 idle）。"""
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(
+        tmp_path,
+        [
+            [_final("完成（无工具，门禁会打回）")],
+            [{"op": "hang"}],
+        ],
+    )
+    config = _set_agent_timeouts(_codex_config(), idle=30, task=2)
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    try:
+        with patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            side_effect=[_sem_blocking(), _sem_blocking()],
+        ):
+            result = pipeline.execute(_request(tmp_path, project, agent_loop_budget=5))
+        assert result.success is False
+        md = result.metadata["execution"]
+        assert md["timeout"] is True
+        assert md["timeout_reason"] == "task_deadline", md
+        assert md["llm_calls"] == 2  # 截止跨轮共享：第二 turn 也在同一截止内
+    finally:
+        provider.close()
+        harness.cleanup()
 
 
 # ── 工具面对抗：shell / apply_patch / MCP / 未注册 / namespace ──
@@ -1072,6 +1230,9 @@ def test_codex_modify_runtime_conflict_during_turn_is_actionable(tmp_path):
 
         def run(self, _current_input):
             raise CodexAppServerError("lock owner pid=456", category="runtime_conflict")
+
+        def join_pending_tools(self, _timeout=None):
+            return 0
 
     config = _codex_config()
     pipeline = _pipeline(config, _ReadyProvider(), tmp_path)

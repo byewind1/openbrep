@@ -9,6 +9,7 @@ import type {
   AssistantMessage,
   AssistantResult,
   AssistantStreamEvent,
+  TaskEvent,
   AuthoritativePreviewResult,
   ClearProjectMemoryResult,
   CompileResult,
@@ -1615,6 +1616,11 @@ function assistantImagesPayload(images: AssistantImageAttachment[]) {
       ...(img.path ? { path: img.path } : {}),
     })),
   }
+}
+
+/** 卡05：读取一个 turn 的任务事件记录（复盘/恢复进度时间线；GET lock-free）。 */
+export async function fetchTurnEvents(turnId: string): Promise<{ ok: boolean; events?: TaskEvent[]; error?: string }> {
+  return requestJson(`/api/assistant/turn/events/${encodeURIComponent(turnId)}`, { method: 'GET' }, { ok: false })
 }
 
 /** Unified conversation: prepare is read-only; execute consumes the server token. */

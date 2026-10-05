@@ -352,6 +352,12 @@ class ModifyToolRegistry:
 
     def execute(self, call: ToolCall) -> ToolExecutionResult:
         """执行一次工具调用并记日志；任何异常都降级为 ok=False 的结果回填。"""
+        # 卡04：工具开始事件先发（未返回的工具显示 running，不显示失败）
+        self.on_event("tool_started", {
+            "tool": call.name,
+            "tool_call_id": call.id,
+            "stage": "think",
+        })
         handler = {
             "read_parameters": self._read_parameters,
             "edit_parameters": self._edit_parameters,

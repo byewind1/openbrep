@@ -881,6 +881,18 @@ class AgentConfig:
     # 运行时按各路径既有上限 clamp（不放大上限）。非法值（负数/非整数）回退
     # 0 并记 warning；设置页不暴露该键，仅 config.toml 手改。
     agent_loop_budget: int = 0
+    # 卡03（任务反馈与连续对话修复）：Agent 执行超时独立契约——普通
+    # llm.timeout 只约束单次文本调用，不再限制整个工具回合。
+    # agent_idle_timeout：无有效活动上限（秒）。有效活动=公开模型输出、工具
+    # 开始/结束、turn 级协议实际进展；heartbeat/空通知不续期。
+    # agent_task_timeout：Agent 总执行上限（秒），整个任务跨轮共享，不按轮重置。
+    # agent_tool_timeout：单工具执行上限（秒）；编译/预览沿用 compiler.timeout
+    # 独立预算，不受此项约束。
+    # 三键必须为正数；0/负数/非法值在 load/save 双边界回退默认值并记 warning，
+    # 0 不得隐式表示无限。
+    agent_idle_timeout: int = 180
+    agent_task_timeout: int = 1800
+    agent_tool_timeout: int = 600
 
 
 @dataclass
@@ -976,6 +988,44 @@ def _normalize_agent_loop_budget(value: Any) -> int:
         )
         return 0
     return value
+
+
+# 卡03：Agent 超时键默认值（与 AgentConfig 字段默认一致；save 时用于
+# "非默认才写键"，保证默认配置模板字节稳定）。
+AGENT_IDLE_TIMEOUT_DEFAULT = 180
+AGENT_TASK_TIMEOUT_DEFAULT = 1800
+AGENT_TOOL_TIMEOUT_DEFAULT = 600
+
+
+def _normalize_agent_timeout(value: Any, *, key: str, default: int) -> int:
+    """[agent] 超时键校验（卡03）：必须为正整数（秒）。
+
+    0/负数/bool/非整数一律回退默认值并记 warning——0 不得隐式表示无限，
+    超时上限必须显式配置。
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        _LOGGER.warning(
+            "config [agent] %s 非法（%r），回退默认 %d", key, value, default
+        )
+        return default
+    return value
+
+
+def normalize_agent_timeouts(agent_cfg: "AgentConfig") -> "AgentConfig":
+    """load/save 共用的三键规范化边界（单一策略，不复制两套）。"""
+    agent_cfg.agent_idle_timeout = _normalize_agent_timeout(
+        agent_cfg.agent_idle_timeout,
+        key="agent_idle_timeout", default=AGENT_IDLE_TIMEOUT_DEFAULT,
+    )
+    agent_cfg.agent_task_timeout = _normalize_agent_timeout(
+        agent_cfg.agent_task_timeout,
+        key="agent_task_timeout", default=AGENT_TASK_TIMEOUT_DEFAULT,
+    )
+    agent_cfg.agent_tool_timeout = _normalize_agent_timeout(
+        agent_cfg.agent_tool_timeout,
+        key="agent_tool_timeout", default=AGENT_TOOL_TIMEOUT_DEFAULT,
+    )
+    return agent_cfg
 
 
 @dataclass
@@ -1084,6 +1134,7 @@ class GDLAgentConfig:
         agent_cfg.agent_loop_budget = _normalize_agent_loop_budget(
             agent_cfg.agent_loop_budget
         )
+        normalize_agent_timeouts(agent_cfg)
 
         library_data = data.get("library", {})
         if not isinstance(library_data, dict):
@@ -1137,6 +1188,8 @@ class GDLAgentConfig:
         self.agent.agent_loop_budget = _normalize_agent_loop_budget(
             self.agent.agent_loop_budget
         )
+        # 卡03：超时三键单保存边界规范化（正数校验，0 不得隐式无限）。
+        normalize_agent_timeouts(self.agent)
         retry_data = self.llm.model_retry_router().as_config()
         from openbrep.pi_catalog import normalize_pi_catalog_config
 
@@ -1180,6 +1233,10 @@ class GDLAgentConfig:
                 "auto_version": self.agent.auto_version,
                 # D12：MODIFY 工具预算（0 = 各路径既有默认值；设置页不暴露）
                 "agent_loop_budget": self.agent.agent_loop_budget,
+                # 卡03：Agent 超时三键（load/save 均已规范化为正整数）
+                "agent_idle_timeout": self.agent.agent_idle_timeout,
+                "agent_task_timeout": self.agent.agent_task_timeout,
+                "agent_tool_timeout": self.agent.agent_tool_timeout,
             },
             "compiler": {
                 "mode": self.compiler.mode,
@@ -1237,6 +1294,22 @@ class GDLAgentConfig:
             *(
                 [f"agent_loop_budget = {self.agent.agent_loop_budget}"]
                 if self.agent.agent_loop_budget
+                else []
+            ),
+            # 卡03：超时三键只在非默认时输出，默认配置模板字节稳定。
+            *(
+                [f"agent_idle_timeout = {self.agent.agent_idle_timeout}"]
+                if self.agent.agent_idle_timeout != AGENT_IDLE_TIMEOUT_DEFAULT
+                else []
+            ),
+            *(
+                [f"agent_task_timeout = {self.agent.agent_task_timeout}"]
+                if self.agent.agent_task_timeout != AGENT_TASK_TIMEOUT_DEFAULT
+                else []
+            ),
+            *(
+                [f"agent_tool_timeout = {self.agent.agent_tool_timeout}"]
+                if self.agent.agent_tool_timeout != AGENT_TOOL_TIMEOUT_DEFAULT
                 else []
             ),
             "", "[compiler]",

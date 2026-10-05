@@ -983,6 +983,37 @@ export interface AssistantMessage {
   originalInstruction?: string
   /** 本条任务的 run_id（ST02 delivery_source.run_id） */
   runId?: string | null
+  /** 卡05：任务事件记录关联（复盘：重开后按 turn_id 拉取执行过程） */
+  turnTaskRef?: TurnTaskRef
+  /** 卡05：任务类旧记录没有过程数据（不编造历史） */
+  staleTimeline?: boolean
+}
+
+/** 卡05：任务事件记录引用（聊天 meta.task_ref） */
+export interface TurnTaskRef {
+  turn_id: string
+  run_id?: string | null
+  schema_version?: number
+}
+
+/** 卡04：统一执行事件（GET /api/assistant/turn/events/<turn_id>） */
+export interface TaskEvent {
+  seq: number
+  event_id: string
+  timestamp: string
+  kind: string
+  stage?: string | null
+  state?: string | null
+  message?: string | null
+  tool_call_id?: string | null
+  tool_name?: string | null
+  affected_files?: string[] | null
+  summary?: string | null
+  error_code?: string | null
+  run_id?: string | null
+  turn_id?: string
+  session_id?: string
+  project_epoch?: number
 }
 
 // ── 读图提取卡片（P5d-1，只读）─────────────────────────────────────────────
@@ -1016,6 +1047,7 @@ export interface VisionExtraction {
 // ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────
 export type AssistantStreamEventType =
   | 'status'
+  | 'tool_started'
   | 'tool_call'
   | 'plan'
   | 'compile_result'

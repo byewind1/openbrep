@@ -69,7 +69,10 @@ class WorkbenchProjectScriptService:
             if target is None:
                 return {"ok": False, "error": f"Unsupported script file: {script_name}"}
             target.write_text(content, encoding="utf-8-sig")
-            self.session.project = HSFProject.load_from_disk(str(self.session.source_path))
+            # XML 保存后的内存重载是同项目源刷新，不是项目激活：保持 project_epoch
+            self.session.refresh_same_project(
+                HSFProject.load_from_disk(str(self.session.source_path))
+            )
         return {
             "ok": True,
             "success": True,

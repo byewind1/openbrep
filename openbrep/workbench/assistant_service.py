@@ -243,6 +243,9 @@ class WorkbenchAssistantService:
                         "run_id",
                         "changed_files",
                         "error_category",
+                        # 卡05：任务时间线与事件记录关联的复盘透传
+                        "thinking_steps",
+                        "task_ref",
                     ):
                         if key in meta and meta[key] is not None:
                             item[key] = meta[key]
@@ -485,7 +488,8 @@ class WorkbenchAssistantService:
             return {"ok": False, "error": error, "events": events}
 
         if result.project is not None:
-            self.session.project = result.project
+            # 同项目修改结果接入：显式源刷新，保持 project_epoch（连续对话契约）
+            self.session.refresh_same_project(result.project)
         self.session.project.save_to_disk()
         # 模式级 skill 提案（GUI 侧通道，best-effort；提炼失败不影响交付）
         proposal = self._safe_harvest(result, message)
@@ -821,7 +825,8 @@ class WorkbenchAssistantService:
                 self._safe_skill_outcome(result)
 
                 if result.project is not None:
-                    self.session.project = result.project
+                    # 同项目修改结果接入：显式源刷新，保持 project_epoch
+                    self.session.refresh_same_project(result.project)
                 self.session.project.save_to_disk()
                 done_data: dict[str, Any] = {
                     "ok": True,

@@ -46,8 +46,9 @@ function compactExtras<T extends Record<string, unknown>>(extras: T): Partial<T>
   return out as Partial<T>
 }
 
-/** ST03 F2：历史发送时附带 delivery/continue 元数据（LLM 载荷仍只用 role/content）。 */
-function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem {
+/** ST03 F2：历史发送时附带 delivery/continue 元数据（LLM 载荷仍只用 role/content）。
+ *  导出供契约测试使用（卡01：任务反馈与连续对话修复——thinkingSteps 往返）。 */
+export function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem {
   const meta: NonNullable<AssistantHistoryItem['meta']> = {}
   if (message.delivery) meta.delivery = message.delivery
   if (message.deliverySource) meta.delivery_source = message.deliverySource
@@ -56,6 +57,9 @@ function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem {
   if (message.runId) meta.run_id = message.runId
   if (message.changedFiles?.length) meta.changed_files = message.changedFiles
   if (message.errorCategory) meta.error_category = message.errorCategory
+  // 卡05：任务时间线与事件记录关联持久化——重开项目可复盘执行过程
+  if (message.thinkingSteps?.length) meta.thinking_steps = message.thinkingSteps
+  if (message.turnTaskRef) meta.task_ref = message.turnTaskRef
   // 任务类 assistant 消息即使无 delivery 也写入 meta.delivery=null 标记，
   // 便于刷新后区分「本就没有卡」与「旧记录未关联」
   if (message.role === 'assistant' && (message.delivery || message.deliverySource || message.changedFiles?.length)) {
@@ -76,6 +80,23 @@ export function hydrateHistoryMessages(messages: AssistantMessage[]): AssistantM
   return (messages ?? []).map((raw) => {
     const message = normalizeHistoryMessage(raw)
     if (message.role !== 'assistant') return message
+    // 卡05：恢复任务时间线（meta.thinking_steps）与事件记录关联（meta.task_ref）；
+    // 任务类旧记录两者皆缺 → staleTimeline（显示"旧记录未保存执行过程"，不编造）
+    const extras = raw as unknown as {
+      meta?: Record<string, unknown>
+      thinking_steps?: AssistantThinkingStep[]
+      task_ref?: import('../../api/types').TurnTaskRef
+    }
+    const meta = extras.meta ?? {}
+    const restoredSteps = (meta.thinking_steps ?? extras.thinking_steps) as AssistantThinkingStep[] | undefined
+    const taskRef = (meta.task_ref ?? extras.task_ref) as import('../../api/types').TurnTaskRef | undefined
+    if (restoredSteps?.length || taskRef) {
+      return {
+        ...message,
+        thinkingSteps: restoredSteps?.length ? restoredSteps : message.thinkingSteps,
+        turnTaskRef: taskRef ?? message.turnTaskRef,
+      }
+    }
     if (message.delivery) return message
     const looksLikeTaskResult =
       Boolean(message.deliverySource) ||
@@ -89,7 +110,7 @@ export function hydrateHistoryMessages(messages: AssistantMessage[]): AssistantM
       const rawDelivery = (raw as { delivery?: DeliveryPresentation | null }).delivery
       const nestedDelivery = (raw as { meta?: { delivery?: DeliveryPresentation | null } }).meta?.delivery
       if (rawDelivery === null || nestedDelivery === null) {
-        return { ...message, delivery: unlinkedDeliveryPresentation() }
+        return { ...message, delivery: unlinkedDeliveryPresentation(), staleTimeline: true }
       }
       return message
     }
@@ -98,6 +119,7 @@ export function hydrateHistoryMessages(messages: AssistantMessage[]): AssistantM
       delivery: unlinkedDeliveryPresentation(),
       deliverySource: message.deliverySource ?? null,
       runId: message.runId ?? null,
+      staleTimeline: true,
     }
   })
 }
@@ -204,6 +226,15 @@ function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep
       message: data.message,
     }
   }
+  if (type === 'tool_started') {
+    // 卡05：工具开始就显示（running 态，ok 缺省渲染为进行中，不误标失败）
+    const name = typeof data.tool === 'string' ? data.tool : String(data.name ?? 'tool')
+    return {
+      type: 'tool_call',
+      stage: typeof data.stage === 'string' ? data.stage : undefined,
+      message: name,
+    }
+  }
   if (type === 'tool_call') {
     const name = typeof data.display_name === 'string' ? data.display_name : String(data.name ?? 'tool')
     const summary = typeof data.summary === 'string' ? data.summary : ''
@@ -226,14 +257,8 @@ function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep
       strategy: typeof data.strategy === 'string' ? data.strategy : undefined,
     }
   }
-  if (type === 'assistant_delta' && typeof data.content === 'string') {
-    return {
-      type: 'assistant_delta',
-      stage: 'think',
-      message: 'AI 思考中',
-      detail: data.content,
-    }
-  }
+  // 卡05：assistant_delta 不再每个 token 占一行（final 答复承载文本；
+  // 公开说明由后端合并为 public_commentary 事件）
   if (type === 'compile_result') {
     const success = data.success === true
     return {
@@ -245,6 +270,83 @@ function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep
     }
   }
   return null
+}
+
+/** 卡05 错误码 → 用户可操作文案（不跨项目盲重发） */
+export function turnErrorText(code: string | null | undefined, fallback: string): string {
+  if (code === 'PROJECT_CHANGED') return '项目状态已变化，请重新确认当前项目后重试。'
+  if (code === 'SOURCE_CHANGED') return '源码已变化，当前任务令牌已失效；请重新发起修改。'
+  if (code === 'PLAN_STALE') return '计划已过期（源码已变化），请重新生成计划。'
+  if (code === 'TURN_EXPIRED') return '任务已过期，请重新发起。'
+  return fallback
+}
+
+/**
+ * 卡05：任务事件（卡04 持久化记录）→ 时间线步骤。
+ * 重开项目后按 chat meta.task_ref 拉取事件，恢复执行过程；不编造缺失数据。
+ */
+export function taskEventsToThinkingSteps(events?: Array<import('../../api/types').TaskEvent>): AssistantThinkingStep[] {
+  const steps: AssistantThinkingStep[] = []
+  for (const event of events ?? []) {
+    const message = typeof event.message === 'string' ? event.message : ''
+    if (event.kind === 'tool_started') {
+      steps.push({ type: 'tool_call', stage: 'think', message: event.tool_name ?? 'tool' })
+      continue
+    }
+    if (event.kind === 'tool_finished') {
+      steps.push({
+        type: 'tool_call',
+        stage: 'think',
+        message: event.tool_name ?? 'tool',
+        detail: typeof event.summary === 'string' ? event.summary : undefined,
+        ok: event.state === 'succeeded',
+      })
+      continue
+    }
+    if (event.kind === 'verification') {
+      steps.push({
+        type: 'status',
+        stage: 'compile',
+        message: event.state === 'succeeded' ? (message || '✅ 验证通过') : '❌ 验证未通过',
+        detail: message && event.state !== 'succeeded' ? message : undefined,
+        ok: event.state === 'succeeded',
+      })
+      continue
+    }
+    if (event.kind === 'preparing') {
+      if (event.stage === 'plan_gate') {
+        steps.push({ type: 'status', stage: 'plan', message: '📝 修改计划已生成，待确认。' })
+      } else if (message) {
+        steps.push({ type: 'status', stage: (event.stage as AssistantThinkingStep['stage']) ?? 'think', message })
+      }
+      continue
+    }
+    if (event.kind === 'public_commentary') {
+      steps.push({ type: 'status', stage: 'think', message: '💬 ' + message })
+      continue
+    }
+    if (event.kind === 'delivery') {
+      steps.push({ type: 'status', stage: 'done', message: message || '已交付。', ok: true })
+      continue
+    }
+    if (event.kind === 'completed') {
+      steps.push({
+        type: 'status',
+        stage: 'done',
+        message: event.state === 'partial' ? '⚠️ 任务部分完成' : message || '✅ 任务完成',
+        ok: event.state !== 'partial',
+      })
+      continue
+    }
+    if (event.kind === 'failed' || event.kind === 'cancelled') {
+      steps.push({ type: 'status', stage: 'cancel', message: message || (event.kind === 'failed' ? '❌ 任务失败' : '⏹ 已取消'), ok: false })
+      continue
+    }
+    if (event.kind === 'source_changed') {
+      steps.push({ type: 'status', stage: 'cancel', message: message || '源码已变化', ok: false })
+    }
+  }
+  return steps
 }
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
@@ -292,6 +394,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     initialContent: string,
     thinkingSteps: AssistantThinkingStep[],
     originalInstruction?: string,
+    taskRef?: import('../../api/types').TurnTaskRef,
   ) {
     if (projectSwitchedSince(epoch)) {
       discardStaleResult('Generation result discarded: project switched during the request.')
@@ -304,10 +407,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     // U05：未产生源码变化时，文案与 changed files 不得伪称已修复
     const noSourceChange = delivery?.status === 'no_change' || delivery?.status === 'unlinked'
     const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
+    const errorCode = (result as { code?: string | null }).code ?? null
     const finalReply =
       result.ok && result.assistant
         ? `${result.assistant.reply}${suffix}`
-        : formatAssistantRequestError(result.error, 'Generation request failed.')
+        : turnErrorText(errorCode, formatAssistantRequestError(result.error, 'Generation request failed.'))
     const replyExtras = result.ok
       ? compactExtras({
           changedFiles,
@@ -320,6 +424,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           deliveryContinueFrom: continueFrom ?? null,
           originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
           runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+          turnTaskRef: taskRef,
         })
       : compactExtras({
           errorCategory: classifyAssistantError(finalReply),
@@ -328,6 +433,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           deliverySource: deliverySource ?? null,
           originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
           runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+          turnTaskRef: taskRef,
         })
     set((state) => ({
       assistantBusy: false,
@@ -359,15 +465,20 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
   async function finishUnified(result: import('../../api/types').ConversationTurnResult, epoch: number,
     steps: AssistantThinkingStep[], message: string) {
     if (projectSwitchedSince(epoch)) return discardStaleResult('Conversation result discarded: project switched.')
+    // 卡05：任务事件记录关联（重开复盘的锚点）
+    const taskRef: import('../../api/types').TurnTaskRef | undefined = result.turn_id
+      ? { turn_id: result.turn_id, run_id: result.assistant?.run_id ?? null, schema_version: 1 }
+      : undefined
     if (result.awaiting_extraction_confirmation && result.extractions?.length) {
       set((state) => ({ assistantBusy: false, pendingExtraction: { turn_id: result.turn_id, extractions: result.extractions!, message, images: [] },
-        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, EXTRACTION_PENDING_CONTENT) }))
+        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, EXTRACTION_PENDING_CONTENT, { turnTaskRef: taskRef, thinkingSteps: [...steps] }) }))
       return
     }
     if (result.result_kind === 'awaiting_confirmation' && result.pending_plan) {
       set((state) => ({ assistantBusy: false,
         pendingPlan: { ...result.pending_plan!, turn_id: result.turn_id },
-        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, PLAN_PENDING_CONTENT),
+        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, PLAN_PENDING_CONTENT,
+          { turnTaskRef: taskRef, thinkingSteps: [...steps] }),
       }))
       return
     }
@@ -377,30 +488,33 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       await get().loadRevisions()
       await get().loadRecentProjects()
       set((state) => ({ assistantBusy: false, assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
-        result.assistant?.reply ?? 'Project created.', { verification: result.assistant?.verification ?? undefined }) }))
+        result.assistant?.reply ?? 'Project created.', { verification: result.assistant?.verification ?? undefined, turnTaskRef: taskRef }) }))
       await persistAssistantHistory()
       return
     }
     if (result.result_kind === 'execution' || (result.assistant?.delivery && result.result_kind !== 'advice')) {
-      await finishModifyStream(result, epoch, ASSISTANT_PENDING_PREFIX, steps, message)
+      await finishModifyStream(result, epoch, ASSISTANT_PENDING_PREFIX, steps, message, taskRef)
       return
     }
-    const reply = result.assistant?.reply ?? result.error ?? (result.cancelled ? '⏹ 已取消本轮。' : '本轮未执行。')
+    const reply = result.ok
+      ? result.assistant?.reply ?? '本轮未执行。'
+      : turnErrorText(result.code, result.error ?? (result.cancelled ? '⏹ 已取消本轮。' : '本轮未执行。'))
     set((state) => ({ assistantBusy: false,
-      assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply, { advisor: result.advisor }),
+      assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply,
+        { advisor: result.advisor, turnTaskRef: taskRef, thinkingSteps: [...steps] }),
       lastError: result.ok ? null : reply,
     }))
   }
 
   async function executeUnified(turnId: string, epoch: number, message: string,
-    signal?: AbortSignal, approval?: PendingPlan) {
+    signal?: AbortSignal, approval?: PendingPlan, priorSteps: AssistantThinkingStep[] = []) {
     if (projectSwitchedSince(epoch)) return
     const saved = await get().flushDirtyScripts()
     if (!saved.ok) throw new Error(saved.error ?? '草稿保存失败，本轮未执行。')
     if (projectSwitchedSince(epoch) || signal?.aborted) return
     const preview = get().preview
     set({ previewGhost: preview, previewGhostLabel: preview ? PREVIEW_GHOST_LABEL_PRE_TASK : null })
-    const steps: AssistantThinkingStep[] = []
+    const steps: AssistantThinkingStep[] = [...priorSteps]
     const result = await api.conversationTurn({ phase: 'execute', turn_id: turnId, stream: true,
       ...(approval ? { approve: true, plan_id: approval.plan_id, plan_version: approval.plan_version } : {}),
     }, (event) => {
@@ -423,8 +537,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         { role: 'user', content: userMessageContent(message, images), images: images.length ? images : undefined, createdAt: Date.now() },
         { role: 'assistant', content: ASSISTANT_PENDING_PREFIX, createdAt: Date.now() }],
     }))
+    // 卡05：prepare 也流式——语义路由/咨询/计划生成的阶段即时上时间线
+    const prepareSteps: AssistantThinkingStep[] = []
     const prepare = () => api.conversationTurn({ phase: 'prepare', client_turn_id: crypto.randomUUID(),
       message, history, images, requested_mode: proposal?.action === 'select' ? 'consult' : requestedMode, project_epoch: epoch,
+      stream: true,
       // R2（二轮 review）：效果契约的 change_kind 由后端按本轮任务意图确定性
       // 推导（材质/新增选项/参数/几何），不再用"有图片"替代意图判断——
       // "按图把材质改为金属，形状不变"是 material 任务，强加 geometry 门会
@@ -433,7 +550,14 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       assistant_settings: get().llmSettings.assistant_settings,
       draft_scripts: Object.fromEntries(Object.entries(get().dirtyScripts).filter(([, dirty]) => dirty)
         .map(([name]) => [name, get().scriptContents[name] ?? ''])),
-    }, undefined, controller.signal)
+    }, (event) => {
+      if (projectSwitchedSince(epoch) || controller.signal.aborted) return
+      const step = eventToThinkingStep(event)
+      if (!step) return
+      prepareSteps.push(step)
+      set((state) => ({ assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
+        ASSISTANT_PENDING_PREFIX, { thinkingSteps: [...prepareSteps] }) }))
+    }, controller.signal)
     try {
       let result = await prepare()
       if (projectSwitchedSince(epoch) || controller.signal.aborted) return
@@ -441,12 +565,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         if (result.task_intent === 'CREATE' && get().project && !(await approveCreate?.())) {
           result = await api.conversationTurn({ phase: 'execute', turn_id: result.turn_id, approve: false })
         } else {
-          let execution = await executeUnified(result.turn_id, epoch, message, controller.signal)
+          let execution = await executeUnified(result.turn_id, epoch, message, controller.signal, undefined, prepareSteps)
           if (execution?.result.code === 'SOURCE_CHANGED' && requestedMode !== 'plan') {
             result = await prepare()
             if (result.result_kind === 'ready_to_execute' && result.turn_id) {
-              execution = await executeUnified(result.turn_id, epoch, message, controller.signal)
-            } else execution = { result, steps: [] }
+              execution = await executeUnified(result.turn_id, epoch, message, controller.signal, undefined, prepareSteps)
+            } else execution = { result, steps: [...prepareSteps] }
           }
           if (execution) {
             await finishUnified(execution.result, epoch, execution.steps, message)
@@ -454,11 +578,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           }
         }
       }
-      await finishUnified(result, epoch, [], message)
+      await finishUnified(result, epoch, [...prepareSteps], message)
     } catch (error) {
       if (!projectSwitchedSince(epoch)) set((state) => ({ assistantBusy: false,
         lastError: String(error), assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
-          controller.signal.aborted ? INTERRUPTED_CONTENT : String(error)),
+          controller.signal.aborted ? INTERRUPTED_CONTENT : String(error),
+          { thinkingSteps: [...prepareSteps] }),
       }))
     } finally {
       if (get().chatAbortController === controller) set({ assistantBusy: false, chatAbortController: null })
@@ -570,7 +695,35 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       // ST03 F2：刷新后恢复 delivery 卡；旧/缺关联记录显示 unlinked
-      set({ assistantMessages: hydrateHistoryMessages(result.messages ?? []) })
+      const hydrated = hydrateHistoryMessages(result.messages ?? [])
+      set({ assistantMessages: hydrated })
+      // 卡05：按 meta.task_ref 拉取任务事件，恢复执行过程时间线（最近 10 条）
+      if (typeof api.fetchTurnEvents === 'function') {
+        const taskMessages = hydrated.filter((m) => m.role === 'assistant' && m.turnTaskRef?.turn_id).slice(-10)
+        if (taskMessages.length) {
+          const restored = await Promise.all(taskMessages.map(async (m) => {
+            try {
+              const events = await api.fetchTurnEvents(m.turnTaskRef!.turn_id)
+              if (!events.ok || !events.events?.length) return null
+              return { turnId: m.turnTaskRef!.turn_id, steps: taskEventsToThinkingSteps(events.events) }
+            } catch {
+              return null
+            }
+          }))
+          const byTurn = new Map<string, AssistantThinkingStep[]>()
+          for (const item of restored) {
+            if (item && item.steps.length) byTurn.set(item.turnId, item.steps)
+          }
+          if (byTurn.size) {
+            set((state) => ({
+              assistantMessages: state.assistantMessages.map((m) => {
+                const steps = m.turnTaskRef ? byTurn.get(m.turnTaskRef.turn_id) : undefined
+                return steps ? { ...m, thinkingSteps: steps, staleTimeline: false } : m
+              }),
+            }))
+          }
+        }
+      }
     },
 
     async restoreSkillProposals() {
