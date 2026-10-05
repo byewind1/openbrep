@@ -27,6 +27,7 @@ import logging
 import queue
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,17 +56,25 @@ DEFAULT_MODIFY_BUDGET = 10
 MAX_MODIFY_BUDGET = 20
 # 完成门禁打回上限（与 agent loop 一致的有界重试，防无限扯皮）。
 MAX_GATE_REJECTIONS = 2
-# 单 turn 事件轮询间隔（秒）。
+# 单 turn 事件轮询间隔（秒）；卡03：活动检查间隔 ≤1 秒。
 _POLL_INTERVAL = 0.25
-# turn 默认截止（秒）：与 codex/turn.py 一致。
+# 卡03 超时兜底（pipeline.config.agent 缺失/非法时；正常路径读 config 三键）：
+# idle 窗口缺省沿用历史 90s 口径，task/tool 沿用 config 默认。
 _DEFAULT_TURN_TIMEOUT = 90.0
+_DEFAULT_TASK_TIMEOUT = 1800.0
+_DEFAULT_TOOL_TIMEOUT = 600.0
 
 # 稳定文案：绝不回显上游原文 / canary / 秘密。
 EPOCH_CHANGED_TEXT = "项目已切换，本次修改任务已中止，拒绝继续执行工具。"
 BUDGET_EXHAUSTED_TOOL_TEXT = "工具预算已耗尽，无法执行更多工具调用。请如实总结当前进度。"
 DUPLICATE_CALL_TEXT = "该工具调用已处理过（重复回调），结果已在上一次执行中返回，本次不重复执行。"
 FORBIDDEN_TOOL_TEXT = "工具 {name} 不在开放工具列表内，调用被拒绝。"
+TOOL_TIMEOUT_TEXT = "该工具执行超过单工具时间上限，本次调用按失败处理；请如实继续，不要假设它已完成。"
 UNHANDLED_SERVER_REQUEST_TEXT = "method not found"
+
+# 卡03：turn 超时细分原因（结构化，进入 metadata.execution.timeout_reason）。
+TIMEOUT_REASON_IDLE = "idle_timeout"
+TIMEOUT_REASON_TASK = "task_deadline"
 
 # 纵深防御：即使 fake/恶意 app-server 伪造写路径名，也必须在进入 registry
 # 前被拒绝；允许名单只来自 registry.definitions()。
@@ -111,6 +120,8 @@ class CodexModifyTurnOutcome:
 
     finish_reason 语义与 codex/turn.py.CodexTurnResult 对齐：
     stop / no_final_message / interrupted / timeout / error。
+    timeout_reason（卡03）：finish_reason 为 timeout 时的细分原因
+    （idle_timeout / task_deadline）；tool_timeouts 为本次 turn 内超时工具数。
     """
 
     content: str = ""
@@ -118,9 +129,20 @@ class CodexModifyTurnOutcome:
     error: str | None = None
     thread_id: str | None = None
     turn_id: str | None = None
+    timeout_reason: str | None = None
+    tool_timeouts: int = 0
     # 本次 turn 内每个服务器请求的线级处置记录（审计用）：
     # {"request_id", "call_id", "tool", "text", "success"}
     requests: list[dict] = field(default_factory=list)
+
+
+def _positive_float(raw: Any, fallback: float) -> float:
+    """卡03：config 超时值读取口径——正数才生效，其余回落缺省（绝不崩）。"""
+    try:
+        value = float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return fallback
+    return value if value is not None and value > 0 else fallback
 
 
 def _looks_like_quota(payload: Any) -> bool:
@@ -249,11 +271,25 @@ class _ModifyTurnCollector:
 
 
 
+def _default_clock() -> float:
+    """缺省时钟：经模块属性间接引用 time.monotonic，测试可整体替换。"""
+    return time.monotonic()
+
+
 class CodexModifyTurnDriver:
     """在单个 app-server client 上驱动一次带动态工具的 Codex turn。
 
     executor(call_id, namespace, tool, arguments) -> (result_text, success)：
     由桥接层提供（预算/epoch/allowlist/registry 执行都在那里）。
+
+    卡03 超时契约（三个独立计时器，替代固定 turn 截止）：
+    - ``timeout``：无有效活动（idle）窗口（秒）。有效活动=公开模型输出、
+      工具开始/结束、turn 级协议实际进展；未知/空通知不续期。
+    - ``task_deadline``：绝对 monotonic 时刻，整个任务跨 turn 共享（由桥接
+      一次性计算后传入）；None = 不设任务级上限。
+    - ``tool_timeout``：单工具执行上限（秒）；超时向模型返回失败文本，调用
+      线程转入 pending，``join_pending_tools`` 供桥接在完成门禁前收尾。
+    - ``clock``：可注入时钟（虚拟时钟测试用），缺省 time.monotonic。
     """
 
     def __init__(
@@ -270,6 +306,9 @@ class CodexModifyTurnDriver:
         on_delta: Callable[[str], None] | None,
         reasoning_effort: str = "",
         logger: logging.Logger | None = None,
+        tool_timeout: float | None = None,
+        task_deadline: float | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._client = client
         self._model = model
@@ -282,6 +321,12 @@ class CodexModifyTurnDriver:
         self._on_delta = on_delta
         self._reasoning_effort = reasoning_effort
         self._logger = logger or _LOGGER
+        self._tool_timeout = tool_timeout
+        self._task_deadline = task_deadline
+        self._clock = clock or _default_clock
+        # 卡03：超时后仍在运行的工具线程（无法 kill；门禁前 best-effort 收尾）
+        self._pending_tools: list[threading.Thread] = []
+        self.tool_timeouts = 0
 
     # ── 参数构建（对齐 turn.py；dynamicTools 只走 thread/start）────
 
@@ -332,6 +377,27 @@ class CodexModifyTurnDriver:
 
     # ── 主流程 ─────────────────────────────────────────────────
 
+    @staticmethod
+    def _timeout_reason(now: float, task_deadline: float | None) -> str:
+        if task_deadline is not None and now >= task_deadline:
+            return TIMEOUT_REASON_TASK
+        return TIMEOUT_REASON_IDLE
+
+    def _timeout_terminal(
+        self,
+        thread_id: str | None,
+        turn_id: str | None,
+        reason: str,
+    ) -> CodexModifyTurnOutcome:
+        self._interrupt(thread_id, turn_id)
+        return CodexModifyTurnOutcome(
+            finish_reason="timeout",
+            thread_id=thread_id,
+            turn_id=turn_id,
+            error=TIMEOUT_TEXT,
+            timeout_reason=reason,
+        )
+
     def run(self, user_text: str) -> CodexModifyTurnOutcome:
         transport = getattr(self._client, "transport", None)
         collector = _ModifyTurnCollector()
@@ -342,6 +408,7 @@ class CodexModifyTurnDriver:
         if transport is not None and hasattr(transport, "subscribe_server_request"):
             transport.subscribe_server_request(collector.handle_server_request)
             subscribed_req = True
+        tool_timeouts_before = self.tool_timeouts
         try:
             thread_resp = self._client.thread_start(self._thread_start_params())
             thread = thread_resp.get("thread") or {}
@@ -361,10 +428,13 @@ class CodexModifyTurnDriver:
                 collector.turn_id = turn_id
             outcome = CodexModifyTurnOutcome(thread_id=thread_id, turn_id=turn_id)
 
-            deadline = time.monotonic() + (
+            clock = self._clock
+            idle_window = (
                 float(self._timeout) if self._timeout and self._timeout > 0
                 else _DEFAULT_TURN_TIMEOUT
             )
+            idle_deadline = clock() + idle_window
+            task_deadline = self._task_deadline
             candidates: list[tuple[str, str]] = []
             delta_buf: dict[str, list[str]] = {}
             terminal: CodexModifyTurnOutcome | None = None
@@ -383,24 +453,38 @@ class CodexModifyTurnDriver:
                             error=INTERRUPTED_TEXT,
                         )
                         break
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    self._interrupt(thread_id, collector.turn_id)
-                    terminal = CodexModifyTurnOutcome(
-                        finish_reason="timeout",
-                        thread_id=thread_id,
-                        turn_id=collector.turn_id,
-                        error=TIMEOUT_TEXT,
+                now = clock()
+                remaining = idle_deadline - now
+                if task_deadline is not None:
+                    remaining = min(remaining, task_deadline - now)
+                timed_out = remaining <= 0
+                if timed_out and collector.q.empty():
+                    # 排空检查：无已入队事件才判超时（防调度延迟误报）
+                    terminal = self._timeout_terminal(
+                        thread_id, collector.turn_id,
+                        self._timeout_reason(now, task_deadline),
                     )
                     break
                 try:
-                    event = collector.q.get(timeout=min(remaining, _POLL_INTERVAL))
+                    event = collector.q.get(
+                        timeout=0 if timed_out else min(remaining, _POLL_INTERVAL)
+                    )
                 except queue.Empty:
+                    if timed_out:
+                        terminal = self._timeout_terminal(
+                            thread_id, collector.turn_id,
+                            self._timeout_reason(now, task_deadline),
+                        )
+                        break
                     continue
                 kind, payload = event
                 if kind == "tool_call":
+                    # 工具开始/结束都是有效活动（执行期间不累计模型 idle）
+                    idle_deadline = clock() + idle_window
                     self._handle_tool_call(payload, thread_id, collector.turn_id, outcome)
+                    idle_deadline = clock() + idle_window
                 elif kind == "server_request_unhandled":
+                    idle_deadline = clock() + idle_window
                     req_id, method, _params = payload
                     outcome.requests.append({
                         "request_id": req_id, "call_id": "", "tool": method,
@@ -415,6 +499,7 @@ class CodexModifyTurnDriver:
                             "codex modify server request 回应失败（%s）", exc.__class__.__name__
                         )
                 elif kind == "delta":
+                    idle_deadline = clock() + idle_window
                     item_id, delta = payload
                     if not collector.is_commentary(item_id):
                         if isinstance(item_id, str):
@@ -427,13 +512,17 @@ class CodexModifyTurnDriver:
                                     "codex modify delta 回调异常（%s）", exc.__class__.__name__
                                 )
                 elif kind == "item_started":
-                    continue  # phase 已记录
+                    idle_deadline = clock() + idle_window
                 elif kind == "item_completed":
+                    idle_deadline = clock() + idle_window
                     self._record_item(payload, candidates, delta_buf)
                 elif kind == "turn_completed":
+                    idle_deadline = clock() + idle_window
                     terminal = self._finalize_turn(payload, candidates, outcome)
                 elif kind == "error":
                     if payload.get("willRetry") is True:
+                        # 服务端重试中=协议实际进展，续期后再等
+                        idle_deadline = clock() + idle_window
                         continue
                     terminal = CodexModifyTurnOutcome(
                         finish_reason="error",
@@ -441,6 +530,8 @@ class CodexModifyTurnDriver:
                         turn_id=collector.turn_id,
                         error=_stable_error_text(payload),
                     )
+            if terminal is not None:
+                terminal.tool_timeouts = self.tool_timeouts - tool_timeouts_before
             # 迟到/取消后到/未消费的服务器请求：turn 已结束，逐个拒绝并回应
             # （绝不执行，也绝不让 app-server 挂着等响应）。
             self._drain_late_requests(collector, transport, outcome)
@@ -458,6 +549,69 @@ class CodexModifyTurnDriver:
                     pass
             collector.close()
             self._cleanup_thread(collector.thread_id or None)
+
+    # ── 工具执行（卡03：单工具独立预算，线程化有界等待）────────────
+
+    def join_pending_tools(self, timeout: float | None = None) -> int:
+        """等待已超时但仍在运行的工具线程收尾（best-effort）。
+
+        返回仍未结束的线程数。桥接在完成门禁评估前调用，保证延迟落盘的
+        工具改动先于门禁参与验证（延迟写绝不与门禁竞态）。
+        """
+        pending, self._pending_tools = self._pending_tools, []
+        if not pending:
+            return 0
+        deadline = (
+            self._clock() + float(timeout)
+            if timeout is not None and timeout > 0
+            else None
+        )
+        still_running = 0
+        for worker in pending:
+            remaining = (
+                max(0.0, deadline - self._clock())
+                if deadline is not None
+                else None
+            )
+            worker.join(remaining)
+            if worker.is_alive():
+                still_running += 1
+        return still_running
+
+    def _execute_with_timeout(
+        self, call_id: str, namespace: str | None, tool: str, arguments: Any
+    ) -> tuple[str, bool]:
+        """在独立线程中执行工具并等待至多 tool_timeout；超时按失败返回。
+
+        工具线程为 daemon（真正卡死的工具不阻塞进程退出）；编译类工具本身
+        受 compiler.timeout 子进程预算约束，注册表其余工具为有界内存操作。
+        """
+        if not self._tool_timeout or self._tool_timeout <= 0:
+            return self._executor(call_id, namespace, tool, arguments)
+        holder: dict[str, Any] = {}
+
+        def _run() -> None:
+            try:
+                holder["value"] = self._executor(call_id, namespace, tool, arguments)
+            except BaseException as exc:  # noqa: BLE001 —— 线程内捕获，主循环重抛
+                holder["error"] = exc
+
+        worker = threading.Thread(
+            target=_run, daemon=True, name=f"openbrep-codex-tool-{tool}",
+        )
+        worker.start()
+        worker.join(self._tool_timeout)
+        if worker.is_alive():
+            self.tool_timeouts += 1
+            self._pending_tools.append(worker)
+            self._logger.warning(
+                "codex modify 工具执行超时（tool=%s，budget=%.1fs）",
+                tool, float(self._tool_timeout),
+            )
+            return TOOL_TIMEOUT_TEXT, False
+        if "error" in holder:
+            raise holder["error"]
+        return holder.get("value", ("", True))
 
     # ── 工具请求处置 ───────────────────────────────────────────
 
@@ -497,7 +651,7 @@ class CodexModifyTurnDriver:
             return
         if not isinstance(arguments, dict):
             arguments = {}
-        text, success = self._executor(call_id, namespace, tool, arguments)
+        text, success = self._execute_with_timeout(call_id, namespace, tool, arguments)
         outcome.requests.append({
             "request_id": req_id, "call_id": call_id, "tool": tool,
             "text": text, "success": success,
@@ -651,6 +805,7 @@ class CodexModifyBridge:
         model: str,
         reasoning_effort: str,
         logger: logging.Logger | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         from openbrep.core import GDLAgent
         from openbrep.hsf_project import HSFProject
@@ -665,6 +820,8 @@ class CodexModifyBridge:
         self.logger = logger or _LOGGER
         self.intent = request.intent or "MODIFY"
         self.on_event = request.on_event or (lambda *_: None)
+        # 卡03：可注入时钟（task 截止计算与 driver 共用同一时间源）
+        self._clock = clock or _default_clock
 
         compiler = pipeline._make_compiler()
         self.compiler = compiler
@@ -991,6 +1148,19 @@ class CodexModifyBridge:
                 )
 
             self.on_event("status", {"stage": "understand", "message": "🤔 正在理解你的修改意图…"})
+            # 卡03：三个独立计时器（替代 D12 的 llm.timeout 固定 turn 截止）。
+            # llm.timeout 只约束单次文本调用，不再限制整个工具回合；task 截止
+            # 在 run() 开始时一次性计算，跨 turn 共享，不按轮重置。
+            agent_cfg = getattr(self.pipeline.config, "agent", None)
+            idle_timeout = _positive_float(
+                getattr(agent_cfg, "agent_idle_timeout", None), _DEFAULT_TURN_TIMEOUT
+            )
+            task_timeout = _positive_float(
+                getattr(agent_cfg, "agent_task_timeout", None), _DEFAULT_TASK_TIMEOUT
+            )
+            tool_timeout = _positive_float(
+                getattr(agent_cfg, "agent_tool_timeout", None), _DEFAULT_TOOL_TIMEOUT
+            )
             kwargs = {
                 "client": client,
                 "model": self.model,
@@ -1002,19 +1172,11 @@ class CodexModifyBridge:
                 "on_delta": None,
                 "reasoning_effort": self.reasoning_effort,
                 "logger": self.logger,
+                "timeout": idle_timeout,
+                "task_deadline": self._clock() + task_timeout,
+                "tool_timeout": tool_timeout,
+                "clock": self._clock,
             }
-            # D12：codex 桥 turn 超时接 config.llm.timeout（与 llm.py 三处口径一致）。
-            # 未设置/0/负数/非数值一律回落模块级 _DEFAULT_TURN_TIMEOUT（90），绝不崩。
-            timeout = None
-            cfg = getattr(self.pipeline.config, "llm", None)
-            if cfg is not None:
-                raw_timeout = getattr(cfg, "timeout", None)
-                if raw_timeout:
-                    try:
-                        timeout = float(raw_timeout)
-                    except (TypeError, ValueError):
-                        timeout = None
-            kwargs["timeout"] = timeout
 
             driver = CodexModifyTurnDriver(**kwargs)
             self.last_driver = driver
@@ -1069,6 +1231,14 @@ class CodexModifyBridge:
                         finish_reason="error", error=TURN_ERROR_TEXT,
                     )
                 self.turn_outcomes.append(outcome)
+                # 卡03：超时仍在运行的工具线程，在门禁评估前 best-effort 收尾
+                # ——延迟落盘必须先参与验证，绝不与完成门禁竞态。
+                still_running = driver.join_pending_tools(tool_timeout)
+                if still_running:
+                    self.on_event("status", {
+                        "stage": "verify",
+                        "message": "⚠️ 有工具仍未结束，当前进度按未完成处理。",
+                    })
                 compile_result = self.registry.last_compile_result
                 if self.epoch_violated or (self.epoch_guard is not None and not self._epoch_ok()):
                     self.epoch_violated = True
@@ -1307,6 +1477,10 @@ class CodexModifyBridge:
                 "timeout": any(
                     o.finish_reason == "timeout" for o in self.turn_outcomes
                 ),
+                # 卡03：细分原因（task_deadline 优先于 idle_timeout；布尔字段
+                # 原样保留，质量记录兼容）。connection_error/cancelled 由各自
+                # 字段（error/cancelled）表达，不混入 timeout_reason。
+                "timeout_reason": _aggregate_timeout_reason(self.turn_outcomes),
             },
             "before_revision_id": self.before_revision_id or None,
             "changed_files": sorted(dict(self.registry.changed_files).keys()),
@@ -1320,6 +1494,8 @@ class CodexModifyBridge:
                 "gate_rejections": self.gate_rejections,
                 "cancelled": self.cancelled,
                 "epoch_violated": self.epoch_violated,
+                # 卡03：单工具超时次数（工具级预算；独立于 turn 级 timeout）
+                "tool_timeouts": sum(o.tool_timeouts for o in self.turn_outcomes),
                 # 审计：每次工具调用/拒绝（含原因）+ 每次线级服务器请求
                 "tool_audit": _merge_audit_wire(self.audit, self.turn_outcomes),
                 "wire_requests": [
@@ -1356,6 +1532,16 @@ class CodexModifyBridge:
             verification=verification_report.to_dict(),
             metadata=metadata,
         )
+
+
+def _aggregate_timeout_reason(outcomes: list[CodexModifyTurnOutcome]) -> str | None:
+    """turn 结果序列 → 单一细分原因（task_deadline > idle_timeout；None=未超时）。"""
+    reasons = [o.timeout_reason for o in outcomes if o.timeout_reason]
+    if TIMEOUT_REASON_TASK in reasons:
+        return TIMEOUT_REASON_TASK
+    if TIMEOUT_REASON_IDLE in reasons:
+        return TIMEOUT_REASON_IDLE
+    return None
 
 
 def _merge_audit_wire(audit: list[dict], outcomes: list[CodexModifyTurnOutcome]) -> list[dict]:
