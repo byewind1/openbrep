@@ -243,6 +243,9 @@ class WorkbenchAssistantService:
                         "run_id",
                         "changed_files",
                         "error_category",
+                        # 卡05：任务时间线与事件记录关联的复盘透传
+                        "thinking_steps",
+                        "task_ref",
                     ):
                         if key in meta and meta[key] is not None:
                             item[key] = meta[key]

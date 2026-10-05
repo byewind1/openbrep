@@ -82,9 +82,14 @@ export function hydrateHistoryMessages(messages: AssistantMessage[]): AssistantM
     if (message.role !== 'assistant') return message
     // 卡05：恢复任务时间线（meta.thinking_steps）与事件记录关联（meta.task_ref）；
     // 任务类旧记录两者皆缺 → staleTimeline（显示"旧记录未保存执行过程"，不编造）
-    const meta = (raw as { meta?: Record<string, unknown> }).meta ?? {}
-    const restoredSteps = meta.thinking_steps as AssistantThinkingStep[] | undefined
-    const taskRef = meta.task_ref as import('../../api/types').TurnTaskRef | undefined
+    const extras = raw as unknown as {
+      meta?: Record<string, unknown>
+      thinking_steps?: AssistantThinkingStep[]
+      task_ref?: import('../../api/types').TurnTaskRef
+    }
+    const meta = extras.meta ?? {}
+    const restoredSteps = (meta.thinking_steps ?? extras.thinking_steps) as AssistantThinkingStep[] | undefined
+    const taskRef = (meta.task_ref ?? extras.task_ref) as import('../../api/types').TurnTaskRef | undefined
     if (restoredSteps?.length || taskRef) {
       return {
         ...message,
