@@ -983,10 +983,14 @@ export interface AssistantMessage {
   originalInstruction?: string
   /** 本条任务的 run_id（ST02 delivery_source.run_id） */
   runId?: string | null
+  /** RF03：执行记录状态（degraded = 后端落盘失败，过程可能不完整） */
+  events_recording?: { status: string; error?: string | null }
   /** 卡05：任务事件记录关联（复盘：重开后按 turn_id 拉取执行过程） */
   turnTaskRef?: TurnTaskRef
   /** 卡05：任务类旧记录没有过程数据（不编造历史） */
   staleTimeline?: boolean
+  /** RF03：后端执行记录保存失败（仅当前会话内存活的提示） */
+  recordingFailed?: boolean
 }
 
 /** 卡05：任务事件记录引用（聊天 meta.task_ref） */
@@ -1654,6 +1658,8 @@ export interface LlmConfigImportResult {
 export type ConversationTurnResult = GenerateResult & Partial<Omit<WorkbenchSnapshot, 'preview'>> & {
   result_kind?: 'advice' | 'awaiting_confirmation' | 'ready_to_execute' | 'execution' | 'failed' | 'cancelled'
   turn_id?: string
+  /** RF03：执行事件记录状态（degraded = 后端落盘失败） */
+  events_recording?: { status: string; error?: string | null }
   project_epoch?: number
   task_intent?: string
   code?: string

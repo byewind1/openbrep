@@ -13,6 +13,7 @@ from __future__ import annotations
 import difflib
 import json
 import logging
+import time
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -51,6 +52,8 @@ class ToolExecutionResult:
     ok: bool
     summary: str
     data: dict = field(default_factory=dict)
+    # RF03：工具真实耗时（毫秒），进入任务事件 tool_finished
+    duration_ms: float | None = None
 
 
 def _truncate(text: str, limit: int = _MAX_TOOL_RESULT_CHARS) -> str:
@@ -377,6 +380,7 @@ class ModifyToolRegistry:
     def execute(self, call: ToolCall) -> ToolExecutionResult:
         """执行一次工具调用并记日志；任何异常都降级为 ok=False 的结果回填。"""
         # 卡04：工具开始事件先发（未返回的工具显示 running，不显示失败）
+        started = time.monotonic()
         self.on_event("tool_started", {
             "tool": call.name,
             "tool_call_id": call.id,
@@ -412,11 +416,14 @@ class ModifyToolRegistry:
             except Exception as exc:  # 工具异常不应炸掉 loop，如实回填给模型
                 logger.warning("tool %s failed: %s", call.name, exc)
                 result = ToolExecutionResult(name=call.name, ok=False, summary=f"工具执行异常：{exc}")
+        # RF03：真实工具耗时进入结果（tool_finished 事件与审计共用）
+        result.duration_ms = round((time.monotonic() - started) * 1000, 1)
         self.tool_log.append({
             "name": call.name,
             "arguments": dict(call.arguments or {}),
             "ok": result.ok,
             "summary": result.summary[:200],
+            "duration_ms": result.duration_ms,
         })
         return result
 

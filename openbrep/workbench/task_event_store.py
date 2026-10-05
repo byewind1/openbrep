@@ -67,29 +67,33 @@ class TaskEventStore:
             self._assign_seq(turn_id, stored)
             line = json.dumps(self._sanitize(stored), ensure_ascii=False, sort_keys=True)
             path.parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_trailing_newline(path)
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
         return stored
 
     def append_terminal(self, turn_id: str, event: dict[str, Any]) -> dict[str, Any] | None:
-        """终止事件（completed/failed/cancelled）：幂等——同 turn 同 kind 只落一条。
+        """终止事件（completed/failed/cancelled）：幂等，first-wins。
 
-        终止摘要不受 2MiB 截断限制（终止摘要另保留）。重复终止返回 None。
+        幂等检查与追加在同一临界区内（RF03）：并发的重复终止——无论同 kind
+        还是不同 kind——只落第一条，其余返回 None。终止摘要不受 2MiB 截断限制
+        （终止摘要另保留）。
         """
         kind = str(event.get("kind") or "")
         if kind not in TERMINAL_KINDS:
             return self.append(turn_id, event)
         with self._lock:
+            # RF03：检查与追加同锁——并发重复终止不会双写
             existing = [e.get("kind") for e in self._read_unlocked(turn_id)]
-            if kind in existing:
+            if any(k in TERMINAL_KINDS for k in existing):
                 return None
-        stored = self._fill(turn_id, event)
-        with self._lock:
             self._ensure_seq_loaded(turn_id)
+            stored = self._fill(turn_id, event)
             self._assign_seq(turn_id, stored)
             path = self.turn_path(turn_id)
             line = json.dumps(self._sanitize(stored), ensure_ascii=False, sort_keys=True)
             path.parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_trailing_newline(path)
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
         return stored
@@ -165,10 +169,25 @@ class TaskEventStore:
         }
         line = json.dumps(marker, ensure_ascii=False, sort_keys=True)
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_trailing_newline(path)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
         self._seq[turn_id] += 1
         return False
+
+    @staticmethod
+    def _ensure_trailing_newline(path: Path) -> None:
+        """RF03：崩溃残行保护——追加前保证文件以换行结尾，新事件不接在残行上。"""
+        try:
+            if not path.exists() or path.stat().st_size == 0:
+                return
+            with path.open("rb") as fh:
+                fh.seek(-1, 2)
+                if fh.read(1) != b"\n":
+                    with path.open("ab") as out:
+                        out.write(b"\n")
+        except OSError:
+            pass
 
     def _read_unlocked(self, turn_id: str) -> list[dict[str, Any]]:
         path = self.turn_path(turn_id)

@@ -531,6 +531,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     }
     if (result.result_kind === 'execution' || (result.assistant?.delivery && result.result_kind !== 'advice')) {
       await finishModifyStream(result, epoch, ASSISTANT_PENDING_PREFIX, steps, message, taskRef)
+      if (result.events_recording?.status === 'degraded') markRecordingFailed(result.turn_id)
       return
     }
     const reply = result.ok
@@ -538,8 +539,19 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       : turnErrorText(result.code, result.error ?? (result.cancelled ? '⏹ 已取消本轮。' : '本轮未执行。'))
     set((state) => ({ assistantBusy: false,
       assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply,
-        { advisor: result.advisor, turnTaskRef: taskRef, thinkingSteps: [...steps] }),
+        { advisor: result.advisor, turnTaskRef: taskRef, thinkingSteps: [...steps],
+          recordingFailed: result.events_recording?.status === 'degraded' }),
       lastError: result.ok ? null : reply,
+    }))
+  }
+
+  /** RF03：落盘失败提示贴到对应任务消息（仅会话内存，不阻塞任务） */
+  function markRecordingFailed(turnId?: string) {
+    if (!turnId) return
+    set((state) => ({
+      assistantMessages: state.assistantMessages.map((m) =>
+        m.turnTaskRef?.turn_id === turnId ? { ...m, recordingFailed: true } : m,
+      ),
     }))
   }
 
