@@ -11,13 +11,15 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
       const refreshParameters = options.refreshParameters ?? false
       const runDiagnostics = options.runDiagnostics ?? false
 
+      // 身份锚点在进入刷新时捕获（卡02）：loadScripts/后续请求期间项目或
+      // 后端会话被切换时，整个刷新放弃接入，防止旧项目结果写进新项目状态。
+      const identity = { sessionId: get().sessionId, projectEpoch: get().projectEpoch }
+
       await get().loadScripts()
       const existingScripts = get().scripts.filter((script) => script.exists)
       const targetNames = refreshAllScripts
         ? existingScripts.map((script) => script.name)
         : [preferredScriptName || get().activeScriptName || ''].filter(Boolean)
-
-      const identity = { sessionId: get().sessionId, projectEpoch: get().projectEpoch }
 
       for (const scriptName of [...new Set(targetNames)]) {
         if (!sameProjectIdentity(get(), identity)) return
@@ -56,10 +58,15 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
       // 保留流式结果）。
       if (refreshParameters) {
         const snapshot = await api.fetchSnapshot()
-        if (snapshot.project !== null) {
+        // 卡02：仅在会话身份一致时接入快照（长请求期间项目/后端会话已切换
+        // 则整块跳过）；同项目刷新回填 sessionId/projectEpoch，收敛代次漂移，
+        // 防止下一轮以过期代次发起 prepare 被拒。
+        if (snapshot.project !== null && sameProjectIdentity(get(), identity)) {
           set({
             project: snapshot.project,
             parameters: snapshot.parameters,
+            ...(snapshot.session_id !== undefined ? { sessionId: snapshot.session_id } : {}),
+            ...(snapshot.project_epoch !== undefined ? { projectEpoch: snapshot.project_epoch } : {}),
             ...(snapshot.source_fingerprint !== undefined
               ? { sourceFingerprint: snapshot.source_fingerprint }
               : {}),

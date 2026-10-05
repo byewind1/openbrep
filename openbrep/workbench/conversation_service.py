@@ -180,9 +180,14 @@ class WorkbenchConversationService:
         return getattr(self.session, 'dependency_context_version', None)
 
     def _response(self, turn: PreparedTurn | None, kind: str, **payload):
+        # identity 契约（卡02）：project_epoch = turn 开始时的会话代次（事件
+        # 过滤/守卫用它）；current_project_epoch + session_id = 响应生成时的
+        # 服务端当前身份，前端用于发现代次漂移，不把旧任务结果盲接入新项目。
         return {'ok': kind not in {'failed'}, 'result_kind': kind,
                 'turn_id': turn.turn_id if turn else None,
                 'project_epoch': turn.snapshot.project_epoch if turn else self.session.project_epoch,
+                'session_id': self.session.session_id,
+                'current_project_epoch': self.session.project_epoch,
                 **payload}
 
     def _failure(self, turn, code, error=None):

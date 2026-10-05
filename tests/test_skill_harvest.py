@@ -19,6 +19,8 @@ import unittest
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+
+from tests.fake_workbench_session import attach_refresh_same_project
 from unittest.mock import patch
 
 from openbrep.compiler import CompileResult
@@ -115,7 +117,9 @@ def _make_session(project: HSFProject, **overrides) -> SimpleNamespace:
         pending_skill_proposal=None,
     )
     kwargs.update(overrides)
-    return SimpleNamespace(**kwargs)
+    session = SimpleNamespace(**kwargs)
+    attach_refresh_same_project(session)
+    return session
 
 
 # ── 1. harvest 门禁各分支 ────────────────────────────────
@@ -530,7 +534,7 @@ class TestAssistantServiceIntegration(unittest.TestCase):
             def execute(self, request):
                 return pipeline_result
 
-        return SimpleNamespace(
+        session = SimpleNamespace(
             source_path=self.project.root,
             project=self.project,
             project_epoch=1,
@@ -544,6 +548,8 @@ class TestAssistantServiceIntegration(unittest.TestCase):
             pending_skill_proposal=None,
             skill_harvest_enabled=True,
         )
+        attach_refresh_same_project(session)
+        return session
 
     def test_generate_response_carries_skill_proposal(self):
         result = _verified_result(self.project)
@@ -776,7 +782,7 @@ class TestAssistantServiceSkillOutcome(unittest.TestCase):
             def execute(self, request):
                 return pipeline_result
 
-        return SimpleNamespace(
+        session = SimpleNamespace(
             source_path=self.project.root,
             project=self.project,
             project_epoch=1,
@@ -790,6 +796,8 @@ class TestAssistantServiceSkillOutcome(unittest.TestCase):
             pending_skill_proposal=None,
             skill_harvest_enabled=True,
         )
+        attach_refresh_same_project(session)
+        return session
 
     def test_generate_records_skill_outcome_via_harvest_hook(self):
         result = _injected_result(self.project, success=False, skills=["tok_skill"])

@@ -69,11 +69,10 @@ def _real_modify_session(tmp_path):
     return session
 
 
-@pytest.mark.xfail(strict=True, reason="卡02：同项目修改收尾走显式源刷新，不再递增 epoch")
 def test_followup_prepare_after_modify_finish_keeps_client_epoch(tmp_path):
     """跨调用回归（统一入口同步路径）：真实 generate 收尾赋值 session.project
-    （今天 epoch 1→2）后，客户端仍持有任务开始时的代次 1，下一轮 prepare
-    不得返回 PROJECT_CHANGED——同项目连续对话是产品契约。"""
+    后，客户端仍持有任务开始时的代次，下一轮 prepare 不得返回
+    PROJECT_CHANGED——同项目连续对话是产品契约（卡02 显式源刷新）。"""
     session = _real_modify_session(tmp_path)
     ready = session.route("POST", "/api/assistant/turn", {
         "phase": "prepare", "client_turn_id": "c1", "message": "添加背板",
@@ -92,10 +91,9 @@ def test_followup_prepare_after_modify_finish_keeps_client_epoch(tmp_path):
     assert followup["result_kind"] == "ready_to_execute", followup
 
 
-@pytest.mark.xfail(strict=True, reason="卡02：legacy 流式收尾同样走显式源刷新")
 def test_legacy_stream_finish_keeps_epoch(tmp_path):
     """legacy 流式路径：generate_with_assistant_stream 收尾赋值后，epoch 保持
-    稳定；客户端以原代次发起下一轮不被拒绝。"""
+    稳定；客户端以原代次发起下一轮不被拒绝（卡02 显式源刷新）。"""
     session = _real_modify_session(tmp_path)
     epoch_before = session.project_epoch
     events = list(session.assistant_service.generate_with_assistant_stream(
@@ -106,10 +104,9 @@ def test_legacy_stream_finish_keeps_epoch(tmp_path):
     assert session.project_epoch == epoch_before
 
 
-@pytest.mark.xfail(strict=True, reason="卡02：XML 保存后内存刷新走显式源刷新，不递增 epoch")
 def test_xml_save_refresh_keeps_epoch(tmp_path):
     """paramlist.xml 保存后重载内存对象是同项目源刷新，不是项目激活：
-    epoch 不变，且已打开的会话以原代次继续可用。"""
+    epoch 不变，且已打开的会话以原代次继续可用（卡02 显式源刷新）。"""
     session = session_at(Path(tmp_path))
     from openbrep.paramlist_builder import build_paramlist_xml
 
@@ -123,6 +120,126 @@ def test_xml_save_refresh_keeps_epoch(tmp_path):
         "project_epoch": epoch_before,
     })
     assert followup["result_kind"] == "ready_to_execute", followup
+
+
+def test_three_rounds_modify_consult_modify_keep_conversation(tmp_path):
+    """卡02 验收：连续三轮 修改→咨询→修改，同项目内会话代次稳定，任务状态
+    不被收尾赋值打断。"""
+    import json as _json
+
+    from openbrep.llm import MockLLM
+
+    session = _real_modify_session(tmp_path)
+    epoch = session.project_epoch
+    first = session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "m1", "message": "添加背板",
+        "project_epoch": epoch,
+    })
+    done = session.route("POST", "/api/assistant/turn", {
+        "phase": "execute", "turn_id": first["turn_id"],
+    })
+    assert done["result_kind"] == "execution", done
+    # 咨询轮：advisor 走 MockLLM
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[
+        _json.dumps({"conclusion": "比例可以", "suggestions": [], "tradeoffs": []}, ensure_ascii=False),
+    ])
+    advice = session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "q1", "message": "这个柜子比例不协调，有什么思路",
+        "project_epoch": epoch,
+    })
+    assert advice["result_kind"] == "advice", advice
+    # 第三轮修改：原代次直接可用
+    third = session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "m2", "message": "再加一块隔板",
+        "project_epoch": epoch,
+    })
+    assert third["result_kind"] == "ready_to_execute", third
+    assert session.route("POST", "/api/assistant/turn", {
+        "phase": "execute", "turn_id": third["turn_id"],
+    })["result_kind"] == "execution"
+    assert session.project_epoch == epoch
+
+
+def test_partial_modify_keeps_next_round_usable(tmp_path):
+    """卡02 验收：部分修改（验证未过但有产出）交付后，下一轮 prepare/execute
+    不被代次或指纹误拒。"""
+    from openbrep.runtime.pipeline import TaskResult
+
+    class _PartialPipeline(_SelfProjectPipeline):
+        def execute(self, request):
+            self.request = request
+            return TaskResult(
+                success=False,
+                plain_text="超时前已完成部分修改",
+                scripts={"scripts/3d.gdl": "BLOCK 1, 2, 3\nEND\n"},
+                project=request.project,
+            )
+
+    session = _real_modify_session(tmp_path)
+    session.pipeline_class = _PartialPipeline
+    epoch = session.project_epoch
+    first = session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "p1", "message": "添加背板",
+        "project_epoch": epoch,
+    })
+    done = session.route("POST", "/api/assistant/turn", {
+        "phase": "execute", "turn_id": first["turn_id"],
+    })
+    assert done["result_kind"] == "execution", done
+    followup = session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "p2", "message": "继续完成剩下的部分",
+        "project_epoch": epoch,
+    })
+    assert followup["result_kind"] == "ready_to_execute", followup
+
+
+def test_activation_paths_still_invalidate_old_epoch(tmp_path):
+    """卡02 验收：项目激活入口保持失效语义——关闭、同路径重开、恢复 revision
+    都递增 epoch，旧代次的 prepare/execute 被拒绝。"""
+    session = session_at(Path(tmp_path))
+    epoch0 = session.project_epoch
+    project_path = str(session.source_path)
+    # 同路径重开（load 同一目录）
+    session.route("POST", "/api/project/load", {"path": project_path})
+    assert session.project_epoch == epoch0 + 1
+    assert session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "stale", "message": "添加背板",
+        "project_epoch": epoch0,
+    })["code"] == "PROJECT_CHANGED"
+    # 关闭项目
+    session.route("POST", "/api/project/close")
+    assert session.project_epoch == epoch0 + 2
+    # 恢复 revision：旧任务失效（规格明确保留递增）
+    session.route("POST", "/api/project/load", {"path": project_path})
+    epoch_now = session.project_epoch
+    saved = session.route("POST", "/api/project/revision/save", {"message": "savepoint"})
+    assert saved["ok"], saved
+    restored = session.route("POST", "/api/project/revision/restore", {
+        "revision_id": saved["revision"]["revision_id"],
+    })
+    assert restored["ok"], restored
+    assert session.project_epoch == epoch_now + 1
+    assert session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "stale2", "message": "添加背板",
+        "project_epoch": epoch_now,
+    })["code"] == "PROJECT_CHANGED"
+
+
+def test_response_carries_current_identity(tmp_path):
+    """卡02 验收：执行响应带 session_id 与 current_project_epoch（服务端当前
+    身份），旧任务结果不得盲接入新项目。"""
+    session = _real_modify_session(tmp_path)
+    ready = session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "id1", "message": "添加背板",
+        "project_epoch": session.project_epoch,
+    })
+    assert ready["session_id"] == session.session_id
+    assert ready["current_project_epoch"] == session.project_epoch
+    done = session.route("POST", "/api/assistant/turn", {
+        "phase": "execute", "turn_id": ready["turn_id"],
+    })
+    assert done["session_id"] == session.session_id
+    assert done["current_project_epoch"] == session.project_epoch
 
 
 # ── 契约二：Agent 超时（卡03）────────────────────────────────

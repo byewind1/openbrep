@@ -150,6 +150,27 @@ class WorkbenchSession:
         self._project = value
         self.project_epoch += 1
 
+    def refresh_same_project(self, project: HSFProject | None) -> None:
+        """同项目源刷新：换入同一活动项目的新内存对象，保持 project_epoch。
+
+        适用 AI 修改结果接入、XML 保存后重载等"当前项目产生了新副本"的收尾
+        ——这是源刷新，不是项目激活，不使已打开会话的旧请求失效。身份校验
+        （两侧均非 None 且 root 一致）不过关时回落普通 setter 语义（epoch+1）：
+        宁可失效旧任务，不误保持。项目激活入口（打开/关闭/新建/导入/切换/
+        恢复 revision）必须继续走 setter。
+        """
+        if project is None or self._project is None:
+            self.project = project
+            return
+        try:
+            same = Path(project.root).resolve() == Path(self._project.root).resolve()
+        except (TypeError, ValueError, OSError):
+            same = False
+        if same:
+            self._project = project
+        else:
+            self.project = project
+
     def restore_last_project(self) -> dict[str, Any]:
         """Backend 启动时恢复上次打开的项目；路径不存在或加载失败则保持空会话。"""
         last_path = self.recent_project_paths[0] if self.recent_project_paths else ""

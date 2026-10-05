@@ -485,7 +485,8 @@ class WorkbenchAssistantService:
             return {"ok": False, "error": error, "events": events}
 
         if result.project is not None:
-            self.session.project = result.project
+            # 同项目修改结果接入：显式源刷新，保持 project_epoch（连续对话契约）
+            self.session.refresh_same_project(result.project)
         self.session.project.save_to_disk()
         # 模式级 skill 提案（GUI 侧通道，best-effort；提炼失败不影响交付）
         proposal = self._safe_harvest(result, message)
@@ -821,7 +822,8 @@ class WorkbenchAssistantService:
                 self._safe_skill_outcome(result)
 
                 if result.project is not None:
-                    self.session.project = result.project
+                    # 同项目修改结果接入：显式源刷新，保持 project_epoch
+                    self.session.refresh_same_project(result.project)
                 self.session.project.save_to_disk()
                 done_data: dict[str, Any] = {
                     "ok": True,

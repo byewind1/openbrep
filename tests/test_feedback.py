@@ -18,6 +18,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+
+from tests.fake_workbench_session import attach_refresh_same_project
 from unittest.mock import MagicMock, patch
 
 from openbrep.compiler import MockHSFCompiler
@@ -406,7 +408,7 @@ class TestPlanRejectedFeedback(unittest.TestCase):
                 "body": {"message": "给书架加一层层板"},
                 "project_epoch": 1,
             }
-        return SimpleNamespace(
+        session = SimpleNamespace(
             source_path=self.project.root,
             project=self.project,
             project_epoch=1,
@@ -418,6 +420,8 @@ class TestPlanRejectedFeedback(unittest.TestCase):
             max_retries=5,
             pending_plan=pending_plan,
         )
+        attach_refresh_same_project(session)
+        return session
 
     def test_confirm_reject_writes_plan_rejected(self):
         session = self._session()
