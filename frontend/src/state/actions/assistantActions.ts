@@ -240,7 +240,6 @@ export function eventToThinkingStep(event: AssistantStreamEvent): AssistantThink
     }
   }
   if (type === 'tool_finished') {
-    // RF05 前置：canonical 工具结束事件（start/finish 同行收束在 RF05 完成）
     const name = typeof data.tool_name === 'string' ? data.tool_name : 'tool'
     return {
       type: 'tool_call',
@@ -248,6 +247,9 @@ export function eventToThinkingStep(event: AssistantStreamEvent): AssistantThink
       message: name,
       detail: typeof data.summary === 'string' ? data.summary : undefined,
       ok: data.state === 'succeeded',
+      toolCallId: typeof data.tool_call_id === 'string' ? data.tool_call_id : undefined,
+      durationMs: typeof data.duration_ms === 'number' ? data.duration_ms : undefined,
+      at: Date.now(),
     }
   }
   if (type === 'public_commentary') {
@@ -270,6 +272,8 @@ export function eventToThinkingStep(event: AssistantStreamEvent): AssistantThink
       type: 'tool_call',
       stage: typeof data.stage === 'string' ? data.stage : undefined,
       message: name,
+      toolCallId: typeof data.tool_call_id === 'string' ? data.tool_call_id : undefined,
+      at: Date.now(),
     }
   }
   if (type === 'tool_call') {
@@ -281,6 +285,9 @@ export function eventToThinkingStep(event: AssistantStreamEvent): AssistantThink
       message: name,
       detail: summary,
       ok: data.ok === true,
+      toolCallId: typeof data.tool_call_id === 'string' ? data.tool_call_id : undefined,
+      durationMs: typeof data.duration_ms === 'number' ? data.duration_ms : undefined,
+      at: Date.now(),
     }
   }
   if (type === 'plan') {
@@ -309,6 +316,44 @@ export function eventToThinkingStep(event: AssistantStreamEvent): AssistantThink
   return null
 }
 
+/**
+ * RF05：时间线步骤收束——同 toolCallId 的 start/finish 合并为同一行；
+ * 未返回工具按 tool_call_id 去重；其余事件按序追加。
+ */
+export function pushThinkingStep(steps: AssistantThinkingStep[], step: AssistantThinkingStep): void {
+  if (step.at === undefined) step.at = Date.now()
+  if (step.type === 'tool_call') {
+    if (step.ok === undefined) {
+      // start：按 tool_call_id 去重（无 id 不去重）
+      if (step.toolCallId && steps.some((s) => s.toolCallId === step.toolCallId)) return
+      steps.push(step)
+      return
+    }
+    // finish：优先按 tool_call_id 匹配未完成行，无 id 时按同名最近未完成行回退
+    const target = [...steps]
+      .reverse()
+      .find((s) => s.type === 'tool_call' && s.ok === undefined
+        && (step.toolCallId ? s.toolCallId === step.toolCallId : s.message === step.message))
+    if (target) {
+      target.ok = step.ok
+      target.detail = step.detail ?? target.detail
+      target.durationMs = step.durationMs ?? target.durationMs
+      target.at = step.at
+      return
+    }
+  }
+  steps.push(step)
+}
+
+/** RF05：终止时未完成的工具不再显示运行中（cancelled/unknown，无旋转假进度）。 */
+export function closeRunningSteps(steps: AssistantThinkingStep[]): AssistantThinkingStep[] {
+  return steps.map((s) =>
+    s.type === 'tool_call' && s.ok === undefined
+      ? { ...s, ok: false, message: `${s.message}（未完成）` }
+      : s,
+  )
+}
+
 /** 卡05 错误码 → 用户可操作文案（不跨项目盲重发） */
 export function turnErrorText(code: string | null | undefined, fallback: string): string {
   if (code === 'PROJECT_CHANGED') return '项目状态已变化，请重新确认当前项目后重试。'
@@ -326,17 +371,22 @@ export function taskEventsToThinkingSteps(events?: Array<import('../../api/types
   const steps: AssistantThinkingStep[] = []
   for (const event of events ?? []) {
     const message = typeof event.message === 'string' ? event.message : ''
+    const at = Date.parse(event.timestamp ?? '') || undefined
     if (event.kind === 'tool_started') {
-      steps.push({ type: 'tool_call', stage: 'think', message: event.tool_name ?? 'tool' })
+      pushThinkingStep(steps, {
+        type: 'tool_call', stage: 'think', message: event.tool_name ?? 'tool',
+        toolCallId: event.tool_call_id ?? undefined, at,
+      })
       continue
     }
     if (event.kind === 'tool_finished') {
-      steps.push({
-        type: 'tool_call',
-        stage: 'think',
-        message: event.tool_name ?? 'tool',
+      pushThinkingStep(steps, {
+        type: 'tool_call', stage: 'think', message: event.tool_name ?? 'tool',
         detail: typeof event.summary === 'string' ? event.summary : undefined,
         ok: event.state === 'succeeded',
+        toolCallId: event.tool_call_id ?? undefined,
+        durationMs: typeof event.duration_ms === 'number' ? event.duration_ms : undefined,
+        at,
       })
       continue
     }
@@ -352,18 +402,18 @@ export function taskEventsToThinkingSteps(events?: Array<import('../../api/types
     }
     if (event.kind === 'preparing') {
       if (event.stage === 'plan_gate') {
-        steps.push({ type: 'status', stage: 'plan', message: '📝 修改计划已生成，待确认。' })
+        steps.push({ type: 'status', stage: 'plan', message: '📝 修改计划已生成，待确认。', at })
       } else if (message) {
-        steps.push({ type: 'status', stage: (event.stage as AssistantThinkingStep['stage']) ?? 'think', message })
+        steps.push({ type: 'status', stage: (event.stage as AssistantThinkingStep['stage']) ?? 'think', message, at })
       }
       continue
     }
     if (event.kind === 'public_commentary') {
-      steps.push({ type: 'status', stage: 'think', message: '💬 ' + message })
+      steps.push({ type: 'status', stage: 'think', message: '💬 ' + message, at })
       continue
     }
     if (event.kind === 'delivery') {
-      steps.push({ type: 'status', stage: 'done', message: message || '已交付。', ok: true })
+      steps.push({ type: 'status', stage: 'done', message: message || '已交付。', ok: true, at })
       continue
     }
     if (event.kind === 'completed') {
@@ -372,18 +422,20 @@ export function taskEventsToThinkingSteps(events?: Array<import('../../api/types
         stage: 'done',
         message: event.state === 'partial' ? '⚠️ 任务部分完成' : message || '✅ 任务完成',
         ok: event.state !== 'partial',
+        at,
       })
       continue
     }
     if (event.kind === 'failed' || event.kind === 'cancelled') {
-      steps.push({ type: 'status', stage: 'cancel', message: message || (event.kind === 'failed' ? '❌ 任务失败' : '⏹ 已取消'), ok: false })
+      steps.push({ type: 'status', stage: 'cancel', message: message || (event.kind === 'failed' ? '❌ 任务失败' : '⏹ 已取消'), ok: false, at })
       continue
     }
     if (event.kind === 'source_changed') {
-      steps.push({ type: 'status', stage: 'cancel', message: message || '源码已变化', ok: false })
+      steps.push({ type: 'status', stage: 'cancel', message: message || '源码已变化', ok: false, at })
     }
   }
-  return steps
+  // RF05：恢复路径同样收束——终止/中断时未返回的工具不再永远显示运行中
+  return closeRunningSteps(steps)
 }
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
@@ -449,12 +501,13 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       result.ok && result.assistant
         ? `${result.assistant.reply}${suffix}`
         : turnErrorText(errorCode, formatAssistantRequestError(result.error, 'Generation request failed.'))
+    const closedSteps = closeRunningSteps(thinkingSteps)
     const replyExtras = result.ok
       ? compactExtras({
           changedFiles,
           verification: result.assistant?.verification ?? undefined,
           acceptance: result.assistant?.acceptance ?? undefined,
-          thinkingSteps: [...thinkingSteps],
+          thinkingSteps: closedSteps,
           visionExtractions: extractVisionExtractions(result.events),
           delivery,
           deliverySource: deliverySource ?? null,
@@ -465,7 +518,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         })
       : compactExtras({
           errorCategory: classifyAssistantError(finalReply),
-          thinkingSteps: [...thinkingSteps],
+          thinkingSteps: closedSteps,
           delivery,
           deliverySource: deliverySource ?? null,
           originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
@@ -541,7 +594,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       : turnErrorText(result.code, result.error ?? (result.cancelled ? '⏹ 已取消本轮。' : '本轮未执行。'))
     set((state) => ({ assistantBusy: false,
       assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply,
-        { advisor: result.advisor, turnTaskRef: taskRef, thinkingSteps: [...steps],
+        { advisor: result.advisor, turnTaskRef: taskRef, thinkingSteps: closeRunningSteps(steps),
           recordingFailed: result.events_recording?.status === 'degraded' }),
       lastError: result.ok ? null : reply,
     }))
@@ -573,7 +626,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     }, (event) => {
       if (projectSwitchedSince(epoch) || event.data.turn_id !== turnId || event.data.project_epoch !== epoch) return
       const step = eventToThinkingStep(event)
-      if (step) steps.push(step)
+      if (step) pushThinkingStep(steps, step)
       set((state) => ({ assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
         PLAN_EXECUTING_CONTENT, { thinkingSteps: [...steps] }) }))
     }, signal)
@@ -607,7 +660,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       if (projectSwitchedSince(epoch) || controller.signal.aborted) return
       const step = eventToThinkingStep(event)
       if (!step) return
-      prepareSteps.push(step)
+      pushThinkingStep(prepareSteps, step)
       set((state) => ({ assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
         ASSISTANT_PENDING_PREFIX, { thinkingSteps: [...prepareSteps] }) }))
     }, controller.signal)
@@ -637,7 +690,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         set((state) => ({ assistantBusy: false,
           lastError: String(error), assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
             controller.signal.aborted ? INTERRUPTED_CONTENT : String(error),
-            { thinkingSteps: [...prepareSteps] }),
+            { thinkingSteps: closeRunningSteps(prepareSteps) }),
         }))
         // RF04：异常路径同样落盘（中断记录是真实对话的一部分）
         await persistAssistantHistory()
@@ -1215,7 +1268,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             (event: AssistantStreamEvent) => {
               const step = eventToThinkingStep(event)
               if (step) {
-                thinkingSteps.push(step)
+                pushThinkingStep(thinkingSteps, step)
               }
               set((state) => ({
                 assistantMessages: replacePendingAssistantMessage(

@@ -1028,6 +1028,8 @@ export interface TaskEvent {
   affected_files?: string[] | null
   summary?: string | null
   error_code?: string | null
+  /** RF03：工具真实耗时（毫秒） */
+  duration_ms?: number | null
   run_id?: string | null
   turn_id?: string
   session_id?: string
@@ -1104,6 +1106,12 @@ export interface AssistantThinkingStep {
   message: string
   detail?: string
   ok?: boolean
+  /** RF05：客户端接收/事件时间（epoch ms）——等待计时按最后有效进展 */
+  at?: number
+  /** RF05：工具调用关联 id（start/finish 收束为同一行） */
+  toolCallId?: string
+  /** RF05：工具真实耗时（毫秒） */
+  durationMs?: number
   // plan 阶段专用
   intentSummary?: string
   affectedFiles?: string[]

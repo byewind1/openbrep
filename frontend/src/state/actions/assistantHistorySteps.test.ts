@@ -84,13 +84,13 @@ describe('task_ref 与任务事件恢复（卡05）', () => {
       { seq: 7, event_id: 'e7', timestamp: '', kind: 'completed', state: 'partial', message: '部分修改' },
     ]
     const steps = taskEventsToThinkingSteps(events)
-    expect(steps).toHaveLength(6) // accepted 不产生步骤
-    const [start1, finish1, start2, finish2, verify, done] = steps
-    expect(start1.ok).toBeUndefined() // running：不误标失败
+    // RF05：start/finish 收束为同一行（4 个工具行 = 2 start + 2 finish）
+    expect(steps).toHaveLength(4)
+    const [finish1, finish2, verify, done] = steps
     expect(finish1.ok).toBe(true)
     expect(finish1.detail).toBe('已更新 scripts/3d.gdl')
-    expect(start2.ok).toBeUndefined()
     expect(finish2.ok).toBe(false)
+    expect(finish2.message).toContain('compile_script')
     expect(verify.ok).toBe(true)
     expect(done.message).toContain('部分完成')
     expect(done.ok).toBe(false)
