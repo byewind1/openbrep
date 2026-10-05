@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { hydrateHistoryMessages, taskEventsToThinkingSteps, withHistoryMeta } from './assistantActions'
-import type { AssistantMessage, TaskEvent } from '../../api/types'
+import {
+  eventToThinkingStep,
+  hydrateHistoryMessages,
+  taskEventsToThinkingSteps,
+  withHistoryMeta,
+} from './assistantActions'
+import type { AssistantMessage, AssistantStreamEvent, TaskEvent } from '../../api/types'
 
 /**
  * 卡01（任务反馈与连续对话修复）：前端复盘契约冻结——预期红灯回归。
@@ -79,15 +84,44 @@ describe('task_ref 与任务事件恢复（卡05）', () => {
       { seq: 7, event_id: 'e7', timestamp: '', kind: 'completed', state: 'partial', message: '部分修改' },
     ]
     const steps = taskEventsToThinkingSteps(events)
-    expect(steps).toHaveLength(6) // accepted 不产生步骤
-    const [start1, finish1, start2, finish2, verify, done] = steps
-    expect(start1.ok).toBeUndefined() // running：不误标失败
+    // RF05：start/finish 收束为同一行（4 个工具行 = 2 start + 2 finish）
+    expect(steps).toHaveLength(4)
+    const [finish1, finish2, verify, done] = steps
     expect(finish1.ok).toBe(true)
     expect(finish1.detail).toBe('已更新 scripts/3d.gdl')
-    expect(start2.ok).toBeUndefined()
     expect(finish2.ok).toBe(false)
+    expect(finish2.message).toContain('compile_script')
     expect(verify.ok).toBe(true)
     expect(done.message).toContain('部分完成')
     expect(done.ok).toBe(false)
+  })
+})
+
+describe('RF02 公开 commentary（canonical 事件）', () => {
+  it('public_commentary 事件显示正文，不泛化为思考中', () => {
+    const step = eventToThinkingStep({
+      type: 'public_commentary',
+      data: { message: '我先检查参数结构，再改。' },
+    } as unknown as AssistantStreamEvent)
+    expect(step?.message).toBe('💬 我先检查参数结构，再改。')
+  })
+
+  it('canonical preparing/verification/tool_finished 与复盘同形状', () => {
+    const preparing = eventToThinkingStep({
+      type: 'preparing',
+      data: { stage: 'understand', message: '🤔 正在理解你的修改意图…' },
+    } as unknown as AssistantStreamEvent)
+    expect(preparing?.message).toContain('理解')
+    const verify = eventToThinkingStep({
+      type: 'verification',
+      data: { state: 'succeeded', message: '编译通过' },
+    } as unknown as AssistantStreamEvent)
+    expect(verify?.ok).toBe(true)
+    const finish = eventToThinkingStep({
+      type: 'tool_finished',
+      data: { tool_name: 'update_script', state: 'succeeded', summary: '已更新' },
+    } as unknown as AssistantStreamEvent)
+    expect(finish?.ok).toBe(true)
+    expect(finish?.detail).toBe('已更新')
   })
 })

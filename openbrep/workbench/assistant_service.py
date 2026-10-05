@@ -98,6 +98,16 @@ class WorkbenchAssistantService:
             "continue_from": delivery.get("continue_from"),
         }
 
+    @staticmethod
+    def _bind_run_id(pipeline_ref: list[Any], data: Any) -> Any:
+        """RF03：pipeline.execute 入口建立 run_id 后，绑定到后续过程事件。"""
+        if not (isinstance(data, dict) and not data.get("run_id") and pipeline_ref):
+            return data
+        run_id = getattr(pipeline_ref[0], "_current_run_id", None)
+        if run_id:
+            return {**data, "run_id": run_id}
+        return data
+
     def _new_pipeline(self):
         """构造 pipeline 时显式传 session 解析出的 config 路径（B3）。
 
@@ -463,8 +473,11 @@ class WorkbenchAssistantService:
             return {"ok": False, "error": image_payload["error"]}
 
         events: list[dict[str, Any]] = []
+        pipeline_ref: list[Any] = []
 
         def on_event(event_type, data):
+            # RF03：run_id 在 pipeline.execute 入口建立后绑定过程事件
+            data = self._bind_run_id(pipeline_ref, data)
             events.append({"type": event_type, "data": data})
             callback = body.get("_turn_on_event")
             if callable(callback):
@@ -475,6 +488,7 @@ class WorkbenchAssistantService:
             body, image_payload, on_event=on_event,
             should_cancel=body.get("_turn_should_cancel") if callable(body.get("_turn_should_cancel")) else None,
         )
+        pipeline_ref.append(pipeline)
         result = pipeline.execute(request)
         result = self._merge_continue_from(result, continue_from)
         # skill 效果回写（GUI 侧通道，best-effort）：失败任务按注入 skill 计 fail_count
@@ -798,8 +812,10 @@ class WorkbenchAssistantService:
             return
 
         q: queue.Queue = queue.Queue()
+        pipeline_ref: list[Any] = []
 
         def on_event(event_type, data):
+            data = self._bind_run_id(pipeline_ref, data)
             q.put({"type": event_type, "data": data})
 
         def should_cancel():
@@ -812,6 +828,7 @@ class WorkbenchAssistantService:
                 pipeline, request = self._build_generate_pipeline(
                     body, image_payload, on_event=on_event, should_cancel=should_cancel
                 )
+                pipeline_ref.append(pipeline)
                 result = pipeline.execute(request)
                 result = self._merge_continue_from(result, continue_from)
                 if not result.success and result.project is None and not (result.plain_text or result.scripts):

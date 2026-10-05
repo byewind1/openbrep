@@ -88,7 +88,7 @@ def test_pipeline_events_recorded_before_broadcast_and_tool_states(tmp_path):
         for event in session.route("POST", "/api/assistant/turn", {
             "phase": "execute", "turn_id": _turn_id, "stream": True,
         }):
-            if isinstance(event, dict) and event.get("type") == "tool_call":
+            if isinstance(event, dict) and event.get("type") == "tool_finished":
                 store = session.task_event_service._store_for(str(session.source_path))
                 kinds = [e["kind"] for e in store.read_turn(_turn_id)]
                 broadcast_saw_persisted.append("tool_finished" in kinds)
@@ -298,14 +298,17 @@ def test_store_redacts_secrets_and_tolerates_half_line(tmp_path):
 
 
 def test_service_commentary_buffer_merges_and_flushes(tmp_path):
-    """assistant_delta 按窗口合并为 public_commentary；终止时 flush，不丢。"""
+    """public_commentary 按窗口合并为规范事件；终止时 flush，不丢。
+
+    （RF02 更正：assistant_delta 是 final 文本流，不再误记为公开思考。）
+    """
     from openbrep.workbench.task_event_service import WorkbenchTaskEventService
 
     session = session_at(Path(tmp_path))
     service = WorkbenchTaskEventService(session)
     service.begin_turn("t-comment", project_epoch=1, message="改回纹")
     for chunk in ("回", "纹", "修改", "完成"):
-        service.record_pipeline_event("t-comment", "assistant_delta", {"content": chunk})
+        service.handle_pipeline_event("t-comment", "public_commentary", {"content": chunk})
     service.finish_turn("t-comment", kind="completed", state="delivered", message="done")
     store = service._store_for(str(session.source_path))
     events = store.read_turn("t-comment")

@@ -535,6 +535,9 @@ export function AssistantPanel({
                   ))}
                 </div>
               ) : null}
+              {message.role === 'assistant' && message.recordingFailed ? (
+                <div className="timeline-recording-failed">⚠️ 执行记录保存失败，过程可能不完整</div>
+              ) : null}
               {message.role === 'assistant' && (message.thinkingSteps || message.staleTimeline) ? (
                 <AssistantThinkingTimeline
                   steps={message.thinkingSteps ?? []}

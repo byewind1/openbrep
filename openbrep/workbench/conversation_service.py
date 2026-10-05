@@ -215,6 +215,13 @@ class WorkbenchConversationService:
             return
         events.record_stage(turn.turn_id, kind=kind, stage=stage, message=message)
 
+    def list_turn_events(self) -> dict:
+        """RF04：任务索引（重开项目后前端据此展示未完成任务）。"""
+        events = _task_events(self.session)
+        if events is None:
+            return {'ok': True, 'turns': []}
+        return {'ok': True, 'turns': events.list_turns()}
+
     def read_turn_events(self, turn_id: str) -> dict:
         """卡04：任务事件只读查询（GET 天然 lock-free，不拿 _op_lock）。"""
         events = _task_events(self.session)
@@ -454,11 +461,18 @@ class WorkbenchConversationService:
         turn = self.turns.get(str(body.get('turn_id') or ''))
         if turn is None:
             return self._failure(None, 'TURN_NOT_FOUND')
+        events = _task_events(self.session)
+
+        def _with_recording(result: dict) -> dict:
+            # RF03：记录状态随响应上报（degraded = 执行记录保存失败，任务仍继续）
+            if events is not None:
+                result['events_recording'] = events.recording_status(turn.turn_id)
+            return result
         if turn.state in {'completed', 'failed', 'cancelled', 'stale'}:
-            return copy.deepcopy(turn.result)
+            return _with_recording(copy.deepcopy(turn.result))
         if turn.state == 'extraction_pending' and body.get('approve') is not False:
             if body.get('approve_extraction') is not True:
-                return copy.deepcopy(turn.result)
+                return _with_recording(copy.deepcopy(turn.result))
             extractions = body.get('confirmed_extractions')
             if not isinstance(extractions, list) or not extractions or not all(isinstance(item, dict) for item in extractions):
                 return self._failure(turn, 'INVALID_EXTRACTIONS')
@@ -471,12 +485,12 @@ class WorkbenchConversationService:
             self._record_task_terminal(turn, kind='cancelled', state='cancelled', message='用户取消了本次任务。')
             if self.pending_turn_id == turn.turn_id:
                 self.pending_turn_id = None
-            return copy.deepcopy(turn.result)
+            return _with_recording(copy.deepcopy(turn.result))
         if self.clock() - turn.created_at > TURN_TTL_SECONDS:
             turn.state = 'cancelled'
             turn.result = self._failure(turn, 'TURN_EXPIRED')
             self._record_task_terminal(turn, kind='cancelled', state='cancelled', error_code='TURN_EXPIRED')
-            return copy.deepcopy(turn.result)
+            return _with_recording(copy.deepcopy(turn.result))
         if turn.policy.mode == 'consult':
             return self._failure(turn, 'READ_ONLY_TURN')
         if turn.policy.mode == 'plan':
@@ -512,14 +526,23 @@ class WorkbenchConversationService:
             self.working_intent = reduce_intent(self.working_intent, {'kind': 'start_task', 'task_id': turn.turn_id, 'goal': turn.body['message'], 'task_intent': turn.policy.task_intent})
         self.active_turn_id = turn.turn_id
         turn.state = 'executing'
-        events = _task_events(self.session)
-
         def emit(kind, data):
             if kind == 'plan':
                 kind, data = 'status', {'stage': 'plan', 'message': '正在准备执行步骤…'}
-            # 卡04：关键事件先追加落盘，再广播（事件是唯一事实源）
+            # RF02/RF03：事件先规范落盘，再以同一 event_id/seq/timestamp 广播
+            # （canonical kind：preparing/tool_started/tool_finished/verification/
+            #  public_commentary——前端 live 与复盘恢复消费同一事件形状）。
             if events is not None:
-                events.record_pipeline_event(turn.turn_id, kind, data if isinstance(data, dict) else {})
+                for canonical in events.handle_pipeline_event(
+                    turn.turn_id, kind, data if isinstance(data, dict) else {}
+                ):
+                    if on_event:
+                        on_event(canonical['kind'], {
+                            **canonical,
+                            'turn_id': turn.turn_id,
+                            'project_epoch': turn.snapshot.project_epoch,
+                        })
+                return
             if on_event:
                 on_event(kind, {**data, 'turn_id': turn.turn_id, 'project_epoch': turn.snapshot.project_epoch})
         request = {**turn.body, 'intent': turn.policy.task_intent, 'stream': False, 'confirm_plan': False,
@@ -595,7 +618,6 @@ class WorkbenchConversationService:
                 turn.result['cancelled'] = True
                 turn.result['result_kind'] = 'cancelled'
             # 卡04：终止事件（完整交付/部分修改/无变化/取消/失败，幂等落盘）
-            events = _task_events(self.session)
             if events is not None:
                 events.finish_turn_from_response(turn.turn_id, turn.result)
         except Exception:
@@ -607,4 +629,4 @@ class WorkbenchConversationService:
             self.active_turn_id = None
             if self.pending_turn_id == turn.turn_id:
                 self.pending_turn_id = None
-        return copy.deepcopy(turn.result)
+        return _with_recording(copy.deepcopy(turn.result))

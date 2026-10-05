@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 from openbrep.workbench.task_event_store import TaskEventStore
+from openbrep.workbench.task_events import utc_now_iso
 from openbrep.workbench.task_events import (
     EVENT_STATE_DELIVERED,
     EVENT_STATE_FAILED,
@@ -42,6 +44,14 @@ class WorkbenchTaskEventService:
         self._turn_project_root: dict[str, str | None] = {}
         # turn_id -> {"text": str, "at": float}（public_commentary 合并缓冲）
         self._commentary: dict[str, dict[str, Any]] = {}
+        # RF03：seq 单一权威在服务层（store 尊重已提供的 seq）；run_id 建立后绑定
+        self._seq: dict[str, int] = {}
+        self._run_ids: dict[str, str] = {}
+        # RF03：每 turn 有界会话内存记录（含无项目/持久化失败场景）+ 失败原因
+        self._memory_turns: dict[str, list] = {}
+        self._persist_errors: dict[str, str] = {}
+        self._turn_started_at: dict[str, float] = {}
+        self._MEMORY_TURN_LIMIT = 500
 
     # ── 存储 ─────────────────────────────────────────────────
 
@@ -52,19 +62,30 @@ class WorkbenchTaskEventService:
             self._stores[project_root] = TaskEventStore(project_root)
         return self._stores[project_root]
 
+    def _record_memory(self, turn_id: str, canonical: dict[str, Any]) -> None:
+        """RF03：每个事件（无论是否落盘）都进入有界会话内存记录。"""
+        memory = self._memory_turns.setdefault(turn_id, [])
+        memory.append(canonical)
+        if len(memory) > self._MEMORY_TURN_LIMIT:
+            del memory[: len(memory) - self._MEMORY_TURN_LIMIT]
+
     def _persist(self, turn_id: str, event: dict[str, Any]) -> None:
+        """落盘：失败不回滚源码修改、不阻塞执行，但必须可见（degraded 状态）。"""
+        self._record_memory(turn_id, event)
         root = self._turn_project_root.get(turn_id)
         store = self._store_for(root)
         if store is None:
-            return  # project=null：只保留会话内存，不落盘
+            return  # project=null：只保留会话内存，不创建任何目录
         kind = event.get("kind")
         try:
             if kind in {"cancelled", "failed", "completed"}:
                 store.append_terminal(turn_id, event)
             else:
                 store.append(turn_id, event)
-        except Exception:  # noqa: BLE001 —— 记录失败不回滚源码修改、不阻塞执行
-            pass
+        except Exception as exc:  # noqa: BLE001 —— 失败进入 recording 状态，绝不再写存储
+            # RF03：degraded 为 turn 内粘滞——丢失的事件无法补写，
+            # 后续恢复落盘也不能把该 turn 报成完好 persisted。
+            self._persist_errors.setdefault(turn_id, str(exc) or exc.__class__.__name__)
 
     # ── 生命周期 ─────────────────────────────────────────────
 
@@ -81,18 +102,31 @@ class WorkbenchTaskEventService:
         root = str(project.root) if project is not None and getattr(project, "root", None) else None
         self._turn_project_root[turn_id] = root
         self._commentary.pop(turn_id, None)
-        self._persist(turn_id, {
+        self._run_ids.pop(turn_id, None)
+        store = self._store_for(root)
+        try:
+            self._seq[turn_id] = len(store.read_turn(turn_id)) if store is not None else 0
+        except Exception:  # noqa: BLE001
+            self._seq[turn_id] = 0
+        self._memory_turns.setdefault(turn_id, [])
+        self._turn_started_at[turn_id] = time.monotonic()
+        self._persist(turn_id, self._canonicalize(turn_id, {
             "kind": "accepted",
             "session_id": self.session.session_id,
             "project_epoch": project_epoch,
             "message": clip_public_text(message or ""),
             "stage": requested_mode or None,
-        })
+        }))
 
     def drop_turn(self, turn_id: str) -> None:
         """清理会话内存缓冲（落盘记录保留，供复盘）。"""
         self._turn_project_root.pop(turn_id, None)
         self._commentary.pop(turn_id, None)
+        self._seq.pop(turn_id, None)
+        self._run_ids.pop(turn_id, None)
+        self._memory_turns.pop(turn_id, None)
+        self._persist_errors.pop(turn_id, None)
+        self._turn_started_at.pop(turn_id, None)
 
     def record_stage(
         self,
@@ -111,7 +145,7 @@ class WorkbenchTaskEventService:
             "message": clip_public_text(message) if message else None,
         }
         event.update({k: v for k, v in extra.items() if v is not None})
-        self._persist(turn_id, event)
+        self._persist(turn_id, self._canonicalize(turn_id, event))
 
     def _turn_epoch(self, turn_id: str) -> int:
         return int(getattr(self.session, "project_epoch", 0) or 0)
@@ -121,9 +155,13 @@ class WorkbenchTaskEventService:
     def build_pipeline_event(self, turn_id: str, kind: str, data: dict[str, Any]) -> dict[str, Any] | None:
         """把 pipeline/agent/桥接的原始事件映射为任务事件（返回 None = 不记录）。"""
         epoch = self._turn_epoch(turn_id)
+        run_id = data.get("run_id") or self._run_ids.get(turn_id)
+        if run_id:
+            self._run_ids[turn_id] = str(run_id)
         base = {
             "session_id": self.session.session_id,
             "project_epoch": epoch,
+            "run_id": run_id,
         }
         if kind == "tool_started":
             return {**base, "kind": "tool_started", "state": EVENT_STATE_RUNNING,
@@ -134,12 +172,14 @@ class WorkbenchTaskEventService:
             return {**base, "kind": "tool_finished",
                     "state": EVENT_STATE_SUCCEEDED if data.get("ok") is True else EVENT_STATE_FAILED,
                     "tool_name": str(data.get("tool") or data.get("name") or data.get("display_name") or "tool"),
-                    "summary": clip_public_text(str(data.get("summary") or "")) or None}
+                    "summary": clip_public_text(str(data.get("summary") or "")) or None,
+                    "tool_call_id": data.get("tool_call_id") or data.get("call_id"),
+                    "duration_ms": data.get("duration_ms")}
         if kind == "compile_result":
             return {**base, "kind": "verification", "stage": "compile",
                     "state": EVENT_STATE_SUCCEEDED if data.get("success") is True else EVENT_STATE_FAILED,
                     "message": clip_public_text(str(data.get("message") or data.get("error") or "")) or None}
-        if kind == "status":
+        if kind in ("status", "preparing"):
             return {**base, "kind": "preparing", "stage": data.get("stage"),
                     "message": clip_public_text(str(data.get("message") or "")) or None}
         if kind == "plan":
@@ -150,11 +190,53 @@ class WorkbenchTaskEventService:
             return None
         return None
 
+    def handle_pipeline_event(self, turn_id: str, kind: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """适配原始事件 → 规范任务事件：落盘并返回需广播的同一事件（先记录后广播）。
+
+        RF02/RF03：落盘与广播共用同一 event_id/seq/timestamp（canonical 事件）；
+        public_commentary 按窗口合并，段落收束（后续非 commentary 事件到达）时
+        flush 出规范事件；assistant_delta 是 final 文本流，不误记为公开思考。
+        """
+        data = data if isinstance(data, dict) else {}
+        out: list[dict[str, Any]] = []
+        if kind not in ("assistant_delta", "public_commentary"):
+            flushed = self.flush_commentary(turn_id)
+            if flushed:
+                out.append(flushed)
+        if kind == "assistant_delta":
+            return out  # final 文本流由最终答复承载，不逐 token 记录
+        if kind == "public_commentary":
+            self._buffer_commentary(turn_id, data)
+            return out
+        event = self.build_pipeline_event(turn_id, kind, data)
+        if event is None:
+            return out
+        canonical = self._canonicalize(turn_id, event)
+        self._persist_canonical(turn_id, canonical)
+        out.append(canonical)
+        return out
+
     def record_pipeline_event(self, turn_id: str, kind: str, data: dict[str, Any]) -> None:
-        """适配 + 落盘（广播由调用方在之后进行：先落盘再广播）。"""
-        event = self.build_pipeline_event(turn_id, kind, data if isinstance(data, dict) else {})
-        if event is not None:
-            self._persist(turn_id, event)
+        """兼容入口：适配 + 落盘（不广播）。"""
+        self.handle_pipeline_event(turn_id, kind, data)
+
+    def _canonicalize(self, turn_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        """补全公共身份字段（event_id/seq/timestamp；seq 单调由服务层保证）。"""
+        self._seq[turn_id] = self._seq.get(turn_id, 0) + 1
+        started_at = self._turn_started_at.get(turn_id)
+        canonical = {
+            "schema_version": 1,
+            "event_id": uuid.uuid4().hex,
+            "seq": self._seq[turn_id],
+            "timestamp": utc_now_iso(),
+            "elapsed_ms": round((time.monotonic() - started_at) * 1000, 1) if started_at else None,
+            "turn_id": turn_id,
+        }
+        canonical.update({k: v for k, v in event.items() if v is not None})
+        return canonical
+
+    def _persist_canonical(self, turn_id: str, canonical: dict[str, Any]) -> None:
+        self._persist(turn_id, canonical)
 
     def _buffer_commentary(self, turn_id: str, data: dict[str, Any]) -> None:
         text = data.get("content") if isinstance(data, dict) else None
@@ -166,19 +248,21 @@ class WorkbenchTaskEventService:
                 time.monotonic() - buffer["at"] >= _COMMENTARY_FLUSH_SECONDS:
             self.flush_commentary(turn_id)
 
-    def flush_commentary(self, turn_id: str) -> None:
-        """把合并缓冲的公开说明落盘（终止前调用）。"""
+    def flush_commentary(self, turn_id: str) -> dict[str, Any] | None:
+        """把合并缓冲的公开说明落盘，返回规范事件（供同体广播；无缓冲返回 None）。"""
         buffer = self._commentary.get(turn_id)
         if not buffer or not buffer.get("text"):
             self._commentary.pop(turn_id, None)
-            return
+            return None
         text = buffer.pop("text")
-        self._persist(turn_id, {
+        canonical = self._canonicalize(turn_id, {
             "kind": "public_commentary",
             "session_id": self.session.session_id,
             "project_epoch": self._turn_epoch(turn_id),
             "message": clip_public_text(text),
         })
+        self._persist(turn_id, canonical)
+        return canonical
 
     # ── 终止 ─────────────────────────────────────────────────
 
@@ -255,6 +339,11 @@ class WorkbenchTaskEventService:
     # ── 查询（只读；不拿 session _op_lock）────────────────────
 
     def read_turn(self, turn_id: str) -> dict[str, Any]:
+        """只读查询：返回 recording 状态（persisted/in_memory/degraded）与事件。
+
+        degraded = 本进程内有落盘失败：返回内存记录（包含全部已发生事件）；
+        in_memory = 无项目或未落盘；persisted = 存储为权威。查询不拿 _op_lock。
+        """
         root = self._turn_project_root.get(turn_id)
         if root is None:
             store = None
@@ -264,13 +353,72 @@ class WorkbenchTaskEventService:
                 store = self._store_for(str(project.root))
         else:
             store = self._store_for(root)
-        events = store.read_turn(turn_id) if store is not None else []
+        error = self._persist_errors.get(turn_id)
+        memory = self._memory_turns.get(turn_id) or []
+        if error:
+            status = "degraded"
+            events = memory if memory else (store.read_turn(turn_id) if store is not None else [])
+        elif store is None:
+            status = "in_memory"
+            events = memory
+        else:
+            status = "persisted"
+            events = store.read_turn(turn_id)
         return {
             "ok": True,
             "turn_id": turn_id,
             "session_id": self.session.session_id,
+            "recording": {"status": status, "error": error},
             "events": events,
         }
+
+    def list_turns(self, limit: int = 50) -> list[dict[str, Any]]:
+        """RF04：任务索引——进程退出后仍可发现已开始的任务（不依赖前端 save）。
+
+        扫描项目任务目录（最近 mtime 排序，截断到 limit）+ 本进程内存 turn；
+        每项给出 turn_id/started_at/last_kind/last_state/terminal/message 摘要。
+        terminal=False 表示已开始但未结束——读取端展示为未完成，不伪造答复。
+        """
+        entries: dict[str, dict[str, Any]] = {}
+
+        def absorb(turn_id: str, events: list[dict[str, Any]]) -> None:
+            if not events:
+                return
+            first, last = events[0], events[-1]
+            terminal = last.get("kind") in {"completed", "failed", "cancelled"}
+            entries[turn_id] = {
+                "turn_id": turn_id,
+                "started_at": first.get("timestamp"),
+                "last_kind": last.get("kind"),
+                "last_state": last.get("state"),
+                "terminal": terminal,
+                "message": (first.get("message") or "")[:120] or None,
+                "run_id": last.get("run_id") or first.get("run_id"),
+            }
+
+        project = self.session.project
+        store = None
+        if project is not None and getattr(project, "root", None):
+            store = self._store_for(str(project.root))
+        if store is not None and store.tasks_dir.exists():
+            paths = sorted(store.tasks_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for path in paths[:limit]:
+                absorb(path.stem, store.read_turn(path.stem))
+        for turn_id, memory in self._memory_turns.items():
+            if turn_id not in entries and memory:
+                absorb(turn_id, memory)
+        return sorted(entries.values(), key=lambda e: str(e.get("started_at") or ""), reverse=True)
+
+    def recording_status(self, turn_id: str) -> dict[str, Any]:
+        """RF03：当前 turn 的记录状态（进入执行响应 events_recording）。"""
+        error = self._persist_errors.get(turn_id)
+        if error:
+            return {"status": "degraded", "error": error}
+        if self._turn_project_root.get(turn_id) is None or self._store_for(
+            self._turn_project_root.get(turn_id)
+        ) is None:
+            return {"status": "in_memory", "error": None}
+        return {"status": "persisted", "error": None}
 
     def project_root_for(self, turn_id: str) -> str | None:
         return self._turn_project_root.get(turn_id)

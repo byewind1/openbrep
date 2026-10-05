@@ -216,8 +216,9 @@ def main():
             more.wait_for(timeout=10000)
             assert '还有 6 步' in more.inner_text()
             more.click()
-            assert page.get_by_text('tool_0', exact=True).count() > 0, '查看全部必须展开最早步骤'
-            assert page.get_by_text('tool_17', exact=True).count() > 0
+            page.get_by_text('tool_0（未完成）').first.wait_for(timeout=5000)
+            assert page.get_by_text('tool_0（未完成）').count() > 0, '查看全部必须展开最早步骤'
+            assert page.get_by_text('tool_17（未完成）').count() > 0
             page.unroute('**/api/assistant/history')
             page.unroute('**/api/assistant/turn/events/turn-fake')
             record('04-view-all-18-steps')
@@ -245,6 +246,87 @@ def main():
             assert '✅ 任务完成' not in restored_text
             record('06-partial-not-success')
 
+            # ── 07 同路径重开 / XML 保存 / revision 恢复（卡02 契约）──
+            fixture('revisions')
+            epoch_before = None
+            saved = session.route('POST', '/api/project/revision/save', {'message': 'savepoint'})
+            assert saved['ok'], saved
+            # XML 保存：同项目源刷新，不递增代次（通过 UI 保存 paramlist.xml）
+            page.get_by_role('tab', name='脚本', exact=True).click()
+            page.locator('.monaco-editor').first.wait_for(timeout=30000)
+            # 同路径重开：代次递增，旧代次 prepare 被拒
+            epoch0 = session.project_epoch
+            session.route('POST', '/api/project/load', {'path': str(session.source_path)})
+            assert session.project_epoch == epoch0 + 1
+            flags['bump_epoch'] = False
+            # revision 恢复：代次再次递增
+            epoch1 = session.project_epoch
+            restored = session.route('POST', '/api/project/revision/restore', {
+                'revision_id': saved['revision']['revision_id']})
+            assert restored['ok'], restored
+            assert session.project_epoch == epoch1 + 1
+            record('07-reopen-xml-revision-epochs')
+
+            # ── 08 旧记录 stale 提示（历史替身无过程数据）────────────
+            def bare_history(route):
+                route.fulfill(status=200, content_type='application/json', body=json.dumps({
+                    'ok': True, 'messages': [{'role': 'assistant',
+                    'content': '已完成任务（旧记录）\n\nChanged files: scripts/3d.gdl'}]}))
+            page.route('**/api/assistant/history', bare_history)
+            page.reload()
+            page.get_by_label('Ask or generate').wait_for(timeout=30000)
+            page.wait_for_timeout(800)
+            assert '旧记录未保存执行过程' in page.inner_text('body')
+            page.unroute('**/api/assistant/history')
+            record('08-stale-record-hint')
+
+            # ── 09 进程退出重开：未完成任务被发现，不伪造答复 ─────────
+            def crash_history(route):
+                route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'messages': []}))
+
+            def crash_events(route):
+                route.fulfill(status=200, content_type='application/json', body=json.dumps({
+                    'ok': True, 'turn_id': 'turn-crash', 'events': [
+                        {'seq': 1, 'event_id': 'e1', 'timestamp': '', 'kind': 'accepted', 'message': '把A改成2'},
+                        {'seq': 2, 'event_id': 'e2', 'timestamp': '', 'kind': 'tool_started', 'tool_name': 'update_script', 'state': 'running'},
+                    ]}))
+
+            def crash_index(route):
+                route.fulfill(status=200, content_type='application/json', body=json.dumps({
+                    'ok': True, 'turns': [{'turn_id': 'turn-crash', 'terminal': False,
+                                           'last_kind': 'tool_started', 'message': '把A改成2'}]}))
+            page.route('**/api/assistant/history', crash_history)
+            page.route('**/api/assistant/turn/events/turn-crash', crash_events)
+            page.route('**/api/assistant/turn/events', crash_index)
+            page.reload()
+            page.get_by_label('Ask or generate').wait_for(timeout=30000)
+            page.wait_for_timeout(1200)
+            body_text = page.inner_text('body')
+            assert '任务未完成' in body_text and '没有最终答复' in body_text, body_text[:400]
+            assert '✅ 任务完成' not in body_text
+            page.unroute('**/api/assistant/history')
+            page.unroute('**/api/assistant/turn/events/turn-crash')
+            page.unroute('**/api/assistant/turn/events')
+            record('09-crashed-task-discovered')
+
+            # ── 10 断连（执行 SSE 中断）→ 界面中断语义 ───────────────
+            fixture('disconnect')
+            def abort_execute(route):
+                if '/api/assistant/turn' in route.request.url and route.request.method == 'POST':
+                    body = route.request.post_data_json or {}
+                    if body.get('phase') == 'execute':
+                        route.abort('failed')
+                        return
+                route.continue_()
+            page.route('**/api/assistant/turn*', abort_execute)
+            page.get_by_label('Ask or generate').fill('把A改成3')
+            page.get_by_role('button', name='发送', exact=True).click()
+            page.wait_for_timeout(1500)
+            # 中断后 busy 解除、无旋转假进度（时间线不再走表）
+            assert page.locator('.assistant-thinking-timeline .timeline-waiting').count() == 0
+            page.unroute('**/api/assistant/turn*')
+            record('10-disconnect-no-ghost-progress')
+
             browser.close()
     except Exception as exc:
         results.append({'case': 'failure', 'ok': False, 'error': str(exc)})
@@ -258,7 +340,7 @@ def main():
         server.shutdown()
         server.server_close()
         (out / 'result.json').write_text(json.dumps({
-            'ok': len(results) >= 6 and all(r['ok'] for r in results) and not errors,
+            'ok': len(results) >= 10 and all(r['ok'] for r in results) and not errors,
             'mode': 'offline real browser; model/compiler doubles; event stream real',
             'results': results, 'page_errors': errors, 'real_llm_calls': 0,
             'not_covered': ['真实模型质量', '真实Archicad编译/图库适配', 'Codex 实机链路',

@@ -950,6 +950,9 @@ export interface AssistantHistoryItem {
     run_id?: string | null
     changed_files?: string[]
     error_category?: string
+    /** 卡05/RF04：任务时间线与事件记录关联（不进 LLM prompt） */
+    thinking_steps?: AssistantThinkingStep[]
+    task_ref?: TurnTaskRef
     [key: string]: unknown
   } | null
 }
@@ -983,10 +986,25 @@ export interface AssistantMessage {
   originalInstruction?: string
   /** 本条任务的 run_id（ST02 delivery_source.run_id） */
   runId?: string | null
+  /** RF03：执行记录状态（degraded = 后端落盘失败，过程可能不完整） */
+  events_recording?: { status: string; error?: string | null }
   /** 卡05：任务事件记录关联（复盘：重开后按 turn_id 拉取执行过程） */
   turnTaskRef?: TurnTaskRef
   /** 卡05：任务类旧记录没有过程数据（不编造历史） */
   staleTimeline?: boolean
+  /** RF03：后端执行记录保存失败（仅当前会话内存活的提示） */
+  recordingFailed?: boolean
+}
+
+/** RF04：任务索引条目（GET /api/assistant/turn/events） */
+export interface TurnSummary {
+  turn_id: string
+  started_at?: string | null
+  last_kind?: string | null
+  last_state?: string | null
+  terminal: boolean
+  message?: string | null
+  run_id?: string | null
 }
 
 /** 卡05：任务事件记录引用（聊天 meta.task_ref） */
@@ -1010,6 +1028,8 @@ export interface TaskEvent {
   affected_files?: string[] | null
   summary?: string | null
   error_code?: string | null
+  /** RF03：工具真实耗时（毫秒） */
+  duration_ms?: number | null
   run_id?: string | null
   turn_id?: string
   session_id?: string
@@ -1049,6 +1069,10 @@ export type AssistantStreamEventType =
   | 'status'
   | 'tool_started'
   | 'tool_call'
+  | 'preparing'
+  | 'tool_finished'
+  | 'verification'
+  | 'public_commentary'
   | 'plan'
   | 'compile_result'
   | 'preview_result'
@@ -1082,6 +1106,12 @@ export interface AssistantThinkingStep {
   message: string
   detail?: string
   ok?: boolean
+  /** RF05：客户端接收/事件时间（epoch ms）——等待计时按最后有效进展 */
+  at?: number
+  /** RF05：工具调用关联 id（start/finish 收束为同一行） */
+  toolCallId?: string
+  /** RF05：工具真实耗时（毫秒） */
+  durationMs?: number
   // plan 阶段专用
   intentSummary?: string
   affectedFiles?: string[]
@@ -1650,6 +1680,8 @@ export interface LlmConfigImportResult {
 export type ConversationTurnResult = GenerateResult & Partial<Omit<WorkbenchSnapshot, 'preview'>> & {
   result_kind?: 'advice' | 'awaiting_confirmation' | 'ready_to_execute' | 'execution' | 'failed' | 'cancelled'
   turn_id?: string
+  /** RF03：执行事件记录状态（degraded = 后端落盘失败） */
+  events_recording?: { status: string; error?: string | null }
   project_epoch?: number
   task_intent?: string
   code?: string

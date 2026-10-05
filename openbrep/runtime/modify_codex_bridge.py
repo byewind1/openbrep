@@ -70,6 +70,9 @@ BUDGET_EXHAUSTED_TOOL_TEXT = "工具预算已耗尽，无法执行更多工具�
 DUPLICATE_CALL_TEXT = "该工具调用已处理过（重复回调），结果已在上一次执行中返回，本次不重复执行。"
 FORBIDDEN_TOOL_TEXT = "工具 {name} 不在开放工具列表内，调用被拒绝。"
 TOOL_TIMEOUT_TEXT = "该工具执行超过单工具时间上限，本次调用按失败处理；请如实继续，不要假设它已完成。"
+# RF01：源码变更工具（需要提交前授权 + 有界线程隔离）；读/编译工具内联执行，
+# 卡死风险由既有可终止机制兜底（编译走 compiler.timeout 子进程预算）。
+WRITE_TOOLS = frozenset({"update_script", "patch_script", "edit_parameters"})
 UNHANDLED_SERVER_REQUEST_TEXT = "method not found"
 
 # 卡03：turn 超时细分原因（结构化，进入 metadata.execution.timeout_reason）。
@@ -306,9 +309,11 @@ class CodexModifyTurnDriver:
         on_delta: Callable[[str], None] | None,
         reasoning_effort: str = "",
         logger: logging.Logger | None = None,
+        on_commentary: Callable[[str], None] | None = None,
         tool_timeout: float | None = None,
         task_deadline: float | None = None,
         clock: Callable[[], float] | None = None,
+        threaded_tools: frozenset[str] | None = None,
     ) -> None:
         self._client = client
         self._model = model
@@ -319,11 +324,16 @@ class CodexModifyTurnDriver:
         self._timeout = timeout
         self._should_cancel = should_cancel
         self._on_delta = on_delta
+        # RF02：公开 commentary 回调（与 final 分离；隐藏 reasoning 不采集）
+        self._on_commentary = on_commentary
+        self._commentary_delta_items: set[str] = set()
         self._reasoning_effort = reasoning_effort
         self._logger = logger or _LOGGER
         self._tool_timeout = tool_timeout
         self._task_deadline = task_deadline
         self._clock = clock or _default_clock
+        # RF01：仅列入集合的（源码变更）工具走有界线程；None = 全部线程（兼容旧测试）
+        self._threaded_tools = threaded_tools
         # 卡03：超时后仍在运行的工具线程（无法 kill；门禁前 best-effort 收尾）
         self._pending_tools: list[threading.Thread] = []
         self.tool_timeouts = 0
@@ -501,7 +511,18 @@ class CodexModifyTurnDriver:
                 elif kind == "delta":
                     idle_deadline = clock() + idle_window
                     item_id, delta = payload
-                    if not collector.is_commentary(item_id):
+                    if collector.is_commentary(item_id):
+                        # RF02：公开 commentary 增量——独立回调，与 final 不混流
+                        if isinstance(item_id, str):
+                            self._commentary_delta_items.add(item_id)
+                        if self._on_commentary is not None:
+                            try:
+                                self._on_commentary(delta)
+                            except Exception as exc:  # noqa: BLE001
+                                self._logger.warning(
+                                    "codex modify commentary 回调异常（%s）", exc.__class__.__name__
+                                )
+                    else:
                         if isinstance(item_id, str):
                             delta_buf.setdefault(item_id, []).append(delta)
                         if self._on_delta is not None:
@@ -515,6 +536,7 @@ class CodexModifyTurnDriver:
                     idle_deadline = clock() + idle_window
                 elif kind == "item_completed":
                     idle_deadline = clock() + idle_window
+                    self._forward_commentary_item(payload)
                     self._record_item(payload, candidates, delta_buf)
                 elif kind == "turn_completed":
                     idle_deadline = clock() + idle_window
@@ -561,20 +583,10 @@ class CodexModifyTurnDriver:
         pending, self._pending_tools = self._pending_tools, []
         if not pending:
             return 0
-        deadline = (
-            self._clock() + float(timeout)
-            if timeout is not None and timeout > 0
-            else None
-        )
         still_running = 0
         for worker in pending:
-            remaining = (
-                max(0.0, deadline - self._clock())
-                if deadline is not None
-                else None
-            )
-            worker.join(remaining)
-            if worker.is_alive():
+            # RF01：切片等待，期间检查取消信号；放弃的 worker 由提交授权隔离
+            if self._join_worker_bounded(worker, float(timeout) if timeout else 0.0):
                 still_running += 1
         return still_running
 
@@ -588,6 +600,17 @@ class CodexModifyTurnDriver:
         """
         if not self._tool_timeout or self._tool_timeout <= 0:
             return self._executor(call_id, namespace, tool, arguments)
+        if self._threaded_tools is not None and tool not in self._threaded_tools:
+            # RF01：读/编译工具内联执行——本身有界（内存操作 / compiler.timeout
+            # 子进程预算），不为所有工具堆线程。
+            return self._executor(call_id, namespace, tool, arguments)
+        # RF01：等待预算 = min(单工具预算, 任务剩余预算)——工具等待不得越过任务截止
+        budget = float(self._tool_timeout)
+        if self._task_deadline is not None:
+            budget = min(budget, max(0.0, self._task_deadline - self._clock()))
+        if budget <= 0:
+            self.tool_timeouts += 1
+            return TOOL_TIMEOUT_TEXT, False
         holder: dict[str, Any] = {}
 
         def _run() -> None:
@@ -600,18 +623,45 @@ class CodexModifyTurnDriver:
             target=_run, daemon=True, name=f"openbrep-codex-tool-{tool}",
         )
         worker.start()
-        worker.join(self._tool_timeout)
-        if worker.is_alive():
+        if self._join_worker_bounded(worker, budget):
+            # RF01：超时放弃 ≠ 终止——worker 仍在跑；提交授权（write_guard）
+            # 保证其迟到写入被拒绝隔离，这里只登记审计。
             self.tool_timeouts += 1
             self._pending_tools.append(worker)
             self._logger.warning(
-                "codex modify 工具执行超时（tool=%s，budget=%.1fs）",
-                tool, float(self._tool_timeout),
+                "codex modify 工具执行超时（tool=%s，budget=%.1fs），"
+                "worker 已隔离（提交授权生效后其迟到写入将被拒绝）",
+                tool, budget,
             )
             return TOOL_TIMEOUT_TEXT, False
         if "error" in holder:
             raise holder["error"]
         return holder.get("value", ("", True))
+
+    def _join_worker_bounded(self, worker: threading.Thread, budget: float) -> bool:
+        """有界等待一个 worker；期间持续检查取消信号与任务截止。
+
+        返回 True = 放弃等待（worker 仍在运行，已由提交授权隔离）。
+        等待切片 0.1s：取消响应 ≤0.1s，且不因 join 错过任务截止。
+        """
+        deadline = (
+            self._clock() + float(budget) if budget is not None and budget > 0 else None
+        )
+        while worker.is_alive():
+            if self._should_cancel is not None:
+                try:
+                    if self._should_cancel():
+                        return True
+                except Exception:  # noqa: BLE001
+                    pass
+            if deadline is not None:
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    return True
+                worker.join(min(0.1, remaining))
+            else:
+                worker.join(0.1)
+        return False
 
     # ── 工具请求处置 ───────────────────────────────────────────
 
@@ -707,6 +757,22 @@ class CodexModifyTurnDriver:
                     self._logger.warning(
                         "codex modify server request 回应失败（%s）", exc.__class__.__name__
                     )
+
+    def _forward_commentary_item(self, item: dict) -> None:
+        """RF02：完整 commentary item 到达模式——同 id 已有 delta 则去重跳过。"""
+        if item.get("type") != "agentMessage" or item.get("phase") != "commentary":
+            return
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id in self._commentary_delta_items:
+            return
+        text = str(item.get("text") or "")
+        if text and self._on_commentary is not None:
+            try:
+                self._on_commentary(text)
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "codex modify commentary 回调异常（%s）", exc.__class__.__name__
+                )
 
     @staticmethod
     def _record_item(
@@ -1009,6 +1075,8 @@ class CodexModifyBridge:
             on_event=self.on_event,
         )
         self.registry.on_before_write = self._ensure_before_revision
+        # RF01：提交前授权——终止/取消/代次失效后，迟到的写入一律在提交点被拒
+        self.registry.write_guard = self._write_guard_rejection
         self.tools = self.registry.definitions()
         self.tool_specs = _dynamic_tool_specs(self.tools)
         self.allowlist = _tool_allowlist(self.tools)
@@ -1025,6 +1093,11 @@ class CodexModifyBridge:
         self.audit: list[dict] = []
         self.turn_outcomes: list[CodexModifyTurnOutcome] = []
         self.epoch_guard = getattr(request, "epoch_guard", None)
+        # RF01：终止状态与迟到写入隔离
+        self.terminated = False            # 任务结束（超时/取消/epoch/错误/完成门禁终局）
+        self.abandoned_write_workers = 0   # 放弃等待但已隔离的写入 worker 数
+        self._task_deadline_at: float | None = None
+        self._abandonment_reported = False
 
     # ── 写侧预处理 ─────────────────────────────────────────────
 
@@ -1055,6 +1128,28 @@ class CodexModifyBridge:
             return bool(self.epoch_guard())
         except Exception:  # noqa: BLE001 —— 守卫异常按通过处理（服务层兜底）
             return True
+
+    def _write_guard_rejection(self) -> str | None:
+        """RF01：写工具提交前授权。返回拒绝原因；None = 允许提交。
+
+        覆盖"执行中到提交"窗口：worker 线程在提交点重新校验任务状态，
+        终止（超时/取消/epoch/终局）之后的迟到写入在此被拒绝并隔离。
+        """
+        if self.terminated:
+            return "任务已结束"
+        if self.cancelled:
+            return "任务已取消"
+        if self.epoch_violated:
+            return "项目已切换"
+        if self._task_deadline_at is not None and self._clock() >= self._task_deadline_at:
+            return "任务超时"
+        if self.request.should_cancel is not None:
+            try:
+                if self.request.should_cancel():
+                    return "任务已取消"
+            except Exception:  # noqa: BLE001
+                pass
+        return None
 
     # ── 工具执行器（driver 回调；唯一执行/拒绝入口）──────────────
 
@@ -1112,6 +1207,16 @@ class CodexModifyBridge:
         self.tool_calls_used += 1
         entry["executed"] = True
         entry["ok"] = result.ok
+        # RF01：执行结束后再校验一次活动状态——终止后迟到的工具不得发成功事件
+        rejection = self._write_guard_rejection()
+        if rejection is not None:
+            entry["ok"] = False
+            entry["rejected_reason"] = "turn_terminated"
+            self.audit.append(entry)
+            return (
+                f"任务已终止（{rejection}），工具结果已隔离作废，不作为交付证据。",
+                False,
+            )
         self.audit.append(entry)
         self.on_event("tool_call", {
             "name": tool,
@@ -1163,6 +1268,7 @@ class CodexModifyBridge:
             tool_timeout = _positive_float(
                 getattr(agent_cfg, "agent_tool_timeout", None), _DEFAULT_TOOL_TIMEOUT
             )
+            self._task_deadline_at = self._clock() + task_timeout
             kwargs = {
                 "client": client,
                 "model": self.model,
@@ -1172,12 +1278,18 @@ class CodexModifyBridge:
                 "executor": self.execute_tool_call,
                 "should_cancel": self.request.should_cancel,
                 "on_delta": None,
+                # RF02：公开 commentary 转为 public_commentary 事件（先记录再广播）
+                "on_commentary": lambda chunk: self.on_event(
+                    "public_commentary", {"content": str(chunk)}
+                ),
                 "reasoning_effort": self.reasoning_effort,
                 "logger": self.logger,
                 "timeout": idle_timeout,
-                "task_deadline": self._clock() + task_timeout,
+                "task_deadline": self._task_deadline_at,
                 "tool_timeout": tool_timeout,
                 "clock": self._clock,
+                # RF01：只有源码变更工具走有界线程；读/编译内联
+                "threaded_tools": WRITE_TOOLS,
             }
 
             driver = CodexModifyTurnDriver(**kwargs)
@@ -1233,13 +1345,15 @@ class CodexModifyBridge:
                         finish_reason="error", error=TURN_ERROR_TEXT,
                     )
                 self.turn_outcomes.append(outcome)
-                # 卡03：超时仍在运行的工具线程，在门禁评估前 best-effort 收尾
-                # ——延迟落盘必须先参与验证，绝不与完成门禁竞态。
+                # RF01：任务终局即冻结提交授权（terminated 先于 join 与门禁），
+                # 放弃等待的写入 worker 已被授权隔离——其迟到写入必被拒绝。
+                self.terminated = True
                 still_running = driver.join_pending_tools(tool_timeout)
                 if still_running:
+                    self.abandoned_write_workers += still_running
                     self.on_event("status", {
                         "stage": "verify",
-                        "message": "⚠️ 有工具仍未结束，当前进度按未完成处理。",
+                        "message": "⚠️ 有写入工具未能在任务内完成，其结果已隔离作废；当前进度按未完成处理。",
                     })
                 compile_result = self.registry.last_compile_result
                 if self.epoch_violated or (self.epoch_guard is not None and not self._epoch_ok()):
@@ -1296,6 +1410,8 @@ class CodexModifyBridge:
                     self.cancelled = True
                 break
 
+            # RF01：主循环任何出口都冻结提交授权（含正常完成门禁通过）
+            self.terminated = True
             if self.cancelled:
                 self.on_event("status", {"stage": "cancel", "message": "⏹ 任务已取消"})
             elif self.epoch_violated:
@@ -1454,11 +1570,17 @@ class CodexModifyBridge:
         aborted_delivery = (
             self.cancelled
             or self.epoch_violated
+            or self.abandoned_write_workers > 0
             or any(
                 o.finish_reason in ("interrupted", "timeout", "error", "no_final_message")
                 for o in self.turn_outcomes
             )
         )
+        if self.abandoned_write_workers:
+            output_parts.append(
+                f"⚠️ 有 {self.abandoned_write_workers} 个写入工具未能在任务内完成，"
+                "其结果已隔离作废；以上为部分进度，不是完整交付。"
+            )
         metadata: dict = {
             "agent_loop": {
                 "diff_guardrail": {
@@ -1483,6 +1605,8 @@ class CodexModifyBridge:
                 # 原样保留，质量记录兼容）。connection_error/cancelled 由各自
                 # 字段（error/cancelled）表达，不混入 timeout_reason。
                 "timeout_reason": _aggregate_timeout_reason(self.turn_outcomes),
+                # RF01：放弃等待但已授权隔离的写入 worker 数（>0 = 非完整交付）
+                "abandoned_write_workers": self.abandoned_write_workers,
             },
             "before_revision_id": self.before_revision_id or None,
             "changed_files": sorted(dict(self.registry.changed_files).keys()),

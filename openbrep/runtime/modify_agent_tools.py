@@ -13,6 +13,7 @@ from __future__ import annotations
 import difflib
 import json
 import logging
+import time
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -25,6 +26,13 @@ from openbrep.llm import ToolCall, ToolDefinition
 from openbrep.parameter_mutations import compact_result_json, mutate_parameters
 from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.static_checker import StaticChecker, find_prose_leaks
+
+# RF01：写工具提交前授权失败（任务已终止/取消/代次失效）——稳定文案，绝不回显上游。
+WRITE_REJECTED_TEXT = "任务已终止，本次源码写入被拒绝并隔离（取消/超时/项目切换）。"
+
+
+class WriteRejected(Exception):
+    """写工具提交前授权未通过：任务已终止，工作结果必须作废隔离。"""
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +52,8 @@ class ToolExecutionResult:
     ok: bool
     summary: str
     data: dict = field(default_factory=dict)
+    # RF03：工具真实耗时（毫秒），进入任务事件 tool_finished
+    duration_ms: float | None = None
 
 
 def _truncate(text: str, limit: int = _MAX_TOOL_RESULT_CHARS) -> str:
@@ -204,6 +214,10 @@ class ModifyToolRegistry:
         self._apply_changes = apply_changes
         self.on_event = on_event or (lambda *_: None)
         self.on_before_write = on_before_write or (lambda: None)
+        # RF01：写工具提交前授权回调（返回拒绝原因字符串或 None）。
+        # 在提交点（_apply_changes / mutate_parameters 的 before_commit）检查，
+        # 覆盖"执行中到提交"的窗口：超时/取消/代次失效后迟到的写入一律拒绝。
+        self.write_guard: Optional[Callable[[], Optional[str]]] = None
         self.changed_files: dict[str, str] = {}
         # diff 范围护栏：记录每个可写文件的修改前内容与最近一次写入方式
         self._baseline_content: dict[str, str] = {
@@ -350,9 +364,23 @@ class ModifyToolRegistry:
 
     # ── 分发执行 ──────────────────────────────────────────
 
+    def _check_write_guard(self) -> None:
+        """提交前授权检查；拒绝时抛 WriteRejected（由 execute 降级为失败结果）。"""
+        if self.write_guard is None:
+            return
+        reason = self.write_guard()
+        if reason:
+            raise WriteRejected(reason)
+
+    def _before_commit_write(self) -> None:
+        """edit_parameters 提交链：先做惰性快照，再在原子写之前做授权检查。"""
+        self.on_before_write()
+        self._check_write_guard()
+
     def execute(self, call: ToolCall) -> ToolExecutionResult:
         """执行一次工具调用并记日志；任何异常都降级为 ok=False 的结果回填。"""
         # 卡04：工具开始事件先发（未返回的工具显示 running，不显示失败）
+        started = time.monotonic()
         self.on_event("tool_started", {
             "tool": call.name,
             "tool_call_id": call.id,
@@ -381,14 +409,21 @@ class ModifyToolRegistry:
         else:
             try:
                 result = handler(call.arguments or {})
+            except WriteRejected as exc:
+                # RF01：提交前授权拒绝——工作结果作废隔离，不污染共享状态
+                logger.warning("tool %s write rejected: %s", call.name, exc)
+                result = ToolExecutionResult(name=call.name, ok=False, summary=WRITE_REJECTED_TEXT)
             except Exception as exc:  # 工具异常不应炸掉 loop，如实回填给模型
                 logger.warning("tool %s failed: %s", call.name, exc)
                 result = ToolExecutionResult(name=call.name, ok=False, summary=f"工具执行异常：{exc}")
+        # RF03：真实工具耗时进入结果（tool_finished 事件与审计共用）
+        result.duration_ms = round((time.monotonic() - started) * 1000, 1)
         self.tool_log.append({
             "name": call.name,
             "arguments": dict(call.arguments or {}),
             "ok": result.ok,
             "summary": result.summary[:200],
+            "duration_ms": result.duration_ms,
         })
         return result
 
@@ -483,7 +518,7 @@ class ModifyToolRegistry:
             self.project,
             expected_source_fingerprint=str(args.get("expected_source_fingerprint") or ""),
             operations=args.get("operations"),
-            before_commit=self.on_before_write,
+            before_commit=self._before_commit_write,
         )
         payload = result.to_dict()
         if result.ok and result.changed_files:
@@ -535,6 +570,8 @@ class ModifyToolRegistry:
                         "脚本文件只允许 GDL 语句；解释文字请放在对话里或以 `!` 注释书写。"
                     ),
                 )
+        # RF01：提交点授权（阻塞阶段之后、内存变更之前）——迟到提交在此被拒
+        self._check_write_guard()
         self._apply_changes(self.project, {file_path: cleaned})
         self.changed_files[file_path] = cleaned
         self.write_methods[file_path] = "update_script"
@@ -670,6 +707,8 @@ class ModifyToolRegistry:
                     ),
                 )
 
+        # RF01：提交点授权（阻塞阶段之后、内存变更之前）——迟到提交在此被拒
+        self._check_write_guard()
         self._apply_changes(self.project, {file_path: cleaned})
         self.changed_files[file_path] = cleaned
         self.write_methods[file_path] = "patch_script"
