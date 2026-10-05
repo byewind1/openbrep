@@ -767,6 +767,8 @@ class WorkbenchSession:
             return self.conversation_service.route(body)
 
         # 卡04：任务事件只读查询——GET 天然 lock-free，长执行不堵进度查询
+        if normalized_method == "GET" and route == "/api/assistant/turn/events":
+            return self.conversation_service.list_turn_events()
         if normalized_method == "GET" and route.startswith("/api/assistant/turn/events/"):
             turn_id = unquote(route.rsplit("/", 1)[-1])
             return self.conversation_service.read_turn_events(turn_id)

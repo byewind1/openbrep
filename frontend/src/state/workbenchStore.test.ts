@@ -23,6 +23,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
   return {
     conversationTurn: async () => ({ ok: false, error: 'Unified entry is not mocked in this legacy test.' }),
     fetchTurnEvents: async () => ({ ok: false, events: [] }),
+    listTurnEvents: async () => ({ ok: false, turns: [] }),
     fetchSnapshot: async () => ({
       project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
       parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],

@@ -10,6 +10,7 @@ import type {
   AssistantResult,
   AssistantStreamEvent,
   TaskEvent,
+  TurnSummary,
   AuthoritativePreviewResult,
   ClearProjectMemoryResult,
   CompileResult,
@@ -1616,6 +1617,11 @@ function assistantImagesPayload(images: AssistantImageAttachment[]) {
       ...(img.path ? { path: img.path } : {}),
     })),
   }
+}
+
+/** RF04：任务索引——重开后发现已开始但未结束的任务（不依赖前端末次 save）。 */
+export async function listTurnEvents(): Promise<{ ok: boolean; turns?: TurnSummary[] }> {
+  return requestJson('/api/assistant/turn/events', { method: 'GET' }, { ok: false })
 }
 
 /** 卡05：读取一个 turn 的任务事件记录（复盘/恢复进度时间线；GET lock-free）。 */

@@ -372,6 +372,43 @@ class WorkbenchTaskEventService:
             "events": events,
         }
 
+    def list_turns(self, limit: int = 50) -> list[dict[str, Any]]:
+        """RF04：任务索引——进程退出后仍可发现已开始的任务（不依赖前端 save）。
+
+        扫描项目任务目录（最近 mtime 排序，截断到 limit）+ 本进程内存 turn；
+        每项给出 turn_id/started_at/last_kind/last_state/terminal/message 摘要。
+        terminal=False 表示已开始但未结束——读取端展示为未完成，不伪造答复。
+        """
+        entries: dict[str, dict[str, Any]] = {}
+
+        def absorb(turn_id: str, events: list[dict[str, Any]]) -> None:
+            if not events:
+                return
+            first, last = events[0], events[-1]
+            terminal = last.get("kind") in {"completed", "failed", "cancelled"}
+            entries[turn_id] = {
+                "turn_id": turn_id,
+                "started_at": first.get("timestamp"),
+                "last_kind": last.get("kind"),
+                "last_state": last.get("state"),
+                "terminal": terminal,
+                "message": (first.get("message") or "")[:120] or None,
+                "run_id": last.get("run_id") or first.get("run_id"),
+            }
+
+        project = self.session.project
+        store = None
+        if project is not None and getattr(project, "root", None):
+            store = self._store_for(str(project.root))
+        if store is not None and store.tasks_dir.exists():
+            paths = sorted(store.tasks_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for path in paths[:limit]:
+                absorb(path.stem, store.read_turn(path.stem))
+        for turn_id, memory in self._memory_turns.items():
+            if turn_id not in entries and memory:
+                absorb(turn_id, memory)
+        return sorted(entries.values(), key=lambda e: str(e.get("started_at") or ""), reverse=True)
+
     def recording_status(self, turn_id: str) -> dict[str, Any]:
         """RF03：当前 turn 的记录状态（进入执行响应 events_recording）。"""
         error = self._persist_errors.get(turn_id)

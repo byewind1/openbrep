@@ -509,6 +509,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     if (result.awaiting_extraction_confirmation && result.extractions?.length) {
       set((state) => ({ assistantBusy: false, pendingExtraction: { turn_id: result.turn_id, extractions: result.extractions!, message, images: [] },
         assistantMessages: replacePendingAssistantMessage(state.assistantMessages, EXTRACTION_PENDING_CONTENT, { turnTaskRef: taskRef, thinkingSteps: [...steps] }) }))
+      await persistAssistantHistory()
       return
     }
     if (result.result_kind === 'awaiting_confirmation' && result.pending_plan) {
@@ -517,6 +518,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         assistantMessages: replacePendingAssistantMessage(state.assistantMessages, PLAN_PENDING_CONTENT,
           { turnTaskRef: taskRef, thinkingSteps: [...steps] }),
       }))
+      await persistAssistantHistory()
       return
     }
     if (result.result_kind === 'execution' && result.project && result.parameters && result.preview) {
@@ -543,6 +545,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           recordingFailed: result.events_recording?.status === 'degraded' }),
       lastError: result.ok ? null : reply,
     }))
+    // RF04：咨询/失败/取消等全部终端分支都立即落盘聊天正文与 task_ref
+    await persistAssistantHistory()
   }
 
   /** RF03：落盘失败提示贴到对应任务消息（仅会话内存，不阻塞任务） */
@@ -629,11 +633,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       }
       await finishUnified(result, epoch, [...prepareSteps], message)
     } catch (error) {
-      if (!projectSwitchedSince(epoch)) set((state) => ({ assistantBusy: false,
-        lastError: String(error), assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
-          controller.signal.aborted ? INTERRUPTED_CONTENT : String(error),
-          { thinkingSteps: [...prepareSteps] }),
-      }))
+      if (!projectSwitchedSince(epoch)) {
+        set((state) => ({ assistantBusy: false,
+          lastError: String(error), assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
+            controller.signal.aborted ? INTERRUPTED_CONTENT : String(error),
+            { thinkingSteps: [...prepareSteps] }),
+        }))
+        // RF04：异常路径同样落盘（中断记录是真实对话的一部分）
+        await persistAssistantHistory()
+      }
     } finally {
       if (get().chatAbortController === controller) set({ assistantBusy: false, chatAbortController: null })
     }
@@ -700,6 +708,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         }),
         lastError: error,
       }))
+      await persistAssistantHistory()
       return
     }
     set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
@@ -746,6 +755,39 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       // ST03 F2：刷新后恢复 delivery 卡；旧/缺关联记录显示 unlinked
       const hydrated = hydrateHistoryMessages(result.messages ?? [])
       set({ assistantMessages: hydrated })
+      // RF04：进程退出后未完成的任务——从任务索引发现（不依赖前端末次 save），
+      // 合成"已开始未结束"条目并恢复其执行过程，不伪造最终答复。
+      if (typeof api.listTurnEvents === 'function') {
+        try {
+          const index = await api.listTurnEvents()
+          const knownTurnIds = new Set(
+            hydrated.filter((m) => m.turnTaskRef?.turn_id).map((m) => m.turnTaskRef!.turn_id),
+          )
+          const unterminated = (index.turns ?? []).filter(
+            (t) => !t.terminal && !knownTurnIds.has(t.turn_id),
+          )
+          if (unterminated.length) {
+            const synthesized = await Promise.all(unterminated.slice(-5).map(async (turn) => {
+              let steps: AssistantThinkingStep[] = []
+              if (typeof api.fetchTurnEvents === 'function') {
+                try {
+                  const events = await api.fetchTurnEvents(turn.turn_id)
+                  if (events.ok) steps = taskEventsToThinkingSteps(events.events)
+                } catch { /* 读取失败按无过程处理 */ }
+              }
+              return {
+                role: 'assistant' as const,
+                content: `⏹ 任务未完成（进程退出前中断），没有最终答复。${turn.message ? `原始目标：${turn.message}` : ''}`,
+                createdAt: Date.now(),
+                turnTaskRef: { turn_id: turn.turn_id, run_id: turn.run_id ?? null, schema_version: 1 },
+                thinkingSteps: steps.length ? steps : undefined,
+                staleTimeline: !steps.length,
+              }
+            }))
+            set((state) => ({ assistantMessages: [...state.assistantMessages, ...synthesized] }))
+          }
+        } catch { /* 任务索引读取失败不影响历史加载 */ }
+      }
       // 卡05：按 meta.task_ref 拉取任务事件，恢复执行过程时间线（最近 10 条）
       if (typeof api.fetchTurnEvents === 'function') {
         const taskMessages = hydrated.filter((m) => m.role === 'assistant' && m.turnTaskRef?.turn_id).slice(-10)

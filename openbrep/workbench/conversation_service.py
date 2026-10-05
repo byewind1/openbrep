@@ -215,6 +215,13 @@ class WorkbenchConversationService:
             return
         events.record_stage(turn.turn_id, kind=kind, stage=stage, message=message)
 
+    def list_turn_events(self) -> dict:
+        """RF04：任务索引（重开项目后前端据此展示未完成任务）。"""
+        events = _task_events(self.session)
+        if events is None:
+            return {'ok': True, 'turns': []}
+        return {'ok': True, 'turns': events.list_turns()}
+
     def read_turn_events(self, turn_id: str) -> dict:
         """卡04：任务事件只读查询（GET 天然 lock-free，不拿 _op_lock）。"""
         events = _task_events(self.session)

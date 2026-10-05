@@ -91,6 +91,7 @@ import type {
 export interface WorkbenchApi {
   conversationTurn: typeof import('../api/client').conversationTurn
   fetchTurnEvents: typeof import('../api/client').fetchTurnEvents
+  listTurnEvents: typeof import('../api/client').listTurnEvents
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   workspaceInit: (path: string) => Promise<WorkspaceScanResult>
   workspaceOpen: (path: string) => Promise<WorkspaceScanResult>

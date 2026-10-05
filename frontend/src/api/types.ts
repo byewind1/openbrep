@@ -950,6 +950,9 @@ export interface AssistantHistoryItem {
     run_id?: string | null
     changed_files?: string[]
     error_category?: string
+    /** 卡05/RF04：任务时间线与事件记录关联（不进 LLM prompt） */
+    thinking_steps?: AssistantThinkingStep[]
+    task_ref?: TurnTaskRef
     [key: string]: unknown
   } | null
 }
@@ -991,6 +994,17 @@ export interface AssistantMessage {
   staleTimeline?: boolean
   /** RF03：后端执行记录保存失败（仅当前会话内存活的提示） */
   recordingFailed?: boolean
+}
+
+/** RF04：任务索引条目（GET /api/assistant/turn/events） */
+export interface TurnSummary {
+  turn_id: string
+  started_at?: string | null
+  last_kind?: string | null
+  last_state?: string | null
+  terminal: boolean
+  message?: string | null
+  run_id?: string | null
 }
 
 /** 卡05：任务事件记录引用（聊天 meta.task_ref） */
