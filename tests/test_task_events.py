@@ -6,6 +6,8 @@ import json
 import threading
 from pathlib import Path
 
+import pytest
+
 from openbrep.runtime.pipeline import TaskResult
 from openbrep.workbench.request_gate import is_lock_free_route
 from openbrep.workbench.task_event_store import TaskEventStore
@@ -320,3 +322,28 @@ def test_service_commentary_buffer_merges_and_flushes(tmp_path):
 
 def _last_kind(events):
     return events[-1]["kind"]
+
+
+# ── U00-A 基线反例（xfail 钉住，修复卡转绿后移除标记）──────────
+# 派单：Obsidian《OpenBrep-GDL统一重构编码派单-2026-10-07/U00-A》。
+# xfail(strict=True) 约定同 tests/test_task_feedback_regression.py。
+
+
+@pytest.mark.xfail(strict=True, reason="U02-A：终态后迟到的非终态事件不得追加改写终态呈现")
+def test_late_nonterminal_event_after_terminal_is_rejected(tmp_path):
+    """U00-A 反例：completed 之后迟到的 tool_started 仍被追加（seq 越过终态）。
+
+    append_terminal 对终止事件 first-wins，但普通 append 不检查终态——
+    异步 worker（如 codex 桥线程）在任务终态后冒出的事件会排到终态之后，
+    "最后一条 = 终态" 的消费口径被打破。修复责任 U02-A（重复/迟到事件不能
+    重写终态）；实施转绿后移除 xfail 标记。
+    """
+    session = session_at(Path(tmp_path))
+    service = session.task_event_service
+    service.begin_turn("t-late", project_epoch=session.project_epoch, message="迟到事件探针")
+    service.finish_turn("t-late", kind="completed", state="delivered")
+    late = service.handle_pipeline_event("t-late", "tool_started", {"tool": "compile_script"})
+    store = service._store_for(str(session.source_path))
+    kinds = [e["kind"] for e in store.read_turn("t-late")]
+    assert not late, f"终态后迟到事件未被拒绝：{late}"
+    assert kinds[-1] in {"completed", "failed", "cancelled"}, f"终态不再是最后事件：{kinds}"

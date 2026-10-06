@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import unittest
+
+import pytest
 from pathlib import Path
 
 from openbrep.compiler import MockHSFCompiler
@@ -923,3 +925,47 @@ class TestEffectContractGate(unittest.TestCase):
         result = _make_pipeline(mock_llm, self.tmp).execute(self._request(project))
         self.assertTrue(result.success, result.plain_text)
         self.assertNotIn("effect", result.metadata["acceptance"])
+
+
+# ── U00-A 基线反例（xfail 钉住，修复卡转绿后移除标记）──────────
+# 派单：Obsidian《OpenBrep-GDL统一重构编码派单-2026-10-07/U00-A》。
+# xfail(strict=True) 约定同 tests/test_task_feedback_regression.py。
+
+
+@pytest.mark.xfail(strict=True, reason="U06-A RunControl：取消请求到达后不得再执行写工具（工具前检查）")
+def test_write_tool_not_executed_after_cancel_during_llm_call(tmp_path):
+    """U00-A 反例 5：取消请求在 LLM 调用期间到达，已决策的写工具仍执行落盘。
+
+    普通 loop 的 ModifyToolRegistry.write_guard=None，取消检查只在主循环
+    迭代边界（modify_agent_loop.py 主循环顶部），工具派发后到提交之间没有
+    授权检查——SSE 断连置 cancel_event 时，这一轮工具写入照常落盘。修复
+    口径（U06-A RunControl）：工具派发/提交前有取消检查；实施转绿后移除标记。
+    """
+    from openbrep.runtime.modify_agent_loop import run_modify_agent_loop
+
+    project = _make_project(tmp_path)
+    original = project.get_script(ScriptType.SCRIPT_3D)
+    flag = {"cancelled": False}
+
+    class _CancelDuringLLM(MockLLM):
+        """模拟取消请求在第一次工具规划 LLM 调用期间（在途）到达。"""
+
+        def generate_with_tools(self, messages, tools, **kwargs):
+            resp = super().generate_with_tools(messages, tools, **kwargs)
+            flag["cancelled"] = True
+            return resp
+
+    mock_llm = _CancelDuringLLM(responses=[
+        {"tool_calls": [{"name": "update_script", "arguments": {
+            "file_path": "scripts/3d.gdl", "content": "BLOCK 1,1,1\nEND",
+        }}]},
+        {"content": "已加块，编译通过。"},
+    ])
+    request = _make_request(
+        project, tmp_path,
+        should_cancel=lambda: flag["cancelled"],
+    )
+    run_modify_agent_loop(_make_pipeline(mock_llm, tmp_path), request)
+    assert project.get_script(ScriptType.SCRIPT_3D) == original, (
+        "取消请求已置位后写工具仍执行：源码被变更"
+    )
