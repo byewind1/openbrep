@@ -139,6 +139,26 @@ class CodexModifyTurnOutcome:
     requests: list[dict] = field(default_factory=list)
 
 
+class _CommitAuthorization:
+    """R2-01：不可复活的提交授权令牌（任务级/调用级）。
+
+    valid=False 之后永不复活；撤销与提交共享提交锁（见 CodexModifyBridge
+    ._commit_lock），保证"撤销生效后没有新提交、已提交的变更按线性化属于
+    真实部分修改"。
+    """
+
+    __slots__ = ("valid", "reason")
+
+    def __init__(self) -> None:
+        self.valid = True
+        self.reason: str | None = None
+
+    def revoke(self, reason: str) -> None:
+        if self.valid:
+            self.valid = False
+            self.reason = reason
+
+
 def _positive_float(raw: Any, fallback: float) -> float:
     """卡03：config 超时值读取口径——正数才生效，其余回落缺省（绝不崩）。"""
     try:
@@ -310,6 +330,7 @@ class CodexModifyTurnDriver:
         reasoning_effort: str = "",
         logger: logging.Logger | None = None,
         on_commentary: Callable[[str], None] | None = None,
+        on_tool_timeout: Callable[[str], None] | None = None,
         tool_timeout: float | None = None,
         task_deadline: float | None = None,
         clock: Callable[[], float] | None = None,
@@ -326,6 +347,8 @@ class CodexModifyTurnDriver:
         self._on_delta = on_delta
         # RF02：公开 commentary 回调（与 final 分离；隐藏 reasoning 不采集）
         self._on_commentary = on_commentary
+        # R2-01：工具超时立即撤销该调用授权（不等回合结束）
+        self._on_tool_timeout = on_tool_timeout
         self._commentary_delta_items: set[str] = set()
         self._reasoning_effort = reasoning_effort
         self._logger = logger or _LOGGER
@@ -610,6 +633,11 @@ class CodexModifyTurnDriver:
             budget = min(budget, max(0.0, self._task_deadline - self._clock()))
         if budget <= 0:
             self.tool_timeouts += 1
+            if self._on_tool_timeout is not None:
+                try:
+                    self._on_tool_timeout(call_id)
+                except Exception:  # noqa: BLE001
+                    pass
             return TOOL_TIMEOUT_TEXT, False
         holder: dict[str, Any] = {}
 
@@ -624,9 +652,14 @@ class CodexModifyTurnDriver:
         )
         worker.start()
         if self._join_worker_bounded(worker, budget):
-            # RF01：超时放弃 ≠ 终止——worker 仍在跑；提交授权（write_guard）
-            # 保证其迟到写入被拒绝隔离，这里只登记审计。
+            # RF01/R2-01：超时放弃 ≠ 终止——worker 仍在跑；其调用授权立即撤销，
+            # 提交点校验保证迟到写入被拒绝隔离，这里只登记审计。
             self.tool_timeouts += 1
+            if self._on_tool_timeout is not None:
+                try:
+                    self._on_tool_timeout(call_id)
+                except Exception:  # noqa: BLE001
+                    pass
             self._pending_tools.append(worker)
             self._logger.warning(
                 "codex modify 工具执行超时（tool=%s，budget=%.1fs），"
@@ -1075,8 +1108,9 @@ class CodexModifyBridge:
             on_event=self.on_event,
         )
         self.registry.on_before_write = self._ensure_before_revision
-        # RF01：提交前授权——终止/取消/代次失效后，迟到的写入一律在提交点被拒
+        # RF01/R2-02：提交前授权 + 原子提交边界——校验与变更在同一提交锁内
         self.registry.write_guard = self._write_guard_rejection
+        self.registry.commit_executor = self._execute_commit
         self.tools = self.registry.definitions()
         self.tool_specs = _dynamic_tool_specs(self.tools)
         self.allowlist = _tool_allowlist(self.tools)
@@ -1093,11 +1127,22 @@ class CodexModifyBridge:
         self.audit: list[dict] = []
         self.turn_outcomes: list[CodexModifyTurnOutcome] = []
         self.epoch_guard = getattr(request, "epoch_guard", None)
-        # RF01：终止状态与迟到写入隔离
-        self.terminated = False            # 任务结束（超时/取消/epoch/错误/完成门禁终局）
+        # R2-01/R2-02：授权生命周期与原子提交
+        self._commit_lock = threading.RLock()   # 撤销与提交共享；同线程可重入
+        self._task_auth = _CommitAuthorization()
+        self._call_auths: dict[str, _CommitAuthorization] = {}
+        self._tls = threading.local()
         self.abandoned_write_workers = 0   # 放弃等待但已隔离的写入 worker 数
         self._task_deadline_at: float | None = None
-        self._abandonment_reported = False
+        # R2-03：写入提交拒绝追踪（被拒且无后续有效修复 → 非完整交付）。
+        # 超时放弃的写 op 在放弃瞬间即注定被拒（调用授权已撤销）——以
+        # _last_abandoned_write_seq 参与判定，不依赖 worker 事后完成记账。
+        self.write_rejections = 0
+        self._write_op_seq = 0
+        self._last_success_seq = 0
+        self._last_rejection_seq = 0
+        self._last_abandoned_write_seq = 0
+        self._call_write_seq: dict[str, int] = {}
 
     # ── 写侧预处理 ─────────────────────────────────────────────
 
@@ -1130,26 +1175,82 @@ class CodexModifyBridge:
             return True
 
     def _write_guard_rejection(self) -> str | None:
-        """RF01：写工具提交前授权。返回拒绝原因；None = 允许提交。
+        """R2-01：写工具提交前授权（令牌制）。返回拒绝原因；None = 允许提交。
 
-        覆盖"执行中到提交"窗口：worker 线程在提交点重新校验任务状态，
-        终止（超时/取消/epoch/终局）之后的迟到写入在此被拒绝并隔离。
+        - 任务级令牌：仅取消/任务截止/代次失效/预算退出/最终交付时撤销，
+          门禁打回的正常回合结束不撤销（下一回合创建新授权）；
+        - 调用级令牌：工具超时立即撤销该调用，回合结束撤销本回合未完成调用；
+          被放弃 worker 持旧令牌，永久无效；
+        - 主动检测到终止条件时就地撤销（撤销与提交共享提交锁）。
         """
-        if self.terminated:
-            return "任务已结束"
+        if not self._task_auth.valid:
+            return self._task_auth.reason
         if self.cancelled:
+            self._revoke_task("任务已取消")
             return "任务已取消"
         if self.epoch_violated:
+            self._revoke_task("项目已切换")
             return "项目已切换"
         if self._task_deadline_at is not None and self._clock() >= self._task_deadline_at:
+            self._revoke_task("任务超时")
             return "任务超时"
         if self.request.should_cancel is not None:
             try:
                 if self.request.should_cancel():
+                    self._revoke_task("任务已取消")
                     return "任务已取消"
             except Exception:  # noqa: BLE001
                 pass
+        auth = getattr(self._tls, "call_auth", None)
+        if auth is not None and not auth.valid:
+            return auth.reason
         return None
+
+    def _execute_commit(self, mutation: Callable[[], None]) -> None:
+        """R2-02：原子提交——提交锁内做最终授权校验后执行变更。
+
+        撤销（_revoke_*）同样持有提交锁：撤销生效后没有新提交；校验通过后
+        已开始的变更属于已原子提交的真实部分修改。
+        """
+        from openbrep.runtime.modify_agent_tools import WriteRejected
+
+        with self._commit_lock:
+            rejection = self._write_guard_rejection()
+            if rejection is not None:
+                self._tls.commit_rejected = True
+                raise WriteRejected(rejection)
+            self._tls.commit_rejected = False
+            mutation()
+
+    def _revoke_task(self, reason: str) -> None:
+        """任务级撤销：任务授权 + 全部在途调用授权，一次终局、不可复活。"""
+        with self._commit_lock:
+            self._task_auth.revoke(reason)
+            for auth in self._call_auths.values():
+                auth.revoke(reason)
+            self._call_auths.clear()
+
+    def _revoke_outstanding_calls(self, reason: str) -> None:
+        """回合结束：撤销本回合全部在途调用授权（正常完成的不受影响），
+        下一回合创建新授权——被放弃 worker 永久无效。"""
+        with self._commit_lock:
+            for auth in self._call_auths.values():
+                auth.revoke(reason)
+            self._call_auths.clear()
+
+    def _revoke_call(self, call_id: str, reason: str) -> None:
+        """R2-01：工具超时立即撤销该调用的授权（不等回合结束）。"""
+        with self._commit_lock:
+            auth = self._call_auths.get(call_id)
+            if auth is not None:
+                auth.revoke(reason)
+
+    def _on_write_timeout(self, call_id: str, reason: str) -> None:
+        """R2-01/R2-03：撤销调用授权并记录被放弃的写 op 序列。"""
+        self._revoke_call(call_id, reason)
+        seq = self._call_write_seq.get(call_id)
+        if seq is not None:
+            self._last_abandoned_write_seq = max(self._last_abandoned_write_seq, seq)
 
     # ── 工具执行器（driver 回调；唯一执行/拒绝入口）──────────────
 
@@ -1192,6 +1293,18 @@ class CodexModifyBridge:
             self.audit.append(entry)
             return BUDGET_EXHAUSTED_TOOL_TEXT, False
         self.seen_call_ids.add(call_id)
+        # R2-01：每次调用持独立授权令牌（提交点校验；回合结束/超时撤销）
+        call_auth = _CommitAuthorization()
+        self._call_auths[call_id] = call_auth
+        self._tls.call_auth = call_auth
+        self._tls.commit_rejected = False
+        is_write_tool = tool in ("update_script", "patch_script", "edit_parameters")
+        if is_write_tool:
+            self._write_op_seq += 1
+            write_op_seq = self._write_op_seq
+            self._call_write_seq[call_id] = write_op_seq
+        else:
+            write_op_seq = None
         # 卡04：工具开始事件（结束事件仍由下方 tool_call 发出）
         self.on_event("tool_started", {"tool": tool, "tool_call_id": call_id, "stage": "think"})
         if tool in ("update_script", "patch_script"):
@@ -1207,7 +1320,14 @@ class CodexModifyBridge:
         self.tool_calls_used += 1
         entry["executed"] = True
         entry["ok"] = result.ok
-        # RF01：执行结束后再校验一次活动状态——终止后迟到的工具不得发成功事件
+        # R2-03：写提交拒绝/成功序列追踪（被拒且无后续有效修复 → 非完整交付）
+        if write_op_seq is not None:
+            if getattr(self._tls, "commit_rejected", False):
+                self.write_rejections += 1
+                self._last_rejection_seq = write_op_seq
+            elif result.ok:
+                self._last_success_seq = write_op_seq
+        # RF01/R2-01：执行结束后再校验一次活动状态——终止后迟到的工具不得发成功事件
         rejection = self._write_guard_rejection()
         if rejection is not None:
             entry["ok"] = False
@@ -1282,6 +1402,10 @@ class CodexModifyBridge:
                 "on_commentary": lambda chunk: self.on_event(
                     "public_commentary", {"content": str(chunk)}
                 ),
+                # R2-01：工具超时立即撤销该调用授权；R2-03：写 op 记为放弃
+                "on_tool_timeout": lambda call_id: self._on_write_timeout(
+                    str(call_id), "工具执行超时"
+                ),
                 "reasoning_effort": self.reasoning_effort,
                 "logger": self.logger,
                 "timeout": idle_timeout,
@@ -1313,11 +1437,13 @@ class CodexModifyBridge:
                     try:
                         if self.request.should_cancel():
                             self.cancelled = True
+                            self._revoke_task("任务已取消")
                             break
                     except Exception:  # noqa: BLE001
                         pass
                 if self.epoch_guard is not None and not self._epoch_ok():
                     self.epoch_violated = True
+                    self._revoke_task("项目已切换")
                     break
                 self.turns += 1
                 self.on_event("status", {"stage": "think", "message": "🧠 AI 正在思考下一步…"})
@@ -1345,9 +1471,9 @@ class CodexModifyBridge:
                         finish_reason="error", error=TURN_ERROR_TEXT,
                     )
                 self.turn_outcomes.append(outcome)
-                # RF01：任务终局即冻结提交授权（terminated 先于 join 与门禁），
-                # 放弃等待的写入 worker 已被授权隔离——其迟到写入必被拒绝。
-                self.terminated = True
+                # R2-01：回合结束 ≠ 任务终局——只撤销本回合在途调用的授权
+                #（被放弃 worker 永久无效）；门禁打回后的下一回合创建新授权。
+                self._revoke_outstanding_calls("回合已结束")
                 still_running = driver.join_pending_tools(tool_timeout)
                 if still_running:
                     self.abandoned_write_workers += still_running
@@ -1410,8 +1536,9 @@ class CodexModifyBridge:
                     self.cancelled = True
                 break
 
-            # RF01：主循环任何出口都冻结提交授权（含正常完成门禁通过）
-            self.terminated = True
+            # R2-01：最终交付/终局——任务授权不可复活地撤销
+            #（取消/截止/epoch/预算退出/门禁终局全部在此收敛）。
+            self._revoke_task("任务已结束")
             if self.cancelled:
                 self.on_event("status", {"stage": "cancel", "message": "⏹ 任务已取消"})
             elif self.epoch_violated:
@@ -1567,15 +1694,29 @@ class CodexModifyBridge:
 
         # 交付门禁：取消 / epoch 违规 / 崩溃 / 超时 / 无 final 一律不算成功
         # （任何非 stop 终局都意味着任务未完成——不得以"项目恰好可编译"假成功）。
+        # R2-03：关键写入被拒且无后续有效修复（成功写提交）→ 非完整交付，
+        # 即使门禁对当前源通过也不得判成功。
+        last_bad_seq = max(self._last_rejection_seq, self._last_abandoned_write_seq)
+        rejected_unresolved = (
+            (self.write_rejections > 0 or self._last_abandoned_write_seq > 0)
+            and self._last_success_seq <= last_bad_seq
+        )
+        # R2-01：放弃等待的写入 worker 在超时瞬间已被撤销调用授权（已隔离，
+        # 迟到提交必被拒），不再据此否定交付；交付以真实源状态与后续判定为准。
         aborted_delivery = (
             self.cancelled
             or self.epoch_violated
-            or self.abandoned_write_workers > 0
+            or rejected_unresolved
             or any(
                 o.finish_reason in ("interrupted", "timeout", "error", "no_final_message")
                 for o in self.turn_outcomes
             )
         )
+        if rejected_unresolved:
+            output_parts.append(
+                f"⚠️ 有 {self.write_rejections} 次源码写入因授权失效被拒且无后续有效修复，"
+                "修复未落地；以上不是完整交付。"
+            )
         if self.abandoned_write_workers:
             output_parts.append(
                 f"⚠️ 有 {self.abandoned_write_workers} 个写入工具未能在任务内完成，"
@@ -1607,6 +1748,9 @@ class CodexModifyBridge:
                 "timeout_reason": _aggregate_timeout_reason(self.turn_outcomes),
                 # RF01：放弃等待但已授权隔离的写入 worker 数（>0 = 非完整交付）
                 "abandoned_write_workers": self.abandoned_write_workers,
+                # R2-03：提交被拒的写入数与是否无后续有效修复
+                "rejected_write_commits": self.write_rejections,
+                "rejected_write_commits_unresolved": rejected_unresolved,
             },
             "before_revision_id": self.before_revision_id or None,
             "changed_files": sorted(dict(self.registry.changed_files).keys()),

@@ -97,7 +97,10 @@ def main():
 
     def offline_pipeline(*args, **kwargs):
         pipeline, request = build(*args, **kwargs)
-        pipeline._make_llm = lambda request: OfflineLLM()
+        if flags.get('scripted_llm'):
+            pipeline._make_llm = lambda request: session.settings_service.llm_adapter_factory(None)
+        else:
+            pipeline._make_llm = lambda request: OfflineLLM()
         pipeline._make_compiler = lambda: MockHSFCompiler()
         original_execute = pipeline.execute
 
@@ -327,6 +330,41 @@ def main():
             page.unroute('**/api/assistant/turn*')
             record('10-disconnect-no-ghost-progress')
 
+            # ── 11 门禁打回 → 第二轮实际修改 → 当前源编译通过（R2 回归）──
+            fixture('gate_retry')
+            from openbrep.llm import MockLLM as _MockLLM
+
+            scripted = _MockLLM(responses=[
+                "第一轮答复：直接说完成但没有实际修改。",                      # 门禁将打回
+                {"tool_calls": [{"name": "update_script", "arguments": {
+                    "file_path": "scripts/3d.gdl",
+                    "content": "BLOCK A, B, ZZYZX\nADDZ 1\nEND\n"}}]},
+                {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+                "第二轮修复完成，编译通过。",                                  # 当前源验证通过
+            ])
+            session.settings_service.llm_adapter_factory = lambda cfg: scripted
+            # 冻结语义路由（脚本化 MockLLM 不承担路由判断），避开 micro_modify 快路径
+            session.conversation_service.semantic_decision = lambda payload: json.dumps(
+                {"mode": "execute", "task_intent": "MODIFY", "constraints": []})
+            flags['scripted_llm'] = True
+            with __import__('unittest.mock', fromlist=['patch']).patch(
+                'openbrep.semantic_verifier.verify_semantics',
+                side_effect=[False, True],
+            ) as _sem:
+                # verify_semantics 返回对象需有 blocking_issues——用真实替身
+                from openbrep.semantic_verifier import SemanticVerificationResult, SemanticIssue
+                _sem.side_effect = [
+                    SemanticVerificationResult(passed=False, issues=[
+                        SemanticIssue(check_type="probe", detail="第一轮未修复", blocking=True)]),
+                    SemanticVerificationResult(passed=True, issues=[]),
+                ]
+                send('给柜子加一个顶灯结构')
+            assert 'ADDZ 1' in session.project.get_script(ScriptType.SCRIPT_3D), \
+                '第二轮修复必须实际写入'
+            assert '第二轮修复完成' in page.inner_text('body')
+            flags['scripted_llm'] = False
+            record('11-gate-retry-second-round-fix')
+
             browser.close()
     except Exception as exc:
         results.append({'case': 'failure', 'ok': False, 'error': str(exc)})
@@ -340,7 +378,7 @@ def main():
         server.shutdown()
         server.server_close()
         (out / 'result.json').write_text(json.dumps({
-            'ok': len(results) >= 10 and all(r['ok'] for r in results) and not errors,
+            'ok': len(results) >= 11 and all(r['ok'] for r in results) and not errors,
             'mode': 'offline real browser; model/compiler doubles; event stream real',
             'results': results, 'page_errors': errors, 'real_llm_calls': 0,
             'not_covered': ['真实模型质量', '真实Archicad编译/图库适配', 'Codex 实机链路',
