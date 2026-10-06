@@ -218,6 +218,9 @@ class ModifyToolRegistry:
         # 在提交点（_apply_changes / mutate_parameters 的 before_commit）检查，
         # 覆盖"执行中到提交"的窗口：超时/取消/代次失效后迟到的写入一律拒绝。
         self.write_guard: Optional[Callable[[], Optional[str]]] = None
+        # R2-02：原子提交执行器——在提交锁内做最终授权校验后执行变更。
+        # 签名：(mutation: Callable[[], None]) -> None（授权拒绝时抛 WriteRejected）。
+        self.commit_executor: Optional[Callable[[Callable[[], None]], None]] = None
         self.changed_files: dict[str, str] = {}
         # diff 范围护栏：记录每个可写文件的修改前内容与最近一次写入方式
         self._baseline_content: dict[str, str] = {
@@ -372,6 +375,19 @@ class ModifyToolRegistry:
         if reason:
             raise WriteRejected(reason)
 
+    def _commit(self, mutation: Callable[[], None]) -> None:
+        """R2-02：原子授权提交边界。
+
+        提供 commit_executor 时（Codex 桥），最终授权校验与变更在同一提交锁内
+        完成——撤销与提交共享同一同步协议，授权失效后没有新提交；未提供时
+        （普通 loop，工具在主线程内联执行）退化为检查后直接提交。
+        """
+        if self.commit_executor is not None:
+            self.commit_executor(mutation)
+            return
+        self._check_write_guard()
+        mutation()
+
     def _before_commit_write(self) -> None:
         """edit_parameters 提交链：先做惰性快照，再在原子写之前做授权检查。"""
         self.on_before_write()
@@ -514,12 +530,20 @@ class ModifyToolRegistry:
         )
 
     def _edit_parameters(self, args: dict) -> ToolExecutionResult:
-        result = mutate_parameters(
-            self.project,
-            expected_source_fingerprint=str(args.get("expected_source_fingerprint") or ""),
-            operations=args.get("operations"),
-            before_commit=self._before_commit_write,
-        )
+        # R2-02：整个参数原子替换在提交边界内执行（before_commit 的最终授权
+        # 校验紧贴 _atomic_write，撤销与提交共享提交锁）。
+        holder: dict[str, Any] = {}
+
+        def _mutate() -> None:
+            holder["result"] = mutate_parameters(
+                self.project,
+                expected_source_fingerprint=str(args.get("expected_source_fingerprint") or ""),
+                operations=args.get("operations"),
+                before_commit=self._before_commit_write,
+            )
+
+        self._commit(_mutate)
+        result = holder.get("result")
         payload = result.to_dict()
         if result.ok and result.changed_files:
             rendered = _render_param_text(self.project.parameters)
@@ -570,11 +594,13 @@ class ModifyToolRegistry:
                         "脚本文件只允许 GDL 语句；解释文字请放在对话里或以 `!` 注释书写。"
                     ),
                 )
-        # RF01：提交点授权（阻塞阶段之后、内存变更之前）——迟到提交在此被拒
-        self._check_write_guard()
-        self._apply_changes(self.project, {file_path: cleaned})
-        self.changed_files[file_path] = cleaned
-        self.write_methods[file_path] = "update_script"
+        # R2-02：原子提交——校验与内存变更/元数据登记在同一提交边界内
+        def _apply_update() -> None:
+            self._apply_changes(self.project, {file_path: cleaned})
+            self.changed_files[file_path] = cleaned
+            self.write_methods[file_path] = "update_script"
+
+        self._commit(_apply_update)
         self.on_event("status", {"stage": "modify", "message": f"✏️ 已更新 {file_path}"})
         return ToolExecutionResult(
             name="update_script",
@@ -707,11 +733,13 @@ class ModifyToolRegistry:
                     ),
                 )
 
-        # RF01：提交点授权（阻塞阶段之后、内存变更之前）——迟到提交在此被拒
-        self._check_write_guard()
-        self._apply_changes(self.project, {file_path: cleaned})
-        self.changed_files[file_path] = cleaned
-        self.write_methods[file_path] = "patch_script"
+        # R2-02：原子提交——校验与内存变更/元数据登记在同一提交边界内
+        def _apply_patch() -> None:
+            self._apply_changes(self.project, {file_path: cleaned})
+            self.changed_files[file_path] = cleaned
+            self.write_methods[file_path] = "patch_script"
+
+        self._commit(_apply_patch)
         self.on_event("status", {"stage": "modify", "message": f"✏️ 已局部编辑 {file_path}（{len(applied)} 段）"})
         detail = "；".join(
             f"patches[{a['index']}]：第 {a['line']} 行起，old {a['old_lines']} 行 → new {a['new_lines']} 行"
