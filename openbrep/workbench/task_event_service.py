@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 from openbrep.workbench.task_event_store import TaskEventStore
-from openbrep.workbench.task_events import utc_now_iso
 from openbrep.workbench.task_events import (
     EVENT_STATE_DELIVERED,
     EVENT_STATE_FAILED,
@@ -27,6 +26,7 @@ from openbrep.workbench.task_events import (
     EVENT_STATE_RUNNING,
     EVENT_STATE_SUCCEEDED,
     clip_public_text,
+    utc_now_iso,
 )
 
 # assistant_delta 合并落盘窗口（秒 / 字符）
