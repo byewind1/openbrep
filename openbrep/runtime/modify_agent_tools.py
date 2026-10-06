@@ -13,8 +13,8 @@ from __future__ import annotations
 import difflib
 import json
 import logging
-import time
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
