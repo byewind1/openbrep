@@ -391,3 +391,77 @@ class TestPipelineMicroModify(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── U01-A：显式单位贯穿（Angle 支持 + 唯一单位表）──────────────
+
+
+class TestAngleMicroModify(unittest.TestCase):
+    """U01-A：Angle 参数（内部单位=度）进入确定性快路径，永不缩放。"""
+
+    def detect(self, text: str) -> MicroModify | None:
+        proj = _make_project()
+        proj.parameters.append(
+            GDLParameter(name="door_angle", type_tag="Angle", description="开启角度", value="90")
+        )
+        return detect_micro_modify(text, proj)
+
+    def test_angle_explicit_degree_word(self):
+        micro = self.detect("把 door_angle 改成 45度")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "45.0")
+
+    def test_angle_degree_sign(self):
+        micro = self.detect("把 door_angle 改成 30°")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "30.0")
+
+    def test_angle_bare_number_is_degrees_not_scaled(self):
+        micro = self.detect("把 door_angle 改成 135")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "135.0")
+
+    def test_angle_english_deg(self):
+        micro = self.detect("set door_angle to 60deg")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "60.0")
+
+    def test_angle_with_length_unit_falls_through(self):
+        self.assertIsNone(self.detect("把 door_angle 改成 45mm"))
+
+    def test_length_with_angle_unit_falls_through(self):
+        self.assertIsNone(self.detect("把 shelf_thk 改成 18deg"))
+
+
+class TestExplicitUnitZeroLLM(unittest.TestCase):
+    """U01-A：显式单位微修改零 LLM 调用（检测纯函数 + pipeline 拦截）。"""
+
+    def test_mm_and_angle_intercept_without_llm(self):
+        proj = _make_project()
+        proj.parameters.append(
+            GDLParameter(name="door_angle", type_tag="Angle", description="开启角度", value="90")
+        )
+        proj.save_to_disk()
+
+        for instruction, param, expected in (
+            ("把 shelf_thk 改成 25mm", "shelf_thk", "0.025"),
+            ("把 door_angle 改成 45度", "door_angle", "45.0"),
+        ):
+            llm = MagicMock()
+            llm.generate.side_effect = AssertionError("micro_modify must not call LLM")
+            llm.generate_with_tools.side_effect = AssertionError("micro_modify must not call LLM")
+            pipeline, _ = _make_pipeline("")
+            pipeline._make_llm = lambda _req, _llm=llm: _llm
+            request = TaskRequest(
+                user_input=instruction,
+                intent="MODIFY",
+                project=proj,
+                work_dir="./workdir",
+                output_dir="./workdir/out",
+                gsm_name=proj.name,
+            )
+            result = pipeline.execute(request)
+            self.assertTrue(result.success, result.plain_text)
+            self.assertEqual(proj.get_parameter(param).value, expected)
+            self.assertEqual(llm.generate.call_count, 0)
+            self.assertEqual(llm.generate_with_tools.call_count, 0)

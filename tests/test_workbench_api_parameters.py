@@ -248,3 +248,89 @@ def test_effective_parameters_require_an_open_project(tmp_path):
 
     assert get_result == {"ok": False, "error": "Create or open a project first."}
     assert post_result == get_result
+
+
+# ── U01-A：真实 API 保存重读（typed 单位表单 + 错误保留源与修订）──
+
+
+def test_apply_typed_unit_form_persists_and_rereads(tmp_path):
+    """POST /api/apply 带 {"value": 900, "unit": "mm"} → 落盘 0.9，重读一致。"""
+    session = make_loaded_session(tmp_path)
+    project = session.project
+    project.add_parameter(GDLParameter(
+        name="seat_height", type_tag="Length", description="座高", value="0.45",
+    ))
+    project.save_to_disk()
+
+    result = session.route("POST", "/api/apply", {
+        "parameters": {"seat_height": {"value": 900, "unit": "mm"}},
+    })
+    assert result["ok"] is True, result
+
+    # 真实重读：磁盘 paramlist 与会话项目一致
+    content = (session.source_path / "paramlist.xml").read_text(encoding="utf-8-sig")
+    parsed = parse_paramlist_xml(content)
+    assert next(p for p in parsed if p.name == "seat_height").value == "0.9"
+    assert session.project.get_parameter("seat_height").value == "0.9"
+
+
+def test_apply_typed_unit_error_reports_field_path_and_preserves_source(tmp_path):
+    """错单位拒绝带字段路径；源文件与修订历史不变。"""
+    import hashlib
+
+    session = make_loaded_session(tmp_path)
+    project = session.project
+    project.add_parameter(GDLParameter(
+        name="seat_height", type_tag="Length", description="座高", value="0.45",
+    ))
+    project.save_to_disk()
+
+    def _hashes(root):
+        return {
+            p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(root.rglob("*")) if p.is_file()
+        }
+
+    before = _hashes(session.source_path)
+    result = session.route("POST", "/api/apply", {
+        "parameters": {"seat_height": {"value": 90, "unit": "deg"}},
+    })
+    assert result["ok"] is False
+    assert result["error_code"] == "UNIT_MISMATCH"
+    assert result["field_path"] == "parameters.seat_height.value"
+    assert _hashes(session.source_path) == before
+
+
+def test_add_parameter_with_unit_converts_and_persists(tmp_path):
+    """POST /api/project/parameters 带 unit → 保存后重读为内部单位。"""
+    session = make_loaded_session(tmp_path)
+    result = session.route("POST", "/api/project/parameters", {
+        "name": "rake_angle", "type_tag": "Angle", "value": 45, "unit": "度",
+        "description": "坡度角",
+    })
+    assert result["ok"] is True, result
+    content = (session.source_path / "paramlist.xml").read_text(encoding="utf-8-sig")
+    parsed = parse_paramlist_xml(content)
+    assert next(p for p in parsed if p.name == "rake_angle").value == "45"
+
+    bad = session.route("POST", "/api/project/parameters", {
+        "name": "bad_len", "type_tag": "Length", "value": 90, "unit": "deg",
+    })
+    assert bad["ok"] is False
+    assert bad["error_code"] == "UNIT_MISMATCH"
+
+
+def test_apply_legacy_scalar_form_unchanged(tmp_path):
+    """旧标量表单语义不变：900 仍写 900（内部单位），不被重新解释。"""
+    session = make_loaded_session(tmp_path)
+    project = session.project
+    project.add_parameter(GDLParameter(
+        name="seat_height", type_tag="Length", description="座高", value="0.45",
+    ))
+    project.save_to_disk()
+
+    result = session.route("POST", "/api/apply", {"parameters": {"seat_height": 900}})
+    assert result["ok"] is True, result
+    content = (session.source_path / "paramlist.xml").read_text(encoding="utf-8-sig")
+    parsed = parse_paramlist_xml(content)
+    assert next(p for p in parsed if p.name == "seat_height").value == "900"

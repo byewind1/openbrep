@@ -7,10 +7,11 @@
 
 - 高精度、零召回压力：识别不出就返回 None，请求回落正常 LLM MODIFY 路径，
   行为与今天完全一致。宁可漏判（走 LLM），不可误判（改错参数）。
-- 只处理数值（Integer/RealNum/Length）和 Boolean 参数的值设置；
+- 只处理数值（Integer/RealNum/Length/Angle）和 Boolean 参数的值设置；
   重命名、加/删参数、多参数同改、String 参数一律回落。
-- 单位换算只作用于 Length 类型（GDL 长度单位是米）；其他数值类型带长度
-  单位属于语义不明，回落 LLM。
+- 单位换算只作用于 Length（米）与 Angle（度）：因子取自全仓库唯一单位表
+  openbrep/parameter_units.py（U01-A）。角度永不缩放（90° → 90）；其他
+  数值类型带单位属于语义不明，回落 LLM。无单位大数值不猜测（>10 回落）。
 - 纯函数、无副作用：应用（写盘/快照/编译）由 pipeline 负责。
 - 落盘语义（快照→改值→save_to_disk）也收在这里（apply_parameter_value），
   pipeline 微修改与 MCP apply_edit set_parameters 共用同一语义。
@@ -23,21 +24,23 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from openbrep.hsf_project import GDLParameter, HSFProject
+from openbrep.parameter_units import ANGLE_UNITS, LENGTH_UNITS
 from openbrep.revisions import get_latest_revision_id, is_hsf_project_dir
 
-# 设置类动词 + 目标数值（可选长度单位）。只取第一处匹配作为目标值——
+# 设置类动词 + 目标数值（可选长度/角度单位）。只取第一处匹配作为目标值——
 # "从 18mm 改为 25mm" 中 18mm 前面没有动词，天然不会被误取。
 # 中文语序：把 X 改成 5（值紧跟动词）
+_UNIT_WORDS = r"(?:mm|cm|m|毫米|厘米|米|degrees?|deg|°|度|弧度|rad)"
 _SET_VALUE_RE = re.compile(
     r"(?:改成|改为|设为|设置为|调整为|调成|变为)\s*"
     r"(?:到|为|至)?\s*"
-    r"(-?\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?",
+    rf"(-?\d+(?:\.\d+)?)\s*({_UNIT_WORDS})?",
     re.IGNORECASE,
 )
 # 英文语序：set X to 5（参数夹在动词和值之间）
 _SET_EN_RE = re.compile(
     r"(?:set|change|update)\s+\S+\s+(?:to|=)\s*"
-    r"(-?\d+(?:\.\d+)?|true|false|yes|no|on|off)\s*(mm|cm|m)?(?![A-Za-z0-9])",
+    rf"(-?\d+(?:\.\d+)?|true|false|yes|no|on|off)\s*({_UNIT_WORDS})?(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
 
@@ -55,16 +58,16 @@ _BOOL_TOGGLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# 相对修改：把 X 增加/减少 N（支持长度单位）
+# 相对修改：把 X 增加/减少 N（支持长度/角度单位）
 _RELATIVE_VALUE_RE = re.compile(
     r"(?:增加|减少|调大|调小|加大|减小|升高|降低|上调|下调|add|subtract|increase|decrease|reduce|raise|lower)\s*"
-    r"(-?\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?",
+    rf"(-?\d+(?:\.\d+)?)\s*({_UNIT_WORDS})?",
     re.IGNORECASE,
 )
 # 英文相对语序：increase X by 50mm / reduce X by 2cm
 _RELATIVE_BY_RE = re.compile(
     r"(?:add|subtract|increase|decrease|reduce|raise|lower)\s+\S+\s+by\s*"
-    r"(-?\d+(?:\.\d+)?)\s*(mm|cm|m)?(?![A-Za-z0-9])",
+    rf"(-?\d+(?:\.\d+)?)\s*({_UNIT_WORDS})?(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
 
@@ -87,14 +90,12 @@ _READ_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 
-_NUMERIC_TYPES = {"Integer", "RealNum", "Length"}
+_NUMERIC_TYPES = {"Integer", "RealNum", "Length", "Angle"}
 
-_LENGTH_FACTORS = {
-    "mm": 0.001, "毫米": 0.001,
-    "cm": 0.01, "厘米": 0.01,
-    "m": 1.0, "米": 1.0,
-    "": 1.0,
-}
+# 因子表来自全仓库唯一定义（openbrep/parameter_units.py，U01-A）；
+# 保留旧名 _LENGTH_FACTORS 以免破坏既有引用。
+_LENGTH_FACTORS = LENGTH_UNITS
+_ANGLE_FACTORS = ANGLE_UNITS
 
 
 @dataclass(frozen=True)
@@ -227,13 +228,20 @@ def _extract_value(text: str, param: GDLParameter, old_value: str) -> Optional[s
     if param.type_tag == "Boolean":
         return "1" if raw != 0 else "0"
 
-    # 单位规整：先把输入值换算为米（如果是 Length）
+    # 单位规整：Length 换算为米、Angle 规整为度（因子表 parameter_units）
     if param.type_tag == "Length":
         if not unit and raw > 10:
             # 无单位大数值更可能是 mm 意图（"把宽度改成 900"），
             # 静默当米会差 1000 倍——回落 LLM 带上下文判断
             return None
-        raw = raw * _LENGTH_FACTORS[unit]
+        if unit and unit not in _LENGTH_FACTORS:
+            return None  # 长度参数带角度单位，语义不明
+        raw = raw * _LENGTH_FACTORS.get(unit, 1.0)
+    elif param.type_tag == "Angle":
+        if unit and unit not in _ANGLE_FACTORS:
+            return None  # 角度参数带长度单位，语义不明
+        # 角度内部单位是度：deg/°/度 因子为 1，永不缩放（U01-A：90° → 90）
+        raw = raw * _ANGLE_FACTORS.get(unit, 1.0)
 
     if is_relative:
         try:
@@ -241,8 +249,8 @@ def _extract_value(text: str, param: GDLParameter, old_value: str) -> Optional[s
         except ValueError:
             return None
         raw = base + raw * relative_sign
-    elif unit and param.type_tag != "Length":
-        return None  # RealNum/Integer 带长度单位，语义不明
+    elif unit and param.type_tag not in ("Length", "Angle"):
+        return None  # RealNum/Integer 带单位，语义不明
 
     if param.type_tag == "Length":
         return str(raw)

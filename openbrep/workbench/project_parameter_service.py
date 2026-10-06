@@ -5,12 +5,32 @@ from typing import Any
 
 from openbrep.hsf_project import VALID_PARAM_TYPES, GDLParameter, HSFProject
 from openbrep.parameter_mutations import mutate_parameters
+from openbrep.parameter_units import UnitValueError, normalize_typed_value
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.values_declarations import parse_values_declarations  # compatibility export
 
 GDL_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 AUTHORABLE_PARAM_TYPES = {"Length", "RealNum", "Integer", "Boolean", "String"}
+
+
+def normalize_typed_entry(
+    type_tag: str, value: Any, unit: Any, field_path: str
+) -> tuple[str | None, dict[str, Any] | None]:
+    """U01-A typed 值归一：成功返回 (paramlist 规范值, None)，拒绝返回 (None, 错误响应)。
+
+    显式单位（如 {"value": 900, "unit": "mm"}）经 openbrep.parameter_units
+    换算为 GDL 内部单位（Length=米、Angle=度）；错误带机器码 + 字段路径。
+    """
+    result = normalize_typed_value(type_tag, value, unit=unit, field_path=field_path)
+    if isinstance(result, UnitValueError):
+        return None, {
+            "ok": False,
+            "error": result.message,
+            "error_code": result.code,
+            "field_path": result.field_path,
+        }
+    return result.canonical, None
 
 
 class WorkbenchProjectParameterService:
@@ -89,9 +109,26 @@ class WorkbenchProjectParameterService:
         if self.session.project is None:
             return {"ok": False, "error": "Create or open a project before applying parameters."}
         known = {param.name for param in self.session.project.parameters}
+        types = {param.name: param.type_tag for param in self.session.project.parameters}
+        # U01-A：typed 表单 {"value": 900, "unit": "mm"} 先归一为内部单位标量，
+        # 旧标量表单（number/str = 内部单位）逐字节走原语义，不按大小重新解释。
+        normalized_changes: dict[str, Any] = {}
+        for name, spec in changes.items():
+            if isinstance(spec, dict) and ("value" in spec or "unit" in spec):
+                if name not in known:
+                    continue  # 未知参数名保持既有静默跳过语义
+                canonical, error = normalize_typed_entry(
+                    types[name], spec.get("value"), spec.get("unit"),
+                    f"parameters.{name}.value",
+                )
+                if error:
+                    return error
+                normalized_changes[name] = canonical
+            else:
+                normalized_changes[name] = spec
         operations = [
             {"op": "set_value", "name": name, "value": value}
-            for name, value in changes.items()
+            for name, value in normalized_changes.items()
             if name in known
         ]
         if operations and self.session.source_path is not None:
@@ -102,9 +139,9 @@ class WorkbenchProjectParameterService:
             )
             if not result.ok:
                 return {"ok": False, "error": result.error, "error_code": result.error_code}
-            changed = {op["name"]: changes[op["name"]] for op in operations}
+            changed = {op["name"]: normalized_changes[op["name"]] for op in operations}
         else:
-            changed = apply_parameter_values(self.session.project, changes)
+            changed = apply_parameter_values(self.session.project, normalized_changes)
         return {"ok": True, "changed": changed, **self.session.snapshot()}
 
     def add_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -120,14 +157,23 @@ class WorkbenchProjectParameterService:
                     "type": body.get("type_tag"),
                     "value": body.get("value"),
                     "description": body.get("description"),
+                    "unit": body.get("unit"),
                 }],
             )
             if not result.ok:
                 return {"ok": False, "error": result.error, "error_code": result.error_code}
             param = self.session.project.get_parameter(str(body.get("name") or "").strip())
         else:
+            payload = body
+            if body.get("unit"):
+                canonical, error = normalize_typed_entry(
+                    str(body.get("type_tag") or ""), body.get("value"), body.get("unit"), "value"
+                )
+                if error:
+                    return error
+                payload = {**body, "value": canonical}
             try:
-                param = build_parameter_from_authoring_request(self.session.project, body)
+                param = build_parameter_from_authoring_request(self.session.project, payload)
                 self.session.project.add_parameter(param)
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
@@ -161,7 +207,12 @@ class WorkbenchProjectParameterService:
             if structured_only and self.session.source_path is not None:
                 operations = []
                 if "value" in body:
-                    operations.append({"op": "set_value", "name": param.name, "value": body.get("value")})
+                    operations.append({
+                        "op": "set_value",
+                        "name": param.name,
+                        "value": body.get("value"),
+                        "unit": body.get("unit"),
+                    })
                 if "description" in body:
                     operations.append({
                         "op": "set_description",
@@ -179,7 +230,15 @@ class WorkbenchProjectParameterService:
                     param = self.session.project.get_parameter(param.name)
             else:
                 if "value" in body:
-                    param.value = coerce_parameter_value(new_type, body.get("value"))
+                    if body.get("unit"):
+                        canonical, error = normalize_typed_entry(
+                            new_type, body.get("value"), body.get("unit"), "value"
+                        )
+                        if error:
+                            return error
+                        param.value = canonical
+                    else:
+                        param.value = coerce_parameter_value(new_type, body.get("value"))
                 if "description" in body:
                     param.description = str(body.get("description") or "").strip()
             param.name = new_name

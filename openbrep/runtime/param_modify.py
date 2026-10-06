@@ -110,6 +110,10 @@ class ApplyOutcome:
 
 # ── 系统提示词（DSL 意图解析）──────────────────────────────
 
+# U01-A 已知口径 bug：下句把 Angle 的内部单位说成"米"（实为度）。修正这行
+# 会改变 system prompt → modify 语料回放 miss，必须单列重录后再改（见
+# Obsidian 实施回执 U01-A 延期事项）。typed 单位语义已由
+# openbrep/parameter_units.py 承载，本 prompt 只影响 DSL 通道的 LLM 约定。
 _SYSTEM_PROMPT = """你是一个 GDL 对象参数操作解析器。用户给出修改 GDL 对象参数的自然语言指令，你把它解析成结构化参数操作 JSON。你绝不编写或修改 GDL 代码，也不输出 GDL 代码。
 
 # 可用操作（v1，只能输出这四种）

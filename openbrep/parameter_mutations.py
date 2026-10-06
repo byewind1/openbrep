@@ -26,6 +26,7 @@ from openbrep.paramlist_builder import (
     quoted_cdata,
     validate_paramlist,
 )
+from openbrep.parameter_units import UnitValueError, normalize_typed_value
 from openbrep.source_fingerprint import compute_source_fingerprint
 
 PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -162,7 +163,14 @@ def _document_spans(text: str) -> tuple[re.Match[str], list[_NodeSpan]]:
     return section, spans
 
 
-def _normalize_value(type_tag: str, value: Any) -> str:
+def _normalize_value(type_tag: str, value: Any, unit: Any = None) -> str:
+    """值规整：无 unit = 旧语义（值已是 GDL 内部单位，不按大小重新解释）；
+    显式 unit = U01-A typed 路径（唯一单位表 openbrep/parameter_units.py）。"""
+    if unit:
+        result = normalize_typed_value(type_tag, value, unit=unit)
+        if isinstance(result, UnitValueError):
+            raise _MutationRejected(result.code, result.message)
+        return result.canonical
     if type_tag == "String":
         return str(value if value is not None else "")
     raw = str(value if value is not None else "").strip()
@@ -276,7 +284,7 @@ def _apply_to_text(
         type_tag = str(operation.get("type") or operation.get("type_tag") or "").strip()
         if type_tag not in VALUE_PARAMETER_TYPES:
             raise _MutationRejected("INVALID_TYPE", f"Unsupported parameter type: {type_tag}")
-        value = _normalize_value(type_tag, operation.get("value"))
+        value = _normalize_value(type_tag, operation.get("value"), operation.get("unit"))
         param = GDLParameter(
             name=name,
             type_tag=type_tag,
@@ -316,7 +324,7 @@ def _apply_to_text(
     candidate = copy.deepcopy(parameters)
     candidate_param = next(item for item in candidate if item.name == name)
     if op == "set_value":
-        value = _normalize_value(param.type_tag, operation.get("value"))
+        value = _normalize_value(param.type_tag, operation.get("value"), operation.get("unit"))
         replacement = _replace_child(
             replacement,
             "Value",

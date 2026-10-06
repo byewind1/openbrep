@@ -304,3 +304,72 @@ def test_atomic_write_uses_same_directory_temp_file(tmp_path):
     assert len(seen) == 1
     assert Path(seen[0][0]).parent == project.root
     assert Path(seen[0][1]) == project.root / "paramlist.xml"
+
+
+# ── U01-A：op 显式单位（typed 路径走唯一单位表，错误非破坏）──────
+
+
+def test_set_value_with_explicit_unit_converts_to_internal(tmp_path):
+    project = _loaded_fixture(tmp_path)
+    target = next(p for p in project.parameters if p.type_tag == "Length")
+    result = _mutate(project, [{
+        "op": "set_value", "name": target.name, "value": 900, "unit": "mm",
+    }])
+    assert result.ok, result.error
+    assert project.get_parameter(target.name).value == "0.9"
+
+
+def test_add_with_explicit_angle_unit_never_scaled(tmp_path):
+    project = _loaded_fixture(tmp_path)
+    result = _mutate(project, [{
+        "op": "add", "name": "tilt_angle", "type": "Angle", "value": 90, "unit": "°",
+        "description": "倾角",
+    }])
+    assert result.ok, result.error
+    assert project.get_parameter("tilt_angle").value == "90"
+
+
+def test_set_value_with_wrong_unit_rejected_and_nondestructive(tmp_path):
+    """错单位拒绝：源与内存都不变（复用 P03 非破坏口径）。"""
+    project = _loaded_fixture(tmp_path)
+    before_hashes = _hashes(project.root)
+    target = next(p for p in project.parameters if p.type_tag == "Length")
+    before_value = target.value
+
+    result = _mutate(project, [{
+        "op": "set_value", "name": target.name, "value": 90, "unit": "deg",
+    }])
+
+    assert result.ok is False
+    assert result.error_code == "UNIT_MISMATCH"
+    assert _hashes(project.root) == before_hashes
+    assert project.get_parameter(target.name).value == before_value
+
+
+def test_set_value_with_unknown_unit_rejected(tmp_path):
+    project = _loaded_fixture(tmp_path)
+    target = next(p for p in project.parameters if p.type_tag == "Length")
+    result = _mutate(project, [{
+        "op": "set_value", "name": target.name, "value": 1, "unit": "inch",
+    }])
+    assert result.ok is False
+    assert result.error_code == "INVALID_UNIT"
+
+
+def test_set_value_with_nan_rejected(tmp_path):
+    project = _loaded_fixture(tmp_path)
+    target = next(p for p in project.parameters if p.type_tag == "Length")
+    result = _mutate(project, [{
+        "op": "set_value", "name": target.name, "value": float("nan"), "unit": "m",
+    }])
+    assert result.ok is False
+    assert result.error_code == "NOT_FINITE"
+
+
+def test_no_unit_legacy_semantics_unchanged(tmp_path):
+    """无 unit 的 op 保持旧语义：值假定已是内部单位，900 不被重新解释为 0.9。"""
+    project = _loaded_fixture(tmp_path)
+    target = next(p for p in project.parameters if p.type_tag == "Length")
+    result = _mutate(project, [{"op": "set_value", "name": target.name, "value": "900"}])
+    assert result.ok, result.error
+    assert project.get_parameter(target.name).value == "900"

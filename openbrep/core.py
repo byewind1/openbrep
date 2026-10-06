@@ -888,11 +888,19 @@ class GDLAgent:
         import re
 
         def _normalize_length_value(raw: str) -> str:
+            """旧自由文本适配器（U01-A 明确保留，来源=LLM 简化参数行，版本 v1）。
+
+            mm 后缀换算走全仓库唯一单位表（openbrep.parameter_units.LENGTH_UNITS）；
+            裸数值 |v|>=20 静默当毫米是本适配器的既有启发式——只在此处保留，
+            不进单位表：typed 输入一律显式带单位，绝不按数值大小猜测。
+            """
+            from openbrep.parameter_units import LENGTH_UNITS
+
             token = str(raw or "").strip().lower()
             if token.endswith("mm"):
                 num = token[:-2].strip()
                 try:
-                    return f"{float(num) / 1000.0:.6g}"
+                    return f"{float(num) * LENGTH_UNITS['mm']:.6g}"
                 except ValueError:
                     return raw
             try:
