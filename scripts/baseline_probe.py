@@ -71,14 +71,16 @@ def _git_head() -> str:
 # ── 反例 fixture ──────────────────────────────────────────────
 
 def _cube_mesh(material_id: str) -> dict:
+    # faces 形状与真实 preview_3d_to_three_payload 一致：单层三角 [i,j,k]
     return {
         "vertices": [
             [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
             [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0],
         ],
         "faces": [
-            [[0, 1, 2, 3]], [[4, 5, 6, 7]], [[0, 1, 5, 4]],
-            [[2, 3, 7, 6]], [[1, 2, 6, 5]], [[3, 0, 4, 7]],
+            [0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6],
+            [0, 1, 5], [0, 5, 4], [2, 3, 7], [2, 7, 6],
+            [1, 2, 6], [1, 6, 5], [3, 0, 4], [3, 4, 7],
         ],
         "material_id": material_id,
     }
@@ -159,15 +161,16 @@ def _probe_capture_health(result: dict) -> None:
         entry["steps"].append({
             "step": "static_source_check",
             "canvas_read_uses_2d_context": 'getContext("2d")' in source,
-            "status_consumes_non_blank": bool(
-                'non_blank' in source and ('status' in source and 'if result["non_blank"]' in source)
-            ),
+            "has_webgl_pixel_stats": "_capture_pixel_stats" in source,
         })
-        # 真浏览器：WebGL canvas 上 getContext("2d") 返回 null（读回机制不可能工作）
+        # 真浏览器：WebGL canvas 上 getContext("2d") 返回 null——旧实现读回
+        # 机制不可能工作的根因（修复后保留为解释性证据，不参与复现判定）
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True, args=["--enable-unsafe-swiftshader"])
+            browser = pw.chromium.launch(
+                headless=True, args=["--enable-unsafe-swiftshader", "--allow-file-access-from-files"]
+            )
             page = browser.new_page(viewport={"width": 400, "height": 300})
             html = Path(tempfile.mkdtemp(prefix="probe_p1_")) / "webgl.html"
             html.write_text(_LOCAL_WEBGL_HTML, encoding="utf-8")
@@ -178,38 +181,40 @@ def _probe_capture_health(result: dict) -> None:
                 " const gl = c.getContext('webgl'); gl.clearColor(0.2,0.4,0.8,1); gl.clear(gl.COLOR_BUFFER_BIT);"
                 " return !!c.getContext('2d'); }"
             )
-            readback = vsc._canvas_has_pixels(page)
             browser.close()
         entry["steps"].append({
             "step": "browser_canvas_context_check",
             "get2d_after_webgl_returns_context": bool(ctx2d_on_webgl),
-            "canvas_has_pixels_readback": bool(readback),
         })
-        # 端到端：离线本地渲染页替换 CDN 渲染页，跑真实 check_preview_visual
-        def _local_html(payload: dict) -> str:
-            return _LOCAL_WEBGL_HTML
-
-        orig_builder = vsc._build_render_html
-        vsc._build_render_html = _local_html
-        try:
-            check = vsc.check_preview_visual(MESH_PAYLOAD)
-        finally:
-            vsc._build_render_html = orig_builder
+        # 端到端：真实 check_preview_visual 跑正常模型 payload（faces 形状与
+        # preview_3d_to_three_payload 一致）。U02-B 修复后此步应为
+        # status=pass 且 non_blank=True（反例转 clean）；false-pass 判定：
+        # status=pass 但像素读回不可用/非背景不达标。
+        check = vsc.check_preview_visual(MESH_PAYLOAD)
         entry["steps"].append({
             "step": "check_preview_visual_end_to_end",
             "status": check.get("status"),
             "non_blank": check.get("non_blank"),
+            "capture": check.get("capture"),
             "diagnostics": check.get("diagnostics"),
             "screenshot_written": bool(check.get("screenshot")),
         })
         e2e = entry["steps"][-1]
-        entry["reproduced"] = bool(
-            e2e.get("status") == "pass" and e2e.get("non_blank") is False
-        ) or (bool(ctx2d_on_webgl) is False and readback is False)
+        capture = e2e.get("capture") or {}
+        false_pass = e2e.get("status") == "pass" and (
+            e2e.get("non_blank") is False or capture.get("readable") is not True
+        )
+        entry["reproduced"] = bool(false_pass)
         entry["actual"] = (
-            f"status={check.get('status')}, non_blank={check.get('non_blank')}："
-            "画布像素读回恒为 False（2D context on WebGL canvas 返回 null），"
-            "status 不消费 non_blank → 正常模型也以假截图健康绿灯交付"
+            f"status={check.get('status')}, non_blank={check.get('non_blank')}, "
+            f"capture={ {k: capture.get(k) for k in ('readable', 'non_bg', 'sampled')} }："
+            + (
+                "正常模型假绿灯：像素读回不达标但 status=pass（旧实现 2D context on "
+                "WebGL canvas 返回 null 且 status 不消费 non_blank）"
+                if false_pass
+                else "U02-B 修复生效：健康判定消费 WebGL readPixels 读回，正常模型 "
+                "status=pass 且可核，纯背景/不可读进 unverified，引擎异常进 failed"
+            )
         )
     except Exception as exc:
         entry["reproduced"] = None
