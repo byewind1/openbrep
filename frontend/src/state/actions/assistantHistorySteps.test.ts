@@ -125,3 +125,28 @@ describe('RF02 公开 commentary（canonical 事件）', () => {
     expect(finish?.detail).toBe('已更新')
   })
 })
+
+describe('U02-A 任务等待/交付完成分清', () => {
+  it('plan_gate preparing 显示"待确认"，不显示已生成', () => {
+    const steps = taskEventsToThinkingSteps([
+      { seq: 1, event_id: 'e1', timestamp: '', kind: 'accepted' },
+      { seq: 2, event_id: 'e2', timestamp: '', kind: 'preparing', stage: 'plan_gate' },
+    ] as TaskEvent[])
+    const gate = steps.find((s) => s.message.includes('待确认'))
+    expect(gate).toBeDefined()
+    expect(gate?.stage).toBe('plan')
+    expect(steps.some((s) => s.message.includes('已交付') || s.message.includes('任务完成'))).toBe(false)
+  })
+
+  it('completed no_change 与 delivered 呈现不同消息', () => {
+    const delivered = taskEventsToThinkingSteps([
+      { seq: 1, event_id: 'e1', timestamp: '', kind: 'completed', state: 'delivered', message: '已交付' },
+    ] as TaskEvent[])
+    const noChange = taskEventsToThinkingSteps([
+      { seq: 1, event_id: 'e2', timestamp: '', kind: 'completed', state: 'no_change' },
+    ] as TaskEvent[])
+    expect(delivered[0].ok).toBe(true)
+    expect(delivered[0].message).toContain('已交付')
+    expect(noChange[0].message).not.toContain('已交付')
+  })
+})

@@ -40,6 +40,9 @@ __all__ = [
     "CheckStatus",
     "VerificationCheck",
     "VerificationReport",
+    "CheckResult",
+    "check_result_from_verification_check",
+    "check_results_from_report",
     "run_plan_validation_checks",
     "build_verification_report",
 ]
@@ -243,7 +246,108 @@ class VerificationReport:
         return "\n".join(lines)
 
 
+# ── CheckResult：统一检查结果合同（U02-A，总则 §3）─────────────────────────
+
+# CheckResult.status 全集（报告/UI/执行器共用；unverified/not_run/degraded
+# 不得冒充 pass——"未跑宿主不绿灯"由 not_run 表达，"stale"独立于 pass/fail）。
+CHECK_RESULT_STATUS_PASS = "pass"
+CHECK_RESULT_STATUS_FAIL = "fail"
+CHECK_RESULT_STATUS_WARN = "warn"
+CHECK_RESULT_STATUS_DEGRADED = "degraded"
+CHECK_RESULT_STATUS_UNVERIFIED = "unverified"
+CHECK_RESULT_STATUS_NOT_RUN = "not_run"
+
+_CHECK_STATUS_MAP = {
+    CheckStatus.PASS: CHECK_RESULT_STATUS_PASS,
+    CheckStatus.FAIL: CHECK_RESULT_STATUS_FAIL,
+    CheckStatus.UNKNOWN: CHECK_RESULT_STATUS_UNVERIFIED,
+    CheckStatus.NOT_RUN: CHECK_RESULT_STATUS_NOT_RUN,
+}
+
+
+@dataclass
+class CheckResult:
+    """一次检查的结构化结果（派单 U02-A 输出合同，消费方 U03/U06/U12）。
+
+    check_id: 稳定 ID（compile / lint / static / plan_check:<name> /
+              semantic / project_contract / effect_contract / host_run …）。
+    status:   上面的 CHECK_RESULT_STATUS_* 之一。
+    reason:   用户可读结论（说人话，一句话）。
+    coverage: 该检查实际覆盖了什么（未覆盖处必须可见）。
+    evidence_refs: 证据引用（revision id / 截图路径 / 检查行号等）。
+    stale:    有效性独立于 pass/fail——源已变更时 pass 也算过期。
+    """
+
+    check_id: str
+    status: str
+    reason: str = ""
+    coverage: str = ""
+    evidence_refs: list = field(default_factory=list)
+    stale: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "check_id": self.check_id,
+            "status": self.status,
+            "reason": self.reason,
+            "coverage": self.coverage,
+            "evidence_refs": list(self.evidence_refs),
+            "stale": self.stale,
+        }
+
+
+def check_result_from_verification_check(
+    check: VerificationCheck, *, stale: bool = False, coverage: str = ""
+) -> CheckResult:
+    """既有 VerificationCheck → CheckResult（兼容映射；旧报告不改语义）。"""
+    return CheckResult(
+        check_id=check.check_type,
+        status=_CHECK_STATUS_MAP[check.status],
+        reason=check.detail,
+        coverage=coverage,
+        evidence_refs=list(check.line_errors or []),
+        stale=stale,
+    )
+
+
+def check_results_from_report(
+    report: "VerificationReport", *, stale: bool = False
+) -> list[CheckResult]:
+    """整份报告 → CheckResult 列表（同名 check_type 用 name 消歧：<type>:<name>）。"""
+    results: list[CheckResult] = []
+    seen: set[str] = set()
+    for c in report.checks:
+        check_id = c.check_type if c.check_type not in seen else f"{c.check_type}:{c.name}"
+        seen.add(c.check_type)
+        results.append(
+            CheckResult(
+                check_id=check_id,
+                status=_CHECK_STATUS_MAP[c.status],
+                reason=c.detail,
+                coverage="plan_check" if c.check_type == "plan_check" else "",
+                evidence_refs=list(c.line_errors or []),
+                stale=stale,
+            )
+        )
+    return results
+
+
 # ── Plan validation checks: natural-language → executed checklist ──────────
+
+
+def _2d_has_visible_content(script: str) -> bool:
+    """U02-A：2D 脚本"可见"判定——剥离 ! 注释、空行与纯 END 行后须还有语句。
+
+    "注释 + END" 不算可见输出（假通过修正）；与 parameter_mutations 的
+    行内 `!` 注释剥离惯用法一致（字符串字面量内的 ! 会导致该行仍非空，
+    只影响存在性判定、不影响正确性）。
+    """
+    for raw in (script or "").splitlines():
+        line = raw.split("!", 1)[0].strip()
+        if not line or line.upper() == "END":
+            continue
+        return True
+    return False
 
 
 def run_plan_validation_checks(
@@ -322,12 +426,13 @@ def run_plan_validation_checks(
                     status=CheckStatus.UNKNOWN, detail="无项目上下文",
                 ))
             else:
-                s2d = (project.get_script(ScriptType.SCRIPT_2D) or "").strip()
-                ok = bool(s2d)
+                s2d = project.get_script(ScriptType.SCRIPT_2D) or ""
+                ok = _2d_has_visible_content(s2d)
                 checks.append(VerificationCheck(
                     name=name, check_type="plan_check",
                     status=CheckStatus.PASS if ok else CheckStatus.FAIL,
-                    detail="2D 脚本非空" if ok else "2D 脚本为空",
+                    # U02-A：注释+END 不算可见——只有真实 2D 绘图语句才算非空
+                    detail="2D 脚本有可见输出" if ok else "2D 脚本为空（或只有注释/END，无可见输出）",
                 ))
             continue
 
@@ -437,6 +542,14 @@ def build_verification_report(
     # 1. plan validation checks (executed from natural language)
     plan_checks = run_plan_validation_checks(object_plan, project, static_result)
     checks.extend(plan_checks)
+
+    # 1b. U02-A：planner 失败显式 degraded——计划缺失不是通过证据，也不阻断旧任务
+    if object_plan is not None and getattr(object_plan, "degraded", False):
+        checks.append(VerificationCheck(
+            name="对象规划", check_type="plan_check",
+            status=CheckStatus.UNKNOWN,
+            detail="对象规划失败，已降级为最小规划：计划校验项缺失，不作为通过证据",
+        ))
 
     # 2. static check overview
     if static_result is not None:

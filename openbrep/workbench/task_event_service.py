@@ -69,23 +69,34 @@ class WorkbenchTaskEventService:
         if len(memory) > self._MEMORY_TURN_LIMIT:
             del memory[: len(memory) - self._MEMORY_TURN_LIMIT]
 
-    def _persist(self, turn_id: str, event: dict[str, Any]) -> None:
-        """落盘：失败不回滚源码修改、不阻塞执行，但必须可见（degraded 状态）。"""
-        self._record_memory(turn_id, event)
+    def _persist(self, turn_id: str, event: dict[str, Any]) -> dict[str, Any] | None:
+        """落盘：失败不回滚源码修改、不阻塞执行，但必须可见（degraded 状态）。
+
+        返回落盘的规范事件；None = 未落盘（project=null / 终态后迟到事件被拒 /
+        存储故障）。U02-A：终态后迟到的非终态事件不进内存缓冲、不落盘、不广播——
+        "最后一条 = 终态" 的消费口径由存储与广播共同保证。
+        """
         root = self._turn_project_root.get(turn_id)
         store = self._store_for(root)
+        kind = str(event.get("kind") or "")
+        if (
+            store is not None
+            and kind not in {"cancelled", "failed", "completed"}
+            and store.has_terminal(turn_id)
+        ):
+            return None
+        self._record_memory(turn_id, event)
         if store is None:
-            return  # project=null：只保留会话内存，不创建任何目录
-        kind = event.get("kind")
+            return None  # project=null：只保留会话内存，不创建任何目录
         try:
             if kind in {"cancelled", "failed", "completed"}:
-                store.append_terminal(turn_id, event)
-            else:
-                store.append(turn_id, event)
+                return store.append_terminal(turn_id, event)
+            return store.append(turn_id, event)
         except Exception as exc:  # noqa: BLE001 —— 失败进入 recording 状态，绝不再写存储
             # RF03：degraded 为 turn 内粘滞——丢失的事件无法补写，
             # 后续恢复落盘也不能把该 turn 报成完好 persisted。
             self._persist_errors.setdefault(turn_id, str(exc) or exc.__class__.__name__)
+            return None
 
     # ── 生命周期 ─────────────────────────────────────────────
 
@@ -212,8 +223,11 @@ class WorkbenchTaskEventService:
         if event is None:
             return out
         canonical = self._canonicalize(turn_id, event)
-        self._persist_canonical(turn_id, canonical)
-        out.append(canonical)
+        stored = self._persist(turn_id, canonical)
+        if stored is None:
+            # U02-A：终态后迟到事件被拒——不落盘、不进内存、不广播
+            return out
+        out.append(stored)
         return out
 
     def record_pipeline_event(self, turn_id: str, kind: str, data: dict[str, Any]) -> None:
@@ -235,8 +249,8 @@ class WorkbenchTaskEventService:
         canonical.update({k: v for k, v in event.items() if v is not None})
         return canonical
 
-    def _persist_canonical(self, turn_id: str, canonical: dict[str, Any]) -> None:
-        self._persist(turn_id, canonical)
+    def _persist_canonical(self, turn_id: str, canonical: dict[str, Any]) -> dict[str, Any] | None:
+        return self._persist(turn_id, canonical)
 
     def _buffer_commentary(self, turn_id: str, data: dict[str, Any]) -> None:
         text = data.get("content") if isinstance(data, dict) else None
@@ -261,8 +275,8 @@ class WorkbenchTaskEventService:
             "project_epoch": self._turn_epoch(turn_id),
             "message": clip_public_text(text),
         })
-        self._persist(turn_id, canonical)
-        return canonical
+        stored = self._persist(turn_id, canonical)
+        return stored if stored is not None else None
 
     # ── 终止 ─────────────────────────────────────────────────
 

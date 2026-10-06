@@ -41,6 +41,8 @@ class TaskEventStore:
         # 内存 seq 计数与截断标记（重启后从文件恢复）
         self._seq: dict[str, int] = {}
         self._truncated: set[str] = set()
+        # U02-A：终态可见性缓存（True=已有终态；首次访问读文件判定一次）
+        self._terminal_state: dict[str, bool] = {}
 
     @property
     def tasks_dir(self) -> Path:
@@ -56,12 +58,20 @@ class TaskEventStore:
 
     # ── 写入 ─────────────────────────────────────────────────
 
-    def append(self, turn_id: str, event: dict[str, Any]) -> dict[str, Any]:
-        """补全公共字段并追加一条事件（关键事件先落盘再广播的落盘点）。"""
-        stored = self._fill(turn_id, event)
+    def append(self, turn_id: str, event: dict[str, Any]) -> dict[str, Any] | None:
+        """补全公共字段并追加一条事件（关键事件先落盘再广播的落盘点）。
+
+        U02-A：终态之后迟到的非终态事件一律拒绝（返回 None，不落盘）——
+        异步 worker 在任务终态后冒出的事件不得改写"最后一条=终态"的消费口径。
+        检查与追加在同一临界区内（并发终态与迟到事件不会交错）。
+        """
         with self._lock:
             self._ensure_seq_loaded(turn_id)
+            kind = str(event.get("kind") or "")
+            if kind not in TERMINAL_KINDS and self._has_terminal_unlocked(turn_id):
+                return None
             path = self.turn_path(turn_id)
+            stored = self._fill(turn_id, event)
             if not self._mark_truncated_if_needed(turn_id, path):
                 return stored
             self._assign_seq(turn_id, stored)
@@ -71,6 +81,19 @@ class TaskEventStore:
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
         return stored
+
+    def has_terminal(self, turn_id: str) -> bool:
+        """该 turn 是否已落终态事件（服务层用于跳过内存缓冲与广播）。"""
+        with self._lock:
+            return self._has_terminal_unlocked(turn_id)
+
+    def _has_terminal_unlocked(self, turn_id: str) -> bool:
+        """调用方须已持锁。缓存 None=未判定，首次读文件判定一次；append_terminal 维护。"""
+        state = self._terminal_state.get(turn_id)
+        if state is None:
+            state = any(e.get("kind") in TERMINAL_KINDS for e in self._read_unlocked(turn_id))
+            self._terminal_state[turn_id] = state
+        return state
 
     def append_terminal(self, turn_id: str, event: dict[str, Any]) -> dict[str, Any] | None:
         """终止事件（completed/failed/cancelled）：幂等，first-wins。
@@ -86,10 +109,12 @@ class TaskEventStore:
             # RF03：检查与追加同锁——并发重复终止不会双写
             existing = [e.get("kind") for e in self._read_unlocked(turn_id)]
             if any(k in TERMINAL_KINDS for k in existing):
+                self._terminal_state[turn_id] = True
                 return None
             self._ensure_seq_loaded(turn_id)
             stored = self._fill(turn_id, event)
             self._assign_seq(turn_id, stored)
+            self._terminal_state[turn_id] = True
             path = self.turn_path(turn_id)
             line = json.dumps(self._sanitize(stored), ensure_ascii=False, sort_keys=True)
             path.parent.mkdir(parents=True, exist_ok=True)

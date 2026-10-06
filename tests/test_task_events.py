@@ -329,14 +329,13 @@ def _last_kind(events):
 # xfail(strict=True) 约定同 tests/test_task_feedback_regression.py。
 
 
-@pytest.mark.xfail(strict=True, reason="U02-A：终态后迟到的非终态事件不得追加改写终态呈现")
 def test_late_nonterminal_event_after_terminal_is_rejected(tmp_path):
-    """U00-A 反例：completed 之后迟到的 tool_started 仍被追加（seq 越过终态）。
+    """U02-A 修复验证：completed 之后迟到的 tool_started 被拒绝。
 
-    append_terminal 对终止事件 first-wins，但普通 append 不检查终态——
-    异步 worker（如 codex 桥线程）在任务终态后冒出的事件会排到终态之后，
-    "最后一条 = 终态" 的消费口径被打破。修复责任 U02-A（重复/迟到事件不能
-    重写终态）；实施转绿后移除 xfail 标记。
+    append_terminal 对终止事件 first-wins；U02-A 起普通 append 也检查终态
+    ——终态后迟到的非终态事件（异步 worker 冒出）不落盘、不进内存、不广播，
+    "最后一条 = 终态" 的消费口径由存储与广播共同保证。U00-A 反例钉子转绿
+    后移除 xfail 标记（本测试现已为常态回归）。
     """
     session = session_at(Path(tmp_path))
     service = session.task_event_service
@@ -347,3 +346,24 @@ def test_late_nonterminal_event_after_terminal_is_rejected(tmp_path):
     kinds = [e["kind"] for e in store.read_turn("t-late")]
     assert not late, f"终态后迟到事件未被拒绝：{late}"
     assert kinds[-1] in {"completed", "failed", "cancelled"}, f"终态不再是最后事件：{kinds}"
+
+
+def test_awaiting_approval_turn_emits_no_delivery_or_completed(tmp_path):
+    """U02-A 验收：待审批 turn 不得出现 delivery/completed（不显示"已生成"）。
+
+    plan 门等待用户确认期间，任务事件只有 accepted/preparing——
+    前端 timeline 据此区分"任务等待"与"交付完成"。
+    """
+    from openbrep.llm import MockLLM
+    from tests.test_conversation_service import plan_answer
+
+    session = session_at(Path(tmp_path))
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    result = session.route("POST", "/api/assistant/turn", {
+        "phase": "prepare", "client_turn_id": "c-approve",
+        "message": "先别改，给我个方案添加背板",
+        "project_epoch": session.project_epoch,
+    })
+    assert result["result_kind"] == "awaiting_confirmation", result
+    kinds = _kinds(_events(session, result["turn_id"]))
+    assert not any(k in ("delivery", "completed", "failed", "cancelled") for k in kinds), kinds

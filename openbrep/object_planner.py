@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 
@@ -29,6 +29,9 @@ class GDLObjectPlan:
     validation_checks: list[str] = field(default_factory=list)
     knowledge_sources: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
+    # U02-A：planner 失败/解析失败回落最小规划时必须显式降级——
+    # 报告据此追加 degraded 检查行，不冒充正常规划。
+    degraded: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +52,7 @@ class GDLObjectPlan:
             "validation_checks": list(self.validation_checks),
             "knowledge_sources": list(self.knowledge_sources),
             "risks": list(self.risks),
+            "degraded": self.degraded,
         }
 
     def to_prompt(self) -> str:
@@ -133,9 +137,14 @@ def plan_gdl_object(
         ]
         raw = llm.generate(messages, **(llm_kwargs or {}))
         content = raw.content if hasattr(raw, "content") else str(raw)
-        return parse_gdl_object_plan(content, fallback=fallback)
+        plan = parse_gdl_object_plan(content, fallback=fallback)
+        if plan is fallback:
+            # U02-A：LLM 输出不可解析、回落最小规划 = 规划降级（显式可见）
+            plan = replace(plan, degraded=True)
+        return plan
     except Exception:
-        return fallback
+        # U02-A：planner 调用失败 = 规划降级（显式可见，不冒充正常规划）
+        return replace(fallback, degraded=True)
 
 
 def parse_gdl_object_plan(text: str, *, fallback: GDLObjectPlan | None = None) -> GDLObjectPlan:

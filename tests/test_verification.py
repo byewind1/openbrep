@@ -805,3 +805,130 @@ class TestAccidentRegression(unittest.TestCase):
         # 报告摘要不再是全绿
         text = report.to_summary_text()
         self.assertIn("❌", text)
+
+
+# ── U02-A：统一结果语义（CheckResult 合同 + 假通过修正）─────────
+
+
+class TestCheckResultContract(unittest.TestCase):
+    """U02-A CheckResult：check_id/status/reason/coverage/evidence_refs/stale。"""
+
+    def test_mapping_from_verification_check(self):
+        from openbrep.verification import CheckResult, check_result_from_verification_check
+
+        check = VerificationCheck(
+            name="编译", check_type="compile", status=CheckStatus.FAIL, detail="语法错误",
+        )
+        result = check_result_from_verification_check(check)
+        self.assertIsInstance(result, CheckResult)
+        self.assertEqual(result.check_id, "compile")
+        self.assertEqual(result.status, "fail")
+        self.assertEqual(result.reason, "语法错误")
+        self.assertEqual(result.stale, False)
+        payload = result.to_dict()
+        self.assertEqual(
+            sorted(payload), ["check_id", "coverage", "evidence_refs", "reason", "stale", "status"]
+        )
+
+    def test_unknown_maps_to_unverified_not_pass(self):
+        """UNKNOWN → unverified：未核实不冒充通过。"""
+        from openbrep.verification import check_result_from_verification_check
+
+        check = VerificationCheck(name="x", check_type="plan_check", status=CheckStatus.UNKNOWN)
+        self.assertEqual(check_result_from_verification_check(check).status, "unverified")
+        check = VerificationCheck(name="x", check_type="plan_check", status=CheckStatus.NOT_RUN)
+        self.assertEqual(check_result_from_verification_check(check).status, "not_run")
+
+    def test_stale_independent_of_status(self):
+        """有效性独立于 pass/fail：源变更后 pass 也可标 stale。"""
+        from openbrep.verification import check_result_from_verification_check
+
+        check = VerificationCheck(name="编译", check_type="compile", status=CheckStatus.PASS)
+        self.assertTrue(check_result_from_verification_check(check, stale=True).stale)
+
+    def test_from_report_disambiguates_duplicate_types(self):
+        from openbrep.verification import check_results_from_report
+
+        report = VerificationReport(
+            intent="CREATE",
+            checks=[
+                VerificationCheck(name="a", check_type="compile", status=CheckStatus.PASS),
+                VerificationCheck(name="p1", check_type="plan_check", status=CheckStatus.PASS),
+                VerificationCheck(name="p2", check_type="plan_check", status=CheckStatus.FAIL),
+            ],
+        )
+        results = check_results_from_report(report)
+        self.assertEqual([r.check_id for r in results], ["compile", "plan_check", "plan_check:p2"])
+        self.assertEqual([r.status for r in results], ["pass", "pass", "fail"])
+
+
+class TestTwoDVisibilityU02A(unittest.TestCase):
+    """U02-A 验收：注释+END 不算可见。"""
+
+    def test_comments_and_end_only_fail(self):
+        plan = _plan(validation_checks=["检查 2D 脚本是否可见"])
+        proj = _project_with_3d()
+        proj.scripts[ScriptType.SCRIPT_2D] = "! 只有注释\n\nEND\n"
+        checks = run_plan_validation_checks(plan, proj, _static())
+        self.assertEqual(checks[0].status, CheckStatus.FAIL)
+        self.assertIn("注释", checks[0].detail)
+
+    def test_comment_only_lines_do_not_pass(self):
+        plan = _plan(validation_checks=["检查 2D 脚本是否可见"])
+        proj = _project_with_3d()
+        proj.scripts[ScriptType.SCRIPT_2D] = "! 漏窗 2D\n! PROJECT2 被注释\nEND ! 结束\n"
+        checks = run_plan_validation_checks(plan, proj, _static())
+        self.assertEqual(checks[0].status, CheckStatus.FAIL)
+
+    def test_inline_comment_statement_still_pass(self):
+        plan = _plan(validation_checks=["检查 2D 脚本是否可见"])
+        proj = _project_with_3d()
+        proj.scripts[ScriptType.SCRIPT_2D] = "PROJECT2 3, 270, 2 ! 真语句带注释\nEND\n"
+        checks = run_plan_validation_checks(plan, proj, _static())
+        self.assertEqual(checks[0].status, CheckStatus.PASS)
+
+
+class TestPlannerDegradedU02A(unittest.TestCase):
+    """U02-A 验收：planner 失败显式 degraded，不冒充正常规划。"""
+
+    def test_llm_failure_marks_degraded(self):
+        from openbrep.object_planner import plan_gdl_object
+
+        llm = MagicMock()
+        llm.generate.side_effect = RuntimeError("planner down")
+        plan = plan_gdl_object(llm, instruction="做一个书架")
+        self.assertTrue(plan.degraded)
+
+    def test_unparseable_response_marks_degraded(self):
+        from openbrep.object_planner import plan_gdl_object
+
+        llm = MagicMock()
+        llm.generate.return_value = LLMResponse(content="这不是JSON", model="m", usage={}, finish_reason="stop")
+        plan = plan_gdl_object(llm, instruction="做一个书架")
+        self.assertTrue(plan.degraded)
+
+    def test_good_plan_not_degraded(self):
+        import json as _json
+
+        from openbrep.object_planner import plan_gdl_object
+
+        llm = MagicMock()
+        llm.generate.return_value = LLMResponse(
+            content=_json.dumps({"object_type": "书架", "validation_checks": ["检查 2D 脚本是否可见"]}),
+            model="m", usage={}, finish_reason="stop",
+        )
+        plan = plan_gdl_object(llm, instruction="做一个书架")
+        self.assertFalse(plan.degraded)
+
+    def test_report_rows_plan_degraded_check(self):
+        """degraded 计划 → 报告追加「对象规划」未知行（不阻断旧任务）。"""
+        plan = GDLObjectPlan(object_type="t", degraded=True)
+        report = build_verification_report(
+            intent="CREATE", user_input="x", project=_project_with_3d(),
+            object_plan=plan, static_result=_static(), semantic_result=None,
+            lint_summary="", compile_result=None, compile_not_run_reason="测试",
+        )
+        rows = [c for c in report.checks if c.name == "对象规划"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].status, CheckStatus.UNKNOWN)
+        self.assertIn("降级", rows[0].detail)
