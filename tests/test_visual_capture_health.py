@@ -17,6 +17,7 @@ from openbrep.runtime.visual_self_check import (
     CAPTURE_FAILED,
     CAPTURE_PASS,
     CAPTURE_UNVERIFIED,
+    capture_preview_views,
     check_preview_visual,
 )
 
@@ -50,6 +51,8 @@ def _cube_payload(*, color_a: str = "#aa5533", color_b: str = "#3377aa") -> dict
 
 
 def _chromium_available() -> bool:
+    if not vsc._CAPTURE_BUNDLE.is_file():
+        return False
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
@@ -80,6 +83,48 @@ def test_healthy_model_passes_with_verifiable_screenshot(tmp_path, monkeypatch):
 
     assert result["screenshot"] and Path(result["screenshot"]).exists()
     assert len(result["image_sha256"]) == 64
+
+
+def test_frozen_payload_captures_four_material_and_reference_views(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENBREP_VISUAL_CHECK", "1")
+    payload = _cube_payload()
+    payload["materials"].pop("mat_b")
+    payload["warnings"] = ["CALL dependency unavailable"]
+    result = capture_preview_views(
+        payload, out_dir=tmp_path / "views", source_fingerprint="src-123",
+    )
+    assert result["source_fingerprint"] == "src-123"
+    assert len(result["payload_sha256"]) == 64
+    assert result["preview_warnings"] == ["CALL dependency unavailable"]
+    assert result["unresolved_material_meshes"] == [{"mesh": "", "material_id": "mat_b"}]
+    assert result["renderer"]["viewport"] == {
+        "width": 1400, "height": 950, "device_scale_factor": 1,
+    }
+    assert [view["name"] for view in result["views"]] == [
+        "material_iso", "front", "side", "neutral",
+    ]
+    assert result["views"][0]["camera"]["target"] == [1.25, 0.5, 0.5]
+    assert result["views"][0]["camera"]["fov_degrees"] == 38
+    assert result["views"][1]["camera"]["direction"] == [0, -1, 0]
+    assert result["views"][2]["camera"]["direction"] == [1, 0, 0]
+    assert all(len(view["image_sha256"]) == 64 for view in result["views"])
+    assert all((tmp_path / "views" / f"{name}.png").exists() for name in (
+        "material_iso", "front", "side", "neutral",
+    ))
+
+
+def test_capture_manifest_rejects_unknown_view_without_opening_browser():
+    result = capture_preview_views(_cube_payload(), view_names=("random",))
+    assert result["status"] == CAPTURE_FAILED
+    assert result["views"] == []
+
+
+def test_missing_capture_bundle_fails_visibly_without_network_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENBREP_VISUAL_CHECK", "1")
+    monkeypatch.setattr(vsc, "_CAPTURE_BUNDLE", tmp_path / "missing-preview-capture.js")
+    result = capture_preview_views(_cube_payload(), out_dir=tmp_path / "capture")
+    assert result["status"] == CAPTURE_FAILED
+    assert "offline preview renderer is missing" in result["reason"]
 
 
 def test_empty_scene_is_not_passed(tmp_path, monkeypatch):
@@ -148,3 +193,17 @@ def test_no_meshes_unverified_without_browser(tmp_path, monkeypatch):
     result = check_preview_visual({"meshes": [], "materials": {}}, out_dir=tmp_path / "cap")
     assert result["status"] == CAPTURE_UNVERIFIED
     assert "没有可截图的网格" in result["reason"]
+
+
+def test_capture_renderer_frames_from_bounds_and_uses_semantic_materials():
+    html = vsc._build_render_html(_cube_payload(), preset="material_iso")
+    assert "window.__OPENBREP_CAPTURE__" in html
+    assert '<script src="./preview_capture.js"></script>' in html
+    assert "https://" not in html
+    assert vsc._CAPTURE_BUNDLE.is_file()
+    bundle = vsc._CAPTURE_BUNDLE.read_text(encoding="utf-8")
+    assert "transmission" in bundle
+    assert bundle.startswith("(function()")
+    entry = (vsc._REPO_ROOT / "frontend" / "src" / "preview_capture_entry.ts").read_text(encoding="utf-8")
+    assert "RoomEnvironment" in entry
+    assert "__OPENBREP_CAPTURE_READY__" in bundle

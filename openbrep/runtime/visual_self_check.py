@@ -28,29 +28,28 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
 
-# 渲染页的 three.js 来源：优先仓库内 frontend/node_modules（离线确定性，
-# 不受 CDN 抖动影响）；打包环境缺失时回退 CDN（引擎异常会如实进 failed）。
+# Vite builds a self-contained renderer bundle into frontend/dist/capture. The
+# PyInstaller desktop sidecar already includes frontend/dist, so capture stays
+# offline and uses the same production camera/geometry/material modules.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_THREE_LOCAL = _REPO_ROOT / "frontend" / "node_modules" / "three"
-_THREE_CDN_IMPORTS = {
-    "three": "https://unpkg.com/three@0.181.2/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.181.2/examples/jsm/",
-}
+_CAPTURE_BUNDLE = _REPO_ROOT / "frontend" / "dist" / "capture" / "preview_capture.js"
 
 
-def _three_importmap() -> str:
-    imports = _THREE_CDN_IMPORTS
-    if (_THREE_LOCAL / "build" / "three.module.js").is_file():
-        base = _THREE_LOCAL.as_uri()
-        imports = {
-            "three": f"{base}/build/three.module.js",
-            "three/addons/": f"{base}/examples/jsm/",
-        }
-    return json.dumps({"imports": imports})
+def _install_capture_bundle(directory: Path) -> Path:
+    source = _CAPTURE_BUNDLE
+    if not source.is_file():
+        raise FileNotFoundError(
+            "offline preview renderer is missing; build the frontend capture bundle first"
+        )
+    target = directory / "preview_capture.js"
+    if source.resolve() != target.resolve():
+        shutil.copyfile(source, target)
+    return target
 
 # capture 健康三态（U02-B）：与 CheckResult 的 pass/unverified/failed 同词汇
 CAPTURE_PASS = "pass"
@@ -93,88 +92,168 @@ def check_preview_visual(payload: dict[str, Any], *, out_dir: Path | None = None
     unique_colors = sorted(set(colors))
     known_ids = {str(k).casefold() for k in materials}
     unresolved = sum(not ident or ident not in known_ids for ident in ids)
-    result: dict[str, Any] = {
-        "status": CAPTURE_UNVERIFIED,
-        "reason": "",
-        "screenshot": None,
-        "image_sha256": "",
-        "non_blank": False,
-        "capture": {"canvas_found": False, "readable": False},
-        "unique_material_colors": unique_colors,
-        "unresolved_meshes": unresolved,
-        "diagnostics": [],
-    }
     if not meshes:
-        result["reason"] = "没有可截图的网格"
-        result["diagnostics"].append(result["reason"])
-        return result
-    if unresolved:
-        result["diagnostics"].append(f"{unresolved} 个网格没有解析材质")
+        return {
+            "status": CAPTURE_UNVERIFIED,
+            "reason": "没有可截图的网格",
+            "screenshot": None,
+            "image_sha256": "",
+            "non_blank": False,
+            "capture": {"canvas_found": False, "readable": False},
+            "unique_material_colors": unique_colors,
+            "unresolved_meshes": unresolved,
+            "diagnostics": ["没有可截图的网格"],
+            "views": [],
+        }
+    manifest = capture_preview_views(
+        payload,
+        out_dir=out_dir,
+        view_names=("material_iso",),
+    )
+    view = next(iter(manifest.get("views") or []), {})
+    stats = view.get("capture") or {}
+    return {
+        "status": manifest.get("status", CAPTURE_UNVERIFIED),
+        "reason": view.get("reason") or manifest.get("reason", "截图采集不可用"),
+        "screenshot": view.get("screenshot"),
+        "image_sha256": view.get("image_sha256", ""),
+        "non_blank": view.get("status") == CAPTURE_PASS,
+        "capture": stats or {"canvas_found": False, "readable": False},
+        "unique_material_colors": unique_colors,
+        "unresolved_meshes": len(manifest.get("unresolved_material_meshes") or []) or unresolved,
+        "diagnostics": list(manifest.get("diagnostics") or []) + (
+            [f"{unresolved} 个网格没有解析材质"] if unresolved else []
+        ),
+        "views": list(manifest.get("views") or []),
+        "source_fingerprint": manifest.get("source_fingerprint"),
+        "payload_sha256": manifest.get("payload_sha256"),
+    }
+
+
+def capture_preview_views(
+    payload: dict[str, Any],
+    *,
+    out_dir: Path | None = None,
+    source_fingerprint: str | None = None,
+    view_names: tuple[str, ...] = ("material_iso", "front", "side", "neutral"),
+) -> dict[str, Any]:
+    """Capture a frozen set of comparable views from one immutable preview payload.
+
+    This is a capture manifest, not a visual-quality judgment. Each view records
+    its camera preset, screenshot hash, material mode and source fingerprint so a
+    later reviewer can distinguish capture health from semantic correctness.
+    """
+    allowed = {"material_iso", "front", "side", "neutral"}
+    if not view_names or any(name not in allowed for name in view_names):
+        return {"status": CAPTURE_FAILED, "reason": "视图请求包含未知或空视图集", "diagnostics": ["视图请求包含未知或空视图集"], "views": []}
+    meshes = payload.get("meshes") or []
+    if not meshes:
+        return {"status": CAPTURE_UNVERIFIED, "reason": "没有可截图的网格", "diagnostics": ["没有可截图的网格"], "views": []}
     if not _visual_check_enabled():
-        result["diagnostics"].append("视觉验收在测试环境或未安装 Playwright 时跳过")
-        return result
-    directory = Path(out_dir or tempfile.mkdtemp(prefix="openbrep_visual_check_"))
+        return {
+            "status": CAPTURE_UNVERIFIED,
+            "reason": "视觉验收在测试环境或未安装 Playwright 时跳过",
+            "diagnostics": ["视觉验收在测试环境或未安装 Playwright 时跳过"],
+            "views": [],
+        }
+
+    directory = Path(out_dir or tempfile.mkdtemp(prefix="openbrep_preview_views_"))
     directory.mkdir(parents=True, exist_ok=True)
+    payload_hash = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    material_hash = hashlib.sha256(
+        json.dumps(payload.get("materials") or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    materials = payload.get("materials") or {}
+    unresolved = [
+        {"mesh": str(mesh.get("name") or ""), "material_id": mesh.get("material_id")}
+        for mesh in meshes
+        if not mesh.get("material_id") or not any(
+            str(key).casefold() == str(mesh.get("material_id")).casefold() for key in materials
+        )
+    ]
+    views: list[dict[str, Any]] = []
     try:
         from playwright.sync_api import sync_playwright
+
+        _install_capture_bundle(directory)
         with sync_playwright() as playwright:
-            # --allow-file-access-from-files：渲染页是 file:// 本地页，需放行
-            # 本地 three ES module 的 CORS（否则模块脚本被拦、canvas 不创建）。
             browser = playwright.chromium.launch(
                 headless=True,
                 args=["--enable-unsafe-swiftshader", "--allow-file-access-from-files"],
             )
-            page = browser.new_page(viewport={"width": 1400, "height": 950})
-            html = _build_render_html(payload)
-            html_path = directory / "preview.html"
-            html_path.write_text(html, encoding="utf-8")
-            page.goto(html_path.as_uri(), wait_until="networkidle", timeout=15000)
-            page.wait_for_timeout(1500)
-            screenshot = directory / "preview.png"
-            page.screenshot(path=str(screenshot))
-            result["screenshot"] = str(screenshot)
             try:
-                result["image_sha256"] = hashlib.sha256(screenshot.read_bytes()).hexdigest()
-            except OSError:
-                pass
-            stats = _capture_pixel_stats(page)
-            browser.close()
+                page = browser.new_page(viewport={"width": 1400, "height": 950}, device_scale_factor=1)
+                for name in view_names:
+                    html_path = directory / f"{name}.html"
+                    screenshot = directory / f"{name}.png"
+                    html_path.write_text(_build_render_html(payload, preset=name), encoding="utf-8")
+                    page.goto(html_path.as_uri(), wait_until="load", timeout=15000)
+                    page.wait_for_function("window.__OPENBREP_CAPTURE_READY__ === true", timeout=15000)
+                    page.screenshot(path=str(screenshot))
+                    camera = page.evaluate("window.__OPENBREP_CAPTURE_CAMERA__") or {}
+                    stats = _capture_pixel_stats(page)
+                    non_bg = int((stats or {}).get("non_bg") or 0)
+                    sampled = int((stats or {}).get("sampled") or 0)
+                    healthy = bool(stats and sampled > 0 and non_bg >= max(_NON_BG_MIN_COUNT, _NON_BG_MIN_RATIO * sampled))
+                    views.append({
+                        "name": name,
+                        "status": CAPTURE_PASS if healthy else CAPTURE_UNVERIFIED,
+                        "reason": (
+                            "截图可核验（非背景内容达标）" if healthy else
+                            "无法读取画布像素" if stats is None else
+                            f"画布内容与背景不可区分（非背景像素 {non_bg}/{sampled}）"
+                        ),
+                        "screenshot": str(screenshot),
+                        "image_sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest(),
+                        "camera": camera,
+                        "material_mode": "neutral" if name == "neutral" else "semantic",
+                        "capture": {
+                            "canvas_found": stats is not None,
+                            "readable": stats is not None,
+                            "width": (stats or {}).get("w"),
+                            "height": (stats or {}).get("h"),
+                            "non_bg": non_bg,
+                            "sampled": sampled,
+                        },
+                    })
+            finally:
+                browser.close()
     except Exception as exc:
-        # U02-B：引擎不可用/渲染异常 = failed（可见），不得静默当 unverified
         reason = str(exc).splitlines()[0]
-        result.update(status=CAPTURE_FAILED, reason=f"截图引擎不可用：{reason}")
-        result["diagnostics"].append(result["reason"])
-        return result
+        return {"status": CAPTURE_FAILED, "reason": f"截图引擎不可用：{reason}", "diagnostics": [f"截图引擎不可用：{reason}"], "views": views}
 
-    if stats is None:
-        result.update(
-            status=CAPTURE_UNVERIFIED,
-            reason="无法读取画布像素（无 canvas 或 WebGL context 不可用）",
-        )
-        result["diagnostics"].append(result["reason"])
-        return result
-    non_bg = int(stats.get("non_bg") or 0)
-    sampled = int(stats.get("sampled") or 0)
-    result["capture"].update({
-        "canvas_found": True,
-        "readable": True,
-        "width": stats.get("w"),
-        "height": stats.get("h"),
-        "non_bg": non_bg,
-        "sampled": sampled,
-    })
-    healthy = sampled > 0 and non_bg >= max(_NON_BG_MIN_COUNT, _NON_BG_MIN_RATIO * sampled)
-    result["non_blank"] = bool(healthy)
-    if not healthy:
-        # 纯背景 / 出框 / 全透明 / 黑屏在此收敛为 unverified（不误 pass）
-        result.update(
-            status=CAPTURE_UNVERIFIED,
-            reason=f"画布内容与背景不可区分（非背景像素 {non_bg}/{sampled}）",
-        )
-        result["diagnostics"].append(result["reason"])
-        return result
-    result.update(status=CAPTURE_PASS, reason="截图可核验（非背景内容达标）")
-    return result
+    status = CAPTURE_PASS if views and all(view["status"] == CAPTURE_PASS for view in views) else CAPTURE_UNVERIFIED
+    return {
+        "status": status,
+        "reason": "多视图采集完成" if status == CAPTURE_PASS else "至少一个视图无法确认非背景画面",
+        "diagnostics": [] if status == CAPTURE_PASS else [
+            f"{view['name']}：{view.get('reason') or '画面像素无法确认非背景内容'}"
+            for view in views if view["status"] != CAPTURE_PASS
+        ],
+        "source_fingerprint": source_fingerprint,
+        "payload_sha256": payload_hash,
+        "preview_warnings": list(payload.get("warnings") or []),
+        "unresolved_material_meshes": unresolved,
+        "renderer": {
+            "three_version": "0.181.2",
+            "viewport": {"width": 1400, "height": 950, "device_scale_factor": 1},
+            "tone_mapping": "AgXToneMapping",
+            "exposure": 0.9,
+            "output_color_space": "SRGBColorSpace",
+            "antialias": True,
+            "preserve_drawing_buffer": True,
+            "environment": "RoomEnvironment/PMREMGenerator(0.04)",
+            "lights": [
+                {"kind": "AmbientLight", "color": "#ffffff", "intensity": 0.08},
+                {"kind": "DirectionalLight", "color": "#ffffff", "intensity": 1.1, "position": [3, -4, 5]},
+                {"kind": "DirectionalLight", "color": "#9fb4cc", "intensity": 0.5, "position": [-4, 2, 3]},
+            ],
+            "materials_sha256": material_hash,
+        },
+        "views": views,
+    }
 
 
 def _capture_pixel_stats(page) -> dict[str, Any] | None:
@@ -217,41 +296,9 @@ def _capture_pixel_stats(page) -> dict[str, Any] | None:
         return None
 
 
-def _build_render_html(payload: dict[str, Any]) -> str:
+def _build_render_html(payload: dict[str, Any], *, preset: str = "material_iso") -> str:
     import json as _json
-    render = """
-import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-const p = __PREVIEW_PAYLOAD__;
-const scene = new THREE.Scene(); scene.background = new THREE.Color("#0a0e14");
-const camera = new THREE.PerspectiveCamera(38, window.innerWidth/window.innerHeight, 0.001, 100000);
-const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.toneMapping = THREE.AgXToneMapping;
-renderer.toneMappingExposure = 0.9;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-document.body.appendChild(renderer.domElement);
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.add(new THREE.AmbientLight(0xffffff, 0.08));
-const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(1,2,1.5); scene.add(key);
-const rim = new THREE.DirectionalLight(0x9fb4cc, 0.5); rim.position.set(-1.5,0.5,-1); scene.add(rim);
-let cx=0, cy=0, cz=0, n=0;
-for (const m of p.meshes) for (const v of m.vertices) {cx+=v[0];cy+=v[1];cz+=v[2];n++;}
-cx/=n; cy/=n; cz/=n;
-const group = new THREE.Group(); group.position.set(-cx,-cy,-cz); scene.add(group);
-for (const mesh of p.meshes) {
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(mesh.vertices.flat()), 3));
-  geo.setIndex(mesh.faces.flat()); geo.computeVertexNormals();
-  const id = (mesh.material_id || "").toLowerCase();
-  const material = p.materials && p.materials[id] ? p.materials[id] : {color:"#8595ab"};
-  const mat = new THREE.MeshStandardMaterial({color: material.color, roughness: material.roughness ?? 0.5, metalness: material.metalness ?? 0, side: THREE.DoubleSide});
-  group.add(new THREE.Mesh(geo, mat));
-}
-camera.position.set(cx+1.5, cy+1.2, cz+1.5);
-new OrbitControls(camera, renderer.domElement).target.set(0,0,0);
-renderer.render(scene, camera);
-"""
-    return f"""<!doctype html><html><head><meta charset="utf-8"><style>html,body{{margin:0;height:100%;overflow:hidden;background:#0a0e14}}</style></head><body><script>const __PREVIEW_PAYLOAD__ = {_json.dumps(payload, ensure_ascii=False)};</script><script type="importmap">{_three_importmap()}</script><script type="module">{render}</script></body></html>"""
+    if preset not in {"material_iso", "front", "side", "neutral"}:
+        raise ValueError(f"unsupported preview capture preset: {preset}")
+    config = _json.dumps({"payload": payload, "preset": preset}, ensure_ascii=False).replace("</", "<\\/")
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{{margin:0;width:100%;height:100%;overflow:hidden;background:#0a0e14}}canvas{{display:block}}</style></head><body><script>window.__OPENBREP_CAPTURE__={config};</script><script src="./preview_capture.js"></script></body></html>"""

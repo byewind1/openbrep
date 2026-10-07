@@ -5,7 +5,7 @@
 ② 修改前后 2D/3D 预览的轻量几何摘要对比。
 
 - preview_geometry_summary(project)：取当前项目 3D/2D 预览的轻量几何摘要
-  （mesh 数、包围盒、2D 元素计数），不存大图；渲染异常降级 available=False。
+  （mesh 数、包围盒、2D 元素计数），并在截图门开启时附上可追溯的材质与多视图截图。
 - build_modify_acceptance(...)：纯函数，从结构化数据生成验收 dict：
   {summary_lines[], geometry_delta, checks[]}。中文模板句，仅当变化可计算时
   才写，算不出就不写、不硬凑。v1 不调 LLM（确定性、零成本、可测试）。
@@ -27,9 +27,10 @@ from openbrep.workbench.project_parameter_service import parameter_values
 # ── 轻量几何摘要（只读消费预览，不改渲染器/返回结构） ──────
 
 def preview_geometry_summary(project: HSFProject, overrides: dict | None = None) -> dict[str, Any]:
-    """对当前项目取 3D/2D 预览的轻量几何摘要；渲染异常时 available=False。
+    """对当前项目取 3D/2D 预览摘要；截图门开启时附带源指纹绑定的多视图证据。
 
-    摘要只含小字段（计数 + 包围盒 + 几何签名），不存大图/顶点数据。
+    几何摘要只含小字段（计数 + 包围盒 + 几何签名）；截图文件单独落在临时捕获目录，
+    manifest 记录截图哈希、冻结 payload 哈希和源指纹。
     参数状态必须与生产预览/模型工具一致（P0-A R1）：走统一的
     parameter_values（保留 String/Boolean 参数，如 pattern_type="回纹"），
     此前 to_preview_number 会把字符串参数整个丢掉，验收摘要观察到的几何
@@ -59,16 +60,26 @@ def preview_geometry_summary(project: HSFProject, overrides: dict | None = None)
         )
         meshes = result_3d.meshes or []
         from openbrep.materials import load_materials
-        from openbrep.runtime.visual_self_check import check_preview_visual
+        from openbrep.runtime.visual_self_check import capture_preview_views
         from openbrep.workbench.three_preview import preview_3d_to_three_payload
         visual_payload = preview_3d_to_three_payload(result_3d)
+        visual_payload["warnings"] = list(result_3d.warnings or [])
         slots, _ = load_materials(project.root)
         if not slots["slots"]:
             from openbrep.materials import infer_material_slots, normalize_slots
             inferred, _ = normalize_slots(infer_material_slots(project.parameters, project.name))
             slots["slots"] = inferred
         visual_payload["materials"] = {**slots["slots"], **visual_payload.get("materials", {})}
-        summary["visual_check"] = check_preview_visual(visual_payload)
+        try:
+            from openbrep.source_fingerprint import compute_source_fingerprint
+
+            source_fingerprint = compute_source_fingerprint(project.root)
+        except Exception:
+            source_fingerprint = None
+        summary["visual_check"] = capture_preview_views(
+            visual_payload,
+            source_fingerprint=source_fingerprint,
+        )
         materials = {k.casefold(): v for k, v in {**slots['slots'], **result_3d.materials}.items()}
         summary['materials'] = [materials.get((mesh.material_id or '').casefold()) for mesh in meshes]
         summary["mesh_count"] = len(meshes)
@@ -325,7 +336,7 @@ def build_modify_acceptance(
         summary_lines.append(detail)
     if after is not None and after.get('visual_check'):
         visual = after['visual_check']
-        checks.append({'name': '截图视觉验收', 'status': visual.get('status', 'warn'), 'detail': '；'.join(visual.get('diagnostics') or []) or '截图检查通过'})
+        checks.append({'name': '截图采集健康', 'status': visual.get('status', 'warn'), 'detail': '；'.join(visual.get('diagnostics') or []) or '多视图截图采集正常；画面是否符合需求仍需语义审查'})
 
     return {
         "summary_lines": summary_lines,

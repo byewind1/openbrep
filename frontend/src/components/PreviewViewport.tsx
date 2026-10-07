@@ -26,7 +26,8 @@ import { makeSelection } from './previewPicking'
 import type { PreviewSelection } from './previewPicking'
 import { buildPartsView, componentColorIdentity, filterVisibleMeshes, hashColor } from './previewParts'
 import { sectionPlaneParams } from './previewSection'
-import { materialForMesh } from './previewMaterials'
+import { materialForMesh, semanticMaterialStyle } from './previewMaterials'
+import { PREVIEW_RENDER_SETTINGS } from './previewRenderContract'
 import type { SectionState } from './previewSection'
 import {
   computePreviewBounds,
@@ -396,7 +397,7 @@ export function PreviewViewport({
             // 与 GLB 查看器一致：AgX 压高光、保留金属层次，避免木材发灰和
             // 黑色金属直接糊成一团。颜色输入/输出统一走 sRGB。
             gl.toneMapping = AgXToneMapping
-            gl.toneMappingExposure = 0.9
+            gl.toneMappingExposure = PREVIEW_RENDER_SETTINGS.toneMappingExposure
             gl.outputColorSpace = SRGBColorSpace
           }}
           onPointerMissed={() => {
@@ -411,11 +412,11 @@ export function PreviewViewport({
             <OrthographicCamera makeDefault near={0.001} far={100000} />
           )}
           <PreviewCameraRig bounds={bounds} mode={cameraMode} preset={viewPreset} fitNonce={fitNonce} />
-          <color attach="background" args={['#0a0e14']} />
+          <color attach="background" args={[PREVIEW_RENDER_SETTINGS.background]} />
           <StudioEnvironment />
-          <ambientLight intensity={0.08} />
-          <directionalLight position={[3, -4, 5]} intensity={1.1} />
-          <directionalLight position={[-4, 2, 3]} intensity={0.5} color="#9fb4cc" />
+          <ambientLight intensity={PREVIEW_RENDER_SETTINGS.ambientIntensity} />
+          <directionalLight position={PREVIEW_RENDER_SETTINGS.keyLight.position} intensity={PREVIEW_RENDER_SETTINGS.keyLight.intensity} color={PREVIEW_RENDER_SETTINGS.keyLight.color} />
+          <directionalLight position={PREVIEW_RENDER_SETTINGS.fillLight.position} intensity={PREVIEW_RENDER_SETTINGS.fillLight.intensity} color={PREVIEW_RENDER_SETTINGS.fillLight.color} />
           {/* 接地软阴影（P1b）：落在 bounds 底面；frames 默认每帧重捕，
               隐藏舞台（display:none）恢复后自愈。wire/xray 默认关（消隐线框下
               阴影是噪声），用户可手动开。 */}
@@ -715,7 +716,7 @@ function StudioEnvironment() {
   const { gl, scene } = useThree()
   useEffect(() => {
     const pmrem = new PMREMGenerator(gl)
-    const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    const envMap = pmrem.fromScene(new RoomEnvironment(), PREVIEW_RENDER_SETTINGS.environmentBlur).texture
     scene.environment = envMap
     return () => {
       scene.environment = null
@@ -898,6 +899,7 @@ function PartMesh({
 
   const isMono = displayMode === 'mono'
   const semanticMaterial = preview ? materialForMesh(preview, mesh) : null
+  const semanticStyle = semanticMaterialStyle(semanticMaterial)
   // 权威预览逐 mesh 颜色（RGB 0-1 → three.js Color）；本地预览无 color 字段，
   // 回退 solid 统一色。random/wire 按部件 hash 取色、mono 单色，均不消费 mesh.color
   const meshColor = useMemo(
@@ -913,20 +915,14 @@ function PartMesh({
   // mono 的材质参数与原分支一致（roughness/metalness/envMapIntensity 不同）
   const shading = isMono
     ? { roughness: 0.7, metalness: 0.0, envMapIntensity: 0.6 }
-    : { roughness: semanticMaterial?.roughness ?? 0.5, metalness: semanticMaterial?.metalness ?? 0.05, envMapIntensity: 0.75 }
-  const materialColor = displayMode === 'material' && semanticMaterial ? semanticMaterial.color : color
-  if (displayMode === 'material' && semanticMaterial?.transmission) {
+    : { roughness: semanticStyle.properties.roughness, metalness: semanticStyle.properties.metalness, envMapIntensity: PREVIEW_RENDER_SETTINGS.environmentMapIntensity }
+  const materialColor = displayMode === 'material' && semanticMaterial ? semanticStyle.properties.color : color
+  if (displayMode === 'material' && semanticStyle.kind === 'physical') {
     return (
       <mesh geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
         <meshPhysicalMaterial
-          color={semanticMaterial.color}
-          roughness={semanticMaterial.roughness}
-          metalness={semanticMaterial.metalness}
-          transmission={semanticMaterial.transmission}
-          ior={semanticMaterial.ior}
-          transparent
-          opacity={semanticMaterial.opacity}
-          envMapIntensity={0.75}
+          {...semanticStyle.properties}
+          envMapIntensity={PREVIEW_RENDER_SETTINGS.environmentMapIntensity}
           side={DoubleSide}
           emissive={selected ? SELECTION_COLOR : '#000000'}
           emissiveIntensity={0.4}
@@ -942,8 +938,8 @@ function PartMesh({
         color={materialColor}
         roughness={shading.roughness}
         metalness={shading.metalness}
-        transparent={displayMode === 'material' && Boolean(semanticMaterial && semanticMaterial.opacity < 1)}
-        opacity={displayMode === 'material' ? semanticMaterial?.opacity ?? 1 : 1}
+        transparent={displayMode === 'material' && semanticStyle.properties.transparent}
+        opacity={displayMode === 'material' ? semanticStyle.properties.opacity : 1}
         envMapIntensity={shading.envMapIntensity}
         side={DoubleSide}
         emissive={selected ? SELECTION_COLOR : '#000000'}
