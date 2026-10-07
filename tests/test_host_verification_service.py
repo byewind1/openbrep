@@ -7,11 +7,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from openbrep.compiler import CompileResult
+from openbrep.contracts.project_store import commit_project_state
 from openbrep.hsf_project import HSFProject
 from openbrep.revisions import create_revision, load_revision_protections
 from openbrep.workbench import host_verification_service as host_verification_module
 from openbrep.workbench.host_verification_service import HostVerificationService
-
 
 FIXTURE = Path(__file__).parent / "fixtures" / "spiral_stair" / "after_top_option"
 
@@ -43,7 +43,10 @@ class FakeAdapter:
         self.calls.append(kwargs)
         if self.on_call:
             self.on_call()
-        return dict(self.response)
+        response = dict(self.response)
+        if response.get("effectiveParameters") == "__requested__":
+            response["effectiveParameters"] = dict(kwargs.get("parameters") or {})
+        return response
 
 
 def _project(tmp_path: Path) -> HSFProject:
@@ -78,6 +81,7 @@ def _host_response(gsm_sha: str, **overrides) -> dict:
         },
         "appliedParameters": ["height", "show_top_tread"],
         "skippedParameters": [],
+        "effectiveParameters": "__requested__",
         "archicadVersion": "29.0",
         "addonVersion": "0.9.6",
         "libraryStateBefore": ["Archicad Library 29"],
@@ -136,6 +140,11 @@ def test_verified_artifact_parameters_and_host_evidence_pass(tmp_path: Path) -> 
     assert "NUM_STEPS" in record["requested_parameters"]
     assert record["applied_parameters"] == ["height", "show_top_tread"]
     assert record["parameter_fingerprint"].startswith("sha256:")
+    assert record["parameter_readback_status"] == "verified"
+    assert record["effective_parameters"] == record["requested_parameters"]
+    assert record["evidence_binding"]["evidence_kind"] == "host"
+    assert record["evidence_binding"]["scene_refs"] == ["default"]
+    assert record["evidence_binding"]["result_facts"]["executor_version"] == "1"
     assert record["archicad_version"] == "29.0"
     assert record["addon_version"] == "0.9.6"
     assert record["source_fingerprint_before_compile"] != ""
@@ -225,6 +234,100 @@ def test_late_result_and_changed_inputs_are_stale(tmp_path: Path) -> None:
     contract_path.write_text(contract_path.read_text() + "\n", encoding="utf-8")
     changed_contract = service.current({"parameters": {"height": 2.9}})
     assert "contract_changed" in changed_contract["stale_reasons"]
+
+
+def test_scenario_batch_runs_serially_with_separate_bindings_and_records(tmp_path: Path) -> None:
+    gsm_sha = hashlib.sha256(b"CURRENT-GSM").hexdigest()
+    adapter = FakeAdapter(_host_response(gsm_sha))
+    service, session = _service(tmp_path, adapter)
+
+    result = service.run({
+        "scenarios": [
+            {"scenario_id": "default", "scenario_kind": "default", "parameters": {"height": 2.5}},
+            {"scenario_id": "upper-bound", "scenario_kind": "boundary", "parameters": {"height": 3.2}},
+        ],
+    })
+
+    assert result["status"] == "passed"
+    assert result["scenario_count"] == result["passed_count"] == 2
+    assert [call["scenario_id"] for call in adapter.calls] == ["default", "upper-bound"]
+    records = [item["verification"] for item in result["scenario_results"]]
+    assert [record["scenario_id"] for record in records] == ["default", "upper-bound"]
+    assert records[0]["scenario_hash"] != records[1]["scenario_hash"]
+    assert all(record["evidence_binding"]["gsm_fingerprint"] == gsm_sha for record in records)
+    assert all((session.project.root / ".openbrep" / "verification" / "host" / f"{record['record_id']}.json").is_file() for record in records)
+
+
+def test_invalid_scenario_batch_is_rejected_before_any_host_call(tmp_path: Path) -> None:
+    adapter = FakeAdapter({"ok": True})
+    service, _session = _service(tmp_path, adapter)
+
+    result = service.run({
+        "scenarios": [
+            {"scenario_id": "first", "parameters": {"height": 2.5}},
+            {"scenario_id": "first", "parameters": {"height": 3.0}},
+        ],
+    })
+
+    assert result["status"] == "not_checked"
+    assert adapter.calls == []
+
+
+def test_missing_or_wrong_effective_parameter_readback_cannot_pass(tmp_path: Path) -> None:
+    gsm_sha = hashlib.sha256(b"CURRENT-GSM").hexdigest()
+    adapter = FakeAdapter(_host_response(gsm_sha, effectiveParameters=None))
+    service, _session = _service(tmp_path, adapter)
+
+    missing = service.run({"parameters": {"height": 2.9}})
+    assert missing["verification"]["status"] == "identity_unverified"
+    assert "host_effective_parameters_unavailable" in missing["verification"]["diagnostics"]
+
+    adapter.response = _host_response(gsm_sha, effectiveParameters={"HEIGHT": 2.8, "SHOW_TOP_TREAD": 1, "NUM_STEPS": 16})
+    mismatch = service.run({"parameters": {"height": 2.9}})
+    assert mismatch["verification"]["status"] == "failed"
+    assert mismatch["verification"]["parameter_differences"]["HEIGHT"]["effective"] == 2.8
+
+
+def test_dependency_manifest_change_stales_previous_host_record(tmp_path: Path) -> None:
+    gsm_sha = hashlib.sha256(b"CURRENT-GSM").hexdigest()
+    adapter = FakeAdapter(_host_response(gsm_sha))
+    service, session = _service(tmp_path, adapter)
+    result = service.run({"parameters": {"height": 2.9}})
+    assert result["verification"]["status"] == "passed"
+
+    manifest = session.project.root / ".openbrep" / "dependencies" / "library-parts.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"parts": []}\n', encoding="utf-8")
+    current = service.current({"parameters": {"height": 2.9}})
+    assert "dependencies_changed" in current["stale_reasons"]
+
+
+def test_adopted_object_spec_is_bound_and_spec_only_edit_stales_record(tmp_path: Path) -> None:
+    gsm_sha = hashlib.sha256(b"CURRENT-GSM").hexdigest()
+    adapter = FakeAdapter(_host_response(gsm_sha))
+    service, session = _service(tmp_path, adapter)
+    spec = {
+        "schema_version": 1,
+        "spec_id": "spec-stair-v1",
+        "object_type": "spiral_stair",
+        "params": [],
+        "requirements": [],
+        "relations": [],
+    }
+    assert commit_project_state(session.project, spec).ok
+
+    verified = service.run({"parameters": {"height": 2.9}})
+    record = verified["verification"]
+    assert record["status"] == "passed"
+    assert record["spec_id"] == "spec-stair-v1"
+    assert record["spec_hash"].startswith("sha256:")
+
+    contract_path = session.project.root / ".openbrep" / "contracts" / "object_spec.json"
+    payload = json.loads(contract_path.read_text(encoding="utf-8"))
+    payload["object_spec"]["object_type"] = "changed_only_in_spec"
+    contract_path.write_text(json.dumps(payload), encoding="utf-8")
+    current = service.current({"parameters": {"height": 2.9}})
+    assert "contract_changed" in current["stale_reasons"]
 
 
 def test_record_write_failure_preserves_previous_record(tmp_path: Path, monkeypatch) -> None:

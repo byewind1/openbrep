@@ -257,9 +257,23 @@ export interface HostVerificationRecord {
   status: HostVerificationRecordStatus
   source_fingerprint: string
   contract_hash?: string | null
+  spec_hash?: string | null
+  spec_id?: string | null
+  scenario_id?: string
+  scenario_hash?: string
+  executor_id?: string
+  executor_version?: string
+  dependencies_hash?: string | null
   gsm_sha256?: string | null
   parameter_fingerprint: string
   requested_parameters: Record<string, unknown>
+  effective_parameters?: Record<string, unknown> | null
+  parameter_readback_status?: 'verified' | 'unavailable'
+  parameter_differences?: Record<string, { requested: unknown; effective: unknown }>
+  automatic_measurements?: Record<string, unknown> | null
+  human_review?: { status: string; reviewer?: string | null; notes?: string | null }
+  evidence_source?: 'archicad' | 'local_gdl'
+  evidence_binding?: Record<string, unknown>
   applied_parameters: string[]
   skipped_parameters: string[]
   loaded_identity?: Record<string, unknown> | null

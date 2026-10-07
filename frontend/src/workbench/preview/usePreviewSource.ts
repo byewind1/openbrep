@@ -1,4 +1,4 @@
-import type { Preview2DPayload, PreviewPayload } from '../../api/types'
+import type { HostVerificationRecord, Preview2DPayload, PreviewPayload } from '../../api/types'
 import type { PreviewSourceMode } from '../../state/workbenchStoreTypes'
 import type { PreviewSourceControl } from '../../components/PreviewViewport'
 import { useWorkbenchStore } from '../../state/useWorkbenchStore'
@@ -52,6 +52,7 @@ export function usePreviewSource(localPreview: PreviewPayload | null): {
       onModeChange: (next: PreviewSourceMode) => void setPreviewSourceMode(next),
       onRefresh: () => void loadAuthoritativePreview(),
       verificationStatus: verificationStale ? 'stale' : (hostVerification?.status ?? 'not_checked'),
+      verificationParametersSummary: summarizeHostVerificationParameters(hostVerification),
       verificationLoading: hostVerificationLoading,
       verificationError: hostVerificationError,
       verificationDisabled: Object.values(dirtyScripts).some(Boolean),
@@ -100,10 +101,26 @@ export function usePreview2DSource(localPreview: Preview2DPayload | null): {
       onModeChange: (next: PreviewSourceMode) => void setPreviewSourceMode(next),
       onRefresh: () => void loadAuthoritativePreview(),
       verificationStatus: verificationStale ? 'stale' : (hostVerification?.status ?? 'not_checked'),
+      verificationParametersSummary: summarizeHostVerificationParameters(hostVerification),
       verificationLoading: hostVerificationLoading,
       verificationError: hostVerificationError,
       verificationDisabled: Object.values(dirtyScripts).some(Boolean),
       onVerify: () => void runHostVerification(),
     },
   }
+}
+
+function summarizeHostVerificationParameters(
+  record: HostVerificationRecord | null,
+): string | null {
+  if (!record) return null
+  if (record.parameter_readback_status !== 'verified') return '宿主未回读有效参数'
+  const differences = Object.entries(record.parameter_differences ?? {})
+  if (differences.length) {
+    const [name, values] = differences[0]
+    const format = (value: unknown) => JSON.stringify(value) ?? '未返回'
+    const extra = differences.length > 1 ? ` 等 ${differences.length} 项` : ''
+    return `参数差异：${name} ${format(values.requested)} → ${format(values.effective)}${extra}`
+  }
+  return `参数回读一致 ${Object.keys(record.effective_parameters ?? {}).length} 项`
 }

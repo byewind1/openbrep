@@ -1413,6 +1413,15 @@ button:focus-visible {
   color: var(--warning);
 }
 
+.viewport-verification-parameters {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .viewport-toolbar-sep {
   width: 1px;
   height: 16px;

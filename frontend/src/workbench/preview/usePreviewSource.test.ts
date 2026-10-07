@@ -25,3 +25,39 @@ test('marks saved host evidence stale when the source fingerprint changes', () =
 
   expect(result.current.sourceControl.verificationStatus).toBe('stale')
 })
+
+test('shows host parameter readback gaps and requested-to-effective differences', () => {
+  act(() => {
+    workbenchStore.setState({
+      sourceFingerprint: 'sha256:source',
+      draftParameters: {},
+      hostVerificationParamsKey: '{}',
+      hostVerification: {
+        record_id: 'hv_diff',
+        status: 'failed',
+        source_fingerprint: 'sha256:source',
+        parameter_fingerprint: 'sha256:params',
+        requested_parameters: { HEIGHT: 2.9 },
+        effective_parameters: { HEIGHT: 2.8 },
+        parameter_readback_status: 'verified',
+        parameter_differences: { HEIGHT: { requested: 2.9, effective: 2.8 } },
+        applied_parameters: ['HEIGHT'],
+        skipped_parameters: [],
+      },
+    })
+  })
+
+  const { result } = renderHook(() => usePreviewSource(null))
+
+  expect(result.current.sourceControl.verificationParametersSummary).toContain('HEIGHT 2.9 → 2.8')
+
+  act(() => {
+    workbenchStore.setState({
+      hostVerification: {
+        ...workbenchStore.getState().hostVerification!,
+        parameter_readback_status: 'unavailable',
+      },
+    })
+  })
+  expect(result.current.sourceControl.verificationParametersSummary).toBe('宿主未回读有效参数')
+})

@@ -87,6 +87,7 @@ export interface PreviewSourceControl {
   onModeChange: (mode: PreviewSourceMode) => void
   onRefresh: () => void
   verificationStatus?: HostVerificationStatus
+  verificationParametersSummary?: string | null
   verificationLoading?: boolean
   verificationError?: string | null
   verificationDisabled?: boolean
@@ -269,6 +270,11 @@ export function PreviewViewport({
                   <span className={`viewport-verification-status is-${sourceControl.verificationStatus ?? 'not_checked'}`}>
                     {hostVerificationLabel(sourceControl.verificationStatus ?? 'not_checked')}
                   </span>
+                  {sourceControl.verificationParametersSummary ? (
+                    <span className="viewport-verification-parameters" title={sourceControl.verificationParametersSummary}>
+                      {sourceControl.verificationParametersSummary}
+                    </span>
+                  ) : null}
                 </>
               ) : null}
               <span className="viewport-toolbar-sep" aria-hidden="true" />

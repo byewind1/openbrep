@@ -640,20 +640,32 @@ class TapirBridge:
         lib_part_guid: str = "",
         parameters: Optional[dict] = None,
         want: Optional[list[str]] = None,
+        scenario_id: Optional[str] = None,
+        spec_hash: Optional[str] = None,
+        dependencies_hash: Optional[str] = None,
     ) -> dict:
         """Ask the OpenBrep Add-On to load and verify one exact GSM artifact."""
+        payload = {
+            "gsmPath": gsm_path,
+            "gsmSha256": gsm_sha256,
+            "libPartName": lib_part_name,
+            "libPartGuid": lib_part_guid,
+            "parameters": dict(parameters or {}),
+            "want": list(want or []),
+            "restoreLibraryState": True,
+            "rollbackElements": True,
+        }
+        # Optional evidence context is additive so older Add-On builds keep
+        # their established request shape and can report unsupported fields.
+        if scenario_id:
+            payload["scenarioId"] = scenario_id
+        if spec_hash:
+            payload["specHash"] = spec_hash
+        if dependencies_hash:
+            payload["dependenciesHash"] = dependencies_hash
         raw = self._tapir_call(
             "VerifyLibraryPartArtifact",
-            {
-                "gsmPath": gsm_path,
-                "gsmSha256": gsm_sha256,
-                "libPartName": lib_part_name,
-                "libPartGuid": lib_part_guid,
-                "parameters": dict(parameters or {}),
-                "want": list(want or []),
-                "restoreLibraryState": True,
-                "rollbackElements": True,
-            },
+            payload,
             addon_id=self.OPENBREP_ADDON_ID,
         )
         if hasattr(raw, "__dict__") and not isinstance(raw, dict):
