@@ -1,0 +1,16 @@
+{
+  "fixture_schema_version": 1,
+  "fixture_id": "lattice-window-observation-contract-v1",
+  "kind": "synthetic",
+  "observation": {
+    "source": "synthetic",
+    "items": [
+      {"field_path": "overall.width", "status": "observed", "value": 1.2, "unit": "m"},
+      {"field_path": "pattern.family", "status": "unknown", "value": null},
+      {"field_path": "pattern.count", "status": "unknown", "value": null},
+      {"field_path": "state.opening", "status": "unknown", "value": null},
+      {"field_path": "occlusion.pattern_regions", "status": "unknown", "value": null}
+    ]
+  },
+  "expected": {"unknown_fields_remain_unknown": true}
+}

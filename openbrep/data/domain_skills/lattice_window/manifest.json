@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "skill_id": "lattice_window",
+  "version": "0.1.0",
+  "status": "development",
+  "domain": "lattice_window",
+  "intents": [
+    "create",
+    "image",
+    "modify"
+  ],
+  "aliases": [
+    "lattice_window",
+    "漏窗",
+    "花格窗",
+    "格栅窗"
+  ],
+  "observation": {
+    "fields": {
+      "overall.width": {
+        "type": "length",
+        "unit": "m",
+        "unknown_policy": "preserve"
+      },
+      "overall.height": {
+        "type": "length",
+        "unit": "m",
+        "unknown_policy": "preserve"
+      },
+      "frame.depth": {
+        "type": "length",
+        "unit": "m",
+        "unknown_policy": "ask"
+      },
+      "pattern.family": {
+        "type": "string",
+        "unknown_policy": "preserve"
+      },
+      "pattern.count": {
+        "type": "count",
+        "unknown_policy": "preserve"
+      },
+      "materials.frame": {
+        "type": "material",
+        "unknown_policy": "ask"
+      },
+      "state.opening": {
+        "type": "state",
+        "unknown_policy": "preserve"
+      },
+      "occlusion.pattern_regions": {
+        "type": "state",
+        "unknown_policy": "preserve"
+      }
+    }
+  },
+  "plan_policy": {
+    "unobserved_values": "assumption_or_question",
+    "conflict_policy": "ask_user",
+    "requirement_mapping": "retain_source_and_field_path"
+  },
+  "requirements": [],
+  "allowed_variations": [
+    "Keep pattern family/count unknown when the image does not resolve repeated geometry.",
+    "Treat different opening states as separate observations until the user confirms a shared state."
+  ],
+  "fixtures": [
+    {
+      "fixture_id": "lattice-window-observation-contract-v1",
+      "path": "fixtures/synthetic_observation.json",
+      "kind": "synthetic",
+      "license": "CC0-1.0",
+      "split": "contract",
+      "sha256": "c08dfeaf242a87df5b81a2cf4bc7a1e544a10bdc1f42eae9cb603005849eaa4b",
+      "expected": {
+        "unknown_fields_remain_unknown": true,
+        "dimension_unit": "m"
+      }
+    }
+  ]
+}

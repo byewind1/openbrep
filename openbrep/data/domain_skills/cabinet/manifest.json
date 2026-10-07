@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "skill_id": "cabinet",
+  "version": "0.1.0",
+  "status": "development",
+  "domain": "parametric_cabinet",
+  "intents": [
+    "create",
+    "image",
+    "modify"
+  ],
+  "aliases": [
+    "cabinet",
+    "cupboard",
+    "柜",
+    "柜体",
+    "收纳柜",
+    "鞋柜",
+    "橱柜"
+  ],
+  "observation": {
+    "fields": {
+      "overall.width": {
+        "type": "length",
+        "unit": "m",
+        "unknown_policy": "preserve"
+      },
+      "overall.depth": {
+        "type": "length",
+        "unit": "m",
+        "unknown_policy": "preserve"
+      },
+      "overall.height": {
+        "type": "length",
+        "unit": "m",
+        "unknown_policy": "preserve"
+      },
+      "parts.doors.count": {
+        "type": "count",
+        "unknown_policy": "preserve"
+      },
+      "parts.shelves.count": {
+        "type": "count",
+        "unknown_policy": "preserve"
+      },
+      "parts.drawers.count": {
+        "type": "count",
+        "unknown_policy": "preserve"
+      },
+      "materials.body": {
+        "type": "material",
+        "unknown_policy": "ask"
+      },
+      "materials.front": {
+        "type": "material",
+        "unknown_policy": "ask"
+      },
+      "state.visibility": {
+        "type": "state",
+        "unknown_policy": "preserve"
+      },
+      "occlusion.hidden_structure": {
+        "type": "state",
+        "unknown_policy": "preserve"
+      }
+    }
+  },
+  "plan_policy": {
+    "unobserved_values": "assumption_or_question",
+    "conflict_policy": "ask_user",
+    "requirement_mapping": "retain_source_and_field_path"
+  },
+  "requirements": [],
+  "allowed_variations": [
+    "Use explicit user dimensions or a clearly labeled assumption when no dimension is observed.",
+    "Do not infer hidden shelves or internal fittings from an occluded view."
+  ],
+  "fixtures": [
+    {
+      "fixture_id": "cabinet-observation-contract-v1",
+      "path": "fixtures/synthetic_observation.json",
+      "kind": "synthetic",
+      "license": "CC0-1.0",
+      "split": "contract",
+      "sha256": "d05fafbf6ed11214c67ba7cf3a718e76780e22a9ab876f4b0823cb8f9809f06f",
+      "expected": {
+        "unknown_fields_remain_unknown": true,
+        "dimension_unit": "m"
+      }
+    }
+  ]
+}
