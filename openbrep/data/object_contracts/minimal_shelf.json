@@ -1,0 +1,173 @@
+{
+  "observation": {
+    "schema_version": 1,
+    "observation_id": "obs-minimal-shelf-synthetic",
+    "source": "synthetic",
+    "source_refs": [
+      "synthetic:minimal_shelf"
+    ],
+    "items": [
+      {
+        "field_path": "p.width",
+        "status": "observed",
+        "value": 0.9,
+        "unit": "m",
+        "confidence": "high",
+        "note": "合成数据"
+      },
+      {
+        "field_path": "p.shelf_count",
+        "status": "observed",
+        "value": 4,
+        "unit": null,
+        "confidence": "high"
+      },
+      {
+        "field_path": "p.has_back",
+        "status": "unknown",
+        "value": null,
+        "unit": null,
+        "confidence": "unknown",
+        "note": "合成最小对象未声明"
+      }
+    ]
+  },
+  "object_spec": {
+    "schema_version": 1,
+    "spec_id": "spec-minimal-shelf",
+    "object_type": "minimal_shelf",
+    "source_observation_id": "obs-minimal-shelf-synthetic",
+    "params": [
+      {
+        "param_id": "p.width",
+        "gdl_name": "A",
+        "type": "Length",
+        "unit": "m",
+        "description": "宽",
+        "default_value": 0.9,
+        "required": true
+      },
+      {
+        "param_id": "p.depth",
+        "gdl_name": "B",
+        "type": "Length",
+        "unit": "m",
+        "description": "深",
+        "default_value": 0.3,
+        "required": true
+      },
+      {
+        "param_id": "p.height",
+        "gdl_name": "ZZYZX",
+        "type": "Length",
+        "unit": "m",
+        "description": "高",
+        "default_value": 1.8,
+        "required": true
+      },
+      {
+        "param_id": "p.shelf_count",
+        "gdl_name": "shelf_count",
+        "type": "Integer",
+        "description": "层板数量",
+        "default_value": 4
+      },
+      {
+        "param_id": "p.has_back",
+        "gdl_name": "has_back",
+        "type": "Boolean",
+        "description": "是否有背板",
+        "default_value": true
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "req-compile",
+        "text": "源码编译通过",
+        "kind": "check",
+        "check_id": "compile"
+      },
+      {
+        "requirement_id": "req-2d-visible",
+        "text": "2D 脚本有可见输出",
+        "kind": "check",
+        "check_id": "plan_check"
+      },
+      {
+        "requirement_id": "req-shelf-count-min",
+        "text": "层板数量不小于 1",
+        "kind": "constraint"
+      }
+    ],
+    "relations": [
+      {
+        "relation_id": "rel-count-min",
+        "left": "p.shelf_count",
+        "op": ">=",
+        "right": {
+          "const": 1
+        }
+      },
+      {
+        "relation_id": "rel-width-positive",
+        "left": "p.width",
+        "op": ">",
+        "right": {
+          "const": 0.05
+        }
+      }
+    ]
+  },
+  "execution_plan": {
+    "schema_version": 1,
+    "plan_id": "plan-minimal-shelf-v1",
+    "spec_ref": "spec-minimal-shelf",
+    "observation_ref": "obs-minimal-shelf-synthetic",
+    "steps": [
+      {
+        "step_id": "step-create",
+        "kind": "create_project",
+        "target": "minimal_shelf",
+        "detail": "synthetic 最小对象"
+      },
+      {
+        "step_id": "step-3d",
+        "kind": "modify_script",
+        "target": "scripts/3d.gdl",
+        "detail": "BLOCK A, B, ZZYZX + FOR 层板循环"
+      },
+      {
+        "step_id": "step-2d",
+        "kind": "modify_script",
+        "target": "scripts/2d.gdl",
+        "detail": "PROJECT2 3, 270, 2"
+      },
+      {
+        "step_id": "step-verify",
+        "kind": "verify",
+        "target": "compile",
+        "detail": "编译 + 参数存在"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "req-compile",
+        "text": "源码编译通过",
+        "kind": "check",
+        "check_id": "compile"
+      },
+      {
+        "requirement_id": "req-2d-visible",
+        "text": "2D 脚本有可见输出",
+        "kind": "check",
+        "check_id": "plan_check"
+      },
+      {
+        "requirement_id": "req-shelf-count-min",
+        "text": "层板数量不小于 1",
+        "kind": "constraint"
+      }
+    ],
+    "plan_hash": "892692d8b418914e05a33bd313078181313a464a6238e4cf59ac9eadb2526611"
+  }
+}

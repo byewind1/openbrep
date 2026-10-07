@@ -1024,6 +1024,36 @@ class TaskPipeline:
             return TaskResult(success=False, error="CANCELLED", metadata=metadata)
         if plan is None:
             return TaskResult(success=False, intent=request.intent or "MODIFY", error="PLAN_GENERATION_FAILED", metadata=metadata)
+        # U03-A：只读规划报告消费 synthetic 最小对象合同——同一规格可从合同
+        # 测试与本报告查看（openbrep/data/object_contracts/minimal_shelf.json）。
+        # 只挂 metadata，不进任何 LLM prompt（planner 模板切换归 U05-B）；
+        # 失败降级为 errors 列表，不阻塞规划本身。
+        try:
+            from openbrep.contracts.object_spec import load_synthetic_minimal_contract
+
+            contract_result = load_synthetic_minimal_contract()
+            if contract_result.ok:
+                spec = contract_result.value["object_spec"]
+                exec_plan = contract_result.value["execution_plan"]
+                metadata["object_contract"] = {
+                    "schema_version": 1,
+                    "object_spec": spec.to_dict(),
+                    "execution_plan": exec_plan.to_dict(),
+                    "observation": contract_result.value["observation"].to_dict(),
+                    "parse_ok": True,
+                }
+            else:
+                metadata["object_contract"] = {
+                    "schema_version": 1,
+                    "parse_ok": False,
+                    "errors": [e.to_dict() for e in contract_result.errors],
+                }
+        except Exception as exc:  # noqa: BLE001 —— 合同展示失败不阻塞只读规划
+            metadata["object_contract"] = {
+                "schema_version": 1,
+                "parse_ok": False,
+                "errors": [{"code": "LOAD_FAILED", "field_path": "", "message": str(exc)[:200]}],
+            }
         metadata.update(awaiting_confirmation=True, pending_plan=plan)
         if request.on_event:
             request.on_event("plan", plan)
