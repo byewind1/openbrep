@@ -102,6 +102,7 @@ def test_verify_library_part_artifact_forwards_hash_and_path():
             "want": ["identity", "mesh3d"],
             "restoreLibraryState": True,
             "rollbackElements": True,
+            "protocolVersion": 1,
             "scenarioId": "default",
             "specHash": "sha256:spec",
             "dependenciesHash": "sha256:deps",

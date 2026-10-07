@@ -371,6 +371,34 @@ def _apply_host_result(
         diagnostics.append(str(host.get("error") or "host verification failed"))
         return
     identity = host.get("loadedIdentity") if isinstance(host.get("loadedIdentity"), dict) else {}
+    protocol_version = host.get("verificationProtocolVersion")
+    raw_capabilities = host.get("capabilities")
+    capabilities = {
+        item for item in raw_capabilities if isinstance(item, str)
+    } if isinstance(raw_capabilities, list) else set()
+    record["verification_protocol_version"] = protocol_version
+    record["addon_capabilities"] = sorted(capabilities)
+    required_capabilities = {
+        "artifact_identity",
+        "effective_parameters_readback",
+        "scenario_context",
+        "transaction_restore",
+    }
+    if type(protocol_version) is not int or protocol_version != 1 or not required_capabilities.issubset(capabilities):
+        missing = sorted(required_capabilities - capabilities)
+        diagnostics.append("host_verification_protocol_unsupported:" + ",".join(missing))
+        record["status"] = "unsupported"
+        return
+    for field, key in (
+        ("scenario_id", "scenarioId"),
+        ("spec_hash", "specHash"),
+        ("dependencies_hash", "dependenciesHash"),
+    ):
+        expected = record.get(field)
+        if expected is not None and host.get(key) != expected:
+            diagnostics.append(f"host_context_mismatch:{field}")
+            record["status"] = "failed"
+            return
     loaded_hash = str(identity.get("gsmSha256") or "")
     expected_hash = str(record.get("gsm_sha256") or "")
     record["loaded_identity"] = {
@@ -548,6 +576,8 @@ def _host_evidence_binding(
             "status": record.get("status"),
             "identity_status": record.get("identity_status"),
             "parameter_readback_status": record.get("parameter_readback_status"),
+            "verification_protocol_version": record.get("verification_protocol_version"),
+            "addon_capabilities": record.get("addon_capabilities"),
             "archicad_version": record.get("archicad_version"),
             "addon_version": record.get("addon_version"),
             "executor_version": record.get("executor_version"),

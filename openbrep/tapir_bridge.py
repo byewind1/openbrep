@@ -654,6 +654,7 @@ class TapirBridge:
             "want": list(want or []),
             "restoreLibraryState": True,
             "rollbackElements": True,
+            "protocolVersion": 1,
         }
         # Optional evidence context is additive so older Add-On builds keep
         # their established request shape and can report unsupported fields.

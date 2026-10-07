@@ -44,6 +44,13 @@ class FakeAdapter:
         if self.on_call:
             self.on_call()
         response = dict(self.response)
+        response.setdefault("verificationProtocolVersion", 1)
+        response.setdefault("capabilities", [
+            "artifact_identity", "effective_parameters_readback", "scenario_context", "transaction_restore",
+        ])
+        response.setdefault("scenarioId", kwargs.get("scenario_id") or "")
+        response.setdefault("specHash", kwargs.get("spec_hash"))
+        response.setdefault("dependenciesHash", kwargs.get("dependencies_hash"))
         if response.get("effectiveParameters") == "__requested__":
             response["effectiveParameters"] = dict(kwargs.get("parameters") or {})
         return response
@@ -73,6 +80,10 @@ def _host_response(gsm_sha: str, **overrides) -> dict:
     response = {
         "ok": True,
         "identityStatus": "verified",
+        "verificationProtocolVersion": 1,
+        "capabilities": [
+            "artifact_identity", "effective_parameters_readback", "scenario_context", "transaction_restore",
+        ],
         "loadedIdentity": {
             "name": "stair",
             "guid": "same-guid",
@@ -286,6 +297,17 @@ def test_missing_or_wrong_effective_parameter_readback_cannot_pass(tmp_path: Pat
     mismatch = service.run({"parameters": {"height": 2.9}})
     assert mismatch["verification"]["status"] == "failed"
     assert mismatch["verification"]["parameter_differences"]["HEIGHT"]["effective"] == 2.8
+
+
+def test_legacy_addon_without_versioned_readback_protocol_is_unsupported(tmp_path: Path) -> None:
+    gsm_sha = hashlib.sha256(b"CURRENT-GSM").hexdigest()
+    adapter = FakeAdapter(_host_response(gsm_sha, verificationProtocolVersion=None, capabilities=[]))
+    service, _session = _service(tmp_path, adapter)
+
+    result = service.run({"parameters": {"height": 2.9}})
+
+    assert result["verification"]["status"] == "unsupported"
+    assert any(item.startswith("host_verification_protocol_unsupported:") for item in result["verification"]["diagnostics"])
 
 
 def test_dependency_manifest_change_stales_previous_host_record(tmp_path: Path) -> None:
