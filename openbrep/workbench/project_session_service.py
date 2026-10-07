@@ -884,6 +884,7 @@ def empty_project_snapshot() -> dict[str, Any]:
         "parameters": [],
         "preview": {"meshes": [], "wires": [], "warnings": []},
         "warnings": [],
+        "object_contract": {"status": "missing", "object_spec": None, "errors": []},
     }
 
 
@@ -919,6 +920,24 @@ def project_to_snapshot(
         snapshot["source_fingerprint"] = compute_source_fingerprint(project.root)
     except Exception:
         snapshot["source_fingerprint"] = None
+    try:
+        from openbrep.contracts.project_store import load_project_contract
+
+        contract = load_project_contract(project.root)
+        snapshot["object_contract"] = {
+            "status": contract.status,
+            "object_spec": contract.object_spec,
+            "source_fingerprint": contract.source_fingerprint,
+            "errors": list(contract.errors),
+        }
+    except Exception as exc:
+        # Domain contracts are additive metadata. A damaged/unsupported
+        # contract must not prevent opening or displaying the HSF project.
+        snapshot["object_contract"] = {
+            "status": "invalid",
+            "object_spec": None,
+            "errors": [str(exc)[:240]],
+        }
     return snapshot
 
 

@@ -174,6 +174,12 @@ class HSFProject:
         if not root.is_dir():
             raise FileNotFoundError(f"HSF directory not found: {hsf_dir}")
 
+        # U05-A: restore an interrupted source/spec transaction before any HSF
+        # bytes are read. Legacy projects without a journal are unchanged.
+        from openbrep.contracts.project_store import recover_project_state
+
+        recover_project_state(root)
+
         name = root.name
         proj = cls(name, str(root.parent))
 
