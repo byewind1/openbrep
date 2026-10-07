@@ -83,7 +83,6 @@ from openbrep.runtime.tracer import Tracer
 from openbrep.skill_creator import SkillCreator
 from openbrep.skills_loader import SkillsLoader
 from openbrep.user_knowledge import load_user_knowledge
-from openbrep.vision.image_to_plan import analyze_reference_image, visual_structure_to_gdl_hint
 from openbrep.wiki_knowledge import WikiKnowledge
 
 # ── 多图摄取通道（Vision Harness S0，P5a）──────────────────
@@ -1155,13 +1154,23 @@ class TaskPipeline:
                 if img_path.suffix.lower() in (".jpg", ".jpeg"):
                     image_mime = "image/jpeg"
 
-        # ── 多图通道（P5a）：仅当 request.images 非空时生效的新路径 ────────
-        # 单图旧字段（image_b64 / image_path）存在时完全走旧路径，不经过这里。
+        # ── 多图通道（P5a）+ U04-A 单图归一：单图旧字段（image_b64/image_path）
+        # 归一为 ImageRef，单图/多图进同一 harness 入口与生成通道（旧"完全走
+        # 旧路径"的绕行不再保留——派单 U04-A 明确不以旧字节兼容永远保留绕行）。
         multi_images: list[ImageRef] = []
         if request.images and not image_b64:
             from openbrep.vision.multi_image import resolve_and_preprocess
 
             multi_images = resolve_and_preprocess(request.images)
+        elif image_b64 and not multi_images:
+            from openbrep.vision.multi_image import resolve_and_preprocess
+
+            multi_images = resolve_and_preprocess([
+                ImageRef(token="图1", b64=image_b64, mime=image_mime),
+            ])
+            # 归一后生成通道统一走 images（pass_raw_image 语义一致，默认 on
+            # 保持旧单图带原图行为）；不再以 image_b64 直传生成。
+            image_b64 = None
         return image_b64, image_mime, multi_images
 
     def _run_vision_pre_analysis(
@@ -1182,20 +1191,9 @@ class TaskPipeline:
         早退结果非 None 时调用方必须原样返回（P5d-2 提取确认门）。
         """
         enriched_instruction = request.user_input
-        # P5d-1：vision 提取透出（多图分支填充；无图/单图旧路径保持空列表）
+        # P5d-1：vision 提取透出（U04-A 起单图/多图统一走 harness，本列表统一填充）
         vision_extractions: list[dict] = []
-        if image_b64 and request.intent in ("CREATE", "IMAGE"):
-            try:
-                on_event("status", {"message": "正在分析参考图结构…"})
-                vs = analyze_reference_image(image_b64, image_mime, request.user_input, llm)
-                gdl_hint = visual_structure_to_gdl_hint(vs)
-                enriched_instruction = f"{request.user_input}\n\n{gdl_hint}"
-                on_event("vision_analysis_done", {"component_type": vs.component_type})
-                logger.info("Vision pre-analysis done: %s", vs.component_type)
-            except Exception as exc:
-                logger.warning("Vision pre-analysis failed, falling back to direct vision: %s", exc)
-                # fallback: 原始 instruction + image，行为与 Phase 1 之前一致
-        elif multi_images and request.intent in ("CREATE", "IMAGE"):
+        if multi_images and request.intent in ("CREATE", "IMAGE"):
             # 多图：Vision Harness（P5b）——S1 分型 + S2 定向提取（schema 驱动）+ S4 合成。
             # generic schema 平移现有 analyze_reference_image（原函数原 prompt），
             # 各图 hint 以 【图N】 前缀标注后拼入 enriched_instruction（与 P5a 逐字节一致）。
@@ -1211,7 +1209,14 @@ class TaskPipeline:
                     from openbrep.vision.modeling_plan import ModelingPlan
 
                     on_event("status", {"message": "正在按已确认的读图结果生成…"})
-                    plans = [ModelingPlan.from_dict(entry) for entry in confirmed]
+                    # U04-A：确认重发 payload 与提取同口径——schema 严格校验，
+                    # 坏字段/未知 schema 不作为已验证事实渲染（旧 payload 可读）。
+                    from openbrep.vision.harness import apply_field_validation
+
+                    plans = [
+                        apply_field_validation(ModelingPlan.from_dict(entry))
+                        for entry in confirmed
+                    ]
                 else:
                     on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
                     # P1-B：显式效果契约存在时注入项目领域提示（GUI 门控，
@@ -1245,6 +1250,13 @@ class TaskPipeline:
                         continue
                     entry = plan_to_dict(plan)
                     entry["token"] = token
+                    # U04-A：提取 → Observation（U03-A 合同）随条目透出（只读）
+                    try:
+                        from openbrep.contracts.object_spec import observation_from_modeling_plan
+
+                        entry["observation"] = observation_from_modeling_plan(plan).to_dict()
+                    except Exception:  # noqa: BLE001 —— 观察适配失败不阻塞提取
+                        pass
                     vision_extractions.append(entry)
                 hint_parts: list[str] = []
                 for idx, plan in enumerate(plans, start=1):

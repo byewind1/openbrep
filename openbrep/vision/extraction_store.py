@@ -97,6 +97,7 @@ def plan_to_dict(plan) -> dict[str, Any]:
         # P5d-2：schema 元数据随提取透出（前端可编辑卡片据此决定可编辑字段）。
         "required": list(getattr(plan, "required", []) or []),
         "critic_checks": list(getattr(plan, "critic_checks", []) or []),
+        "validation_issues": list(getattr(plan, "validation_issues", []) or []),
         "sha256": str(source[0] or "") if source else "",
     }
 

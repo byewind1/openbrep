@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import Any, Callable, Optional
 
 from openbrep.vision.extraction_store import plan_to_dict
@@ -258,7 +259,16 @@ def _schema_plan(
     fields: dict[str, Any] = {
         key: fields_data[key] for key in schema.fields if key in fields_data
     }
+    # U04-A：按 schema 严格校验（类型/enum values/范围/嵌套/required）——
+    # 坏值收敛为 None + issue，置信度强制 low；prompt 不变（校验在解析侧）。
+    fields, validation_issues, adjustments = validate_fields_against_schema(
+        schema.name, fields, schemas={schema.name: schema},
+        declared_required=list(schema.required),
+    )
     confidence = _extract_confidence(schema, fields, confidence_data)
+    for key, forced in adjustments.items():
+        if forced == "low":
+            confidence[key] = "low"
     raw_description_out = str(raw_value or "") if raw_value is not None else ""
 
     return ModelingPlan(
@@ -271,6 +281,7 @@ def _schema_plan(
         # P5d-2：schema 元数据透出（required + critic_checks = 前端可编辑范围）
         required=list(schema.required),
         critic_checks=list(schema.critic_checks),
+        validation_issues=validation_issues,
     )
 
 
@@ -294,6 +305,205 @@ def _extract_confidence(schema: VisionSchema, fields: dict, confidence_data: Any
         if fields.get(key) is None and out[key] != "unknown":
             out[key] = "low"
     return out
+
+
+# ── U04-A：schema 严格校验（提取 / 确认重发 / 存储读回三条入口统一）──
+
+def _validate_declared_value(
+    decl: dict, value: Any, field_path: str, issues: list[dict], *, required: bool
+) -> Any:
+    """按字段声明校验单个值；坏值收敛为 None + issue（不静默穿透）。
+
+    null 规则：None 允许（无法判断），required 字段为 None 记 required_null。
+    """
+    type_tag = decl.get("type")
+    if value is None:
+        if required:
+            issues.append({
+                "field_path": field_path, "code": "required_null",
+                "message": "必需字段提取为 null（无法判断）",
+            })
+        return None
+    if type_tag == "enum":
+        values = decl.get("values")
+        if isinstance(values, list) and value not in values:
+            issues.append({
+                "field_path": field_path, "code": "enum_invalid",
+                "message": f"枚举值 {value!r} 不在声明集合内",
+                "value": value,
+            })
+            return None
+        if not isinstance(value, str):
+            issues.append({
+                "field_path": field_path, "code": "type_invalid",
+                "message": f"enum 值必须是字符串，实际 {type(value).__name__}",
+                "value": value,
+            })
+            return None
+        return value
+    if type_tag == "number" or type_tag == "integer":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            issues.append({
+                "field_path": field_path, "code": "type_invalid",
+                "message": f"{type_tag} 值必须是数字，实际 {type(value).__name__}",
+                "value": value,
+            })
+            return None
+        number = float(value)
+        if not math.isfinite(number):
+            issues.append({
+                "field_path": field_path, "code": "not_finite",
+                "message": "数值不能是 NaN 或无穷", "value": value,
+            })
+            return None
+        minimum = decl.get("min")
+        maximum = decl.get("max")
+        if minimum is not None and number < float(minimum):
+            issues.append({
+                "field_path": field_path, "code": "range_invalid",
+                "message": f"数值 {number} 低于下界 {minimum}", "value": value,
+            })
+            return None
+        if maximum is not None and number > float(maximum):
+            issues.append({
+                "field_path": field_path, "code": "range_invalid",
+                "message": f"数值 {number} 高于上界 {maximum}", "value": value,
+            })
+            return None
+        if type_tag == "integer" and number != int(number):
+            issues.append({
+                "field_path": field_path, "code": "type_invalid",
+                "message": f"integer 值必须为整数，实际 {value!r}", "value": value,
+            })
+            return None
+        return value
+    if type_tag == "boolean":
+        if not isinstance(value, bool):
+            issues.append({
+                "field_path": field_path, "code": "type_invalid",
+                "message": f"boolean 值必须是 true/false，实际 {type(value).__name__}",
+                "value": value,
+            })
+            return None
+        return value
+    if type_tag == "string":
+        if not isinstance(value, str):
+            issues.append({
+                "field_path": field_path, "code": "type_invalid",
+                "message": f"string 值必须是字符串，实际 {type(value).__name__}",
+                "value": value,
+            })
+            return None
+        return value
+    if type_tag == "array":
+        if not isinstance(value, list):
+            issues.append({
+                "field_path": field_path, "code": "type_invalid",
+                "message": f"array 值必须是数组，实际 {type(value).__name__}",
+                "value": value,
+            })
+            return None
+        return value
+    if type_tag == "object":
+        if not isinstance(value, dict):
+            issues.append({
+                "field_path": field_path, "code": "type_invalid",
+                "message": f"object 值必须是对象，实际 {type(value).__name__}",
+                "value": value,
+            })
+            return None
+        sub_fields = decl.get("fields")
+        if isinstance(sub_fields, dict):
+            cleaned: dict = {}
+            for sub_key, sub_decl in sub_fields.items():
+                sub_required = bool(sub_decl.get("required", False)) if isinstance(sub_decl, dict) else False
+                if sub_key not in value:
+                    if sub_required:
+                        issues.append({
+                            "field_path": f"{field_path}.{sub_key}", "code": "required_missing",
+                            "message": "嵌套必需字段缺失",
+                        })
+                    continue
+                cleaned[sub_key] = _validate_declared_value(
+                    sub_decl, value[sub_key], f"{field_path}.{sub_key}", issues,
+                    required=sub_required,
+                )
+            # 未声明的多余键不透传（schema 外字段不进 hint）
+            return cleaned
+        return value
+    # 未知类型（registry 加载时已拦截，防御性保留原值）
+    return value
+
+
+def validate_fields_against_schema(
+    schema_name: str,
+    fields: dict,
+    *,
+    schemas: Optional[dict] = None,
+    declared_required: Optional[list[str]] = None,
+) -> tuple[dict, list[dict], dict[str, str]]:
+    """按 schema 严格校验提取字段（U04-A 统一入口，三条通道共用）。
+
+    Returns:
+        (cleaned_fields, issues, confidence_adjustments)：
+        - cleaned_fields: 校验后字段（坏值收敛为 None；schema 外字段剔除）；
+        - issues: [{field_path, code, message, value?}]；
+        - confidence_adjustments: {字段名: "low"}——出问题的字段置信度强制 low。
+    """
+    issues: list[dict] = []
+    adjustments: dict[str, str] = {}
+    try:
+        from openbrep.vision.schema_registry import get_schema
+
+        schema = get_schema(schema_name, schemas)
+    except KeyError:
+        issues.append({
+            "field_path": "", "code": "unknown_schema",
+            "message": f"未知 schema {schema_name!r}：字段不作为已验证事实渲染",
+        })
+        return {}, issues, {}
+    declared = schema.fields
+    required_set = set(declared_required if declared_required is not None else schema.required)
+    cleaned: dict = {}
+    for key, decl in declared.items():
+        path_prefix = key
+        if key not in fields:
+            if key in required_set:
+                issues.append({
+                    "field_path": path_prefix, "code": "required_missing",
+                    "message": "必需字段缺失（提取结果未包含）",
+                })
+                adjustments[key] = "low"
+            continue
+        sub_required = key in required_set
+        cleaned[key] = _validate_declared_value(
+            decl, fields[key], path_prefix, issues, required=sub_required
+        )
+        if issues and issues[-1]["field_path"] == path_prefix:
+            adjustments[key] = "low"
+        elif cleaned[key] is None and key in required_set:
+            adjustments[key] = "low"
+    return cleaned, issues, adjustments
+
+
+def apply_field_validation(plan: "ModelingPlan", *, schemas: Optional[dict] = None) -> "ModelingPlan":
+    """对 ModelingPlan 就地执行 schema 校验（确认重发/存储读回通道复用）。
+
+    generic 不参与字段校验（结构走 VisualStructure 平移）；未知 schema 的
+    字段不作为已验证事实渲染（fields 清空，raw_description 兜底）。
+    """
+    if plan.schema_name == "generic":
+        return plan
+    cleaned, issues, adjustments = validate_fields_against_schema(
+        plan.schema_name, plan.fields, schemas=schemas,
+        declared_required=list(plan.required) if plan.required else None,
+    )
+    plan.fields = cleaned
+    plan.validation_issues = list(issues)
+    for key, conf in adjustments.items():
+        if conf == "low":
+            plan.confidence[key] = "low"
+    return plan
 
 
 # ── S3 critic 校验（P5c，设计 D3）─────────────────────────
@@ -392,7 +602,11 @@ def _critic_text_prompt(schema: VisionSchema, plan: ModelingPlan) -> str:
 
 
 def _apply_verdicts(plan: ModelingPlan, schema: VisionSchema, verdicts: dict) -> None:
-    """按 D3 语义应用 critic 逐字段裁决（含越权防护）。"""
+    """按 D3 语义应用 critic 逐字段裁决（含越权防护）。
+
+    U04-A：match 必须携带 evidence 才提升"已核对"（high）；无依据 match 与
+    有依据 match 在工件上必须可区分——无依据只降 low，不盲提。
+    """
     checks = set(schema.critic_checks)
     for field, raw in (verdicts or {}).items():
         if field not in checks:
@@ -407,7 +621,15 @@ def _apply_verdicts(plan: ModelingPlan, schema: VisionSchema, verdicts: dict) ->
         verdict = str(raw.get("verdict") or "").strip().lower()
         evidence = str(raw.get("evidence") or "").strip()
         if verdict == "match":
-            plan.confidence[field] = "high"
+            if evidence:
+                plan.confidence[field] = "high"
+            else:
+                # U04-A：无依据 match 不得计为已核——记 issue、标 low
+                plan.confidence[field] = "low"
+                plan.validation_issues.append({
+                    "field_path": field, "code": "unfounded_match",
+                    "message": "critic 给出 match 但未提供依据，不作为已核对",
+                })
         elif verdict == "unknown":
             plan.confidence[field] = "low"
         elif verdict == "mismatch":
@@ -428,6 +650,10 @@ def _apply_verdicts(plan: ModelingPlan, schema: VisionSchema, verdicts: dict) ->
                 plan.confidence[field] = "low"
         else:
             plan.confidence[field] = "low"
+    # U04-A：遗漏检查显式标 unchecked（不冒充已核）
+    for check_path in schema.critic_checks:
+        if check_path not in (verdicts or {}):
+            plan.confidence[check_path] = "unchecked"
 
 
 # ── 点路径工具 ────────────────────────────────────────────

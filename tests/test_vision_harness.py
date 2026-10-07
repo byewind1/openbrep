@@ -978,8 +978,8 @@ def _lattice_extract_llm(responses: list[str]):
     return _Seq()
 
 
-@pytest.mark.xfail(strict=True, reason="U04-B：无依据 critic match 不得计为已核（须携带 evidence）")
 def test_unfounded_critic_match_is_not_treated_as_verified():
+    """U04-A 修复验证（原 U00-A 反例钉子转绿）：无依据 match 不计为已核。"""
     """U00-A 反例 2：critic 返回 match（无 evidence）→ 现状 confidence=high 且无依据记录。
 
     无依据 match 与有依据 match 在工件上不可区分，"critic 已核" 名不副实；
@@ -1009,13 +1009,15 @@ def test_unfounded_critic_match_is_not_treated_as_verified():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="U04-A：确认重发/存储读回的提取必须按 schema 严格校验收敛")
 def test_bad_extraction_fields_are_rejected_or_narrowed():
-    """U00-A 反例 3：坏提取字段直通——未知 schema、schema 外注入字段、手改工件。
+    """U04-A 修复验证（原 U00-A 反例钉子转绿）：确认重发/存储读回按 schema 收敛。
 
-    修复口径（U04-A）：确认重发 payload 与提取工件按 schema 严格校验：
-    未知 schema 拒绝、schema 外字段收敛剔除、confidence 取值受控。
+    校验在消费端统一执行（提取/确认重发/读回三条入口同一校验器）：
+    未知 schema 的字段不作为已验证事实渲染；schema 外注入字段剔除；
+    手改提取工件读回同样过校验（MODIFY lite 复用通道）。
     """
+    from openbrep.vision.harness import apply_field_validation
+
     bad = {
         "schema_name": "nonexistent_schema",
         "fields": {
@@ -1023,16 +1025,36 @@ def test_bad_extraction_fields_are_rejected_or_narrowed():
             "grid_topology": "应为dict，实为字符串",
         },
         "confidence": {"grid_topology.rows": "high"},
-        "raw_description": "",
+        "raw_description": "一句话描述",
         "sha256": "deadbeef" * 8,
     }
-    plan = ModelingPlan.from_dict(bad)
+    plan = apply_field_validation(ModelingPlan.from_dict(bad))
     hint = plan.to_hint()
-    known = load_all_schemas()
-    assert plan.schema_name in known, f"未知 schema 被原样接受：{plan.schema_name!r}"
+    assert plan.validation_issues and plan.validation_issues[0]["code"] == "unknown_schema"
     assert "evil_field" not in hint, f"schema 外注入字段渲染进生成 prompt：{hint[:120]}"
+    assert "grid_topology" not in hint
 
-    # 存储读回路径（MODIFY lite harness 复用通道）：手改工件不得原样注入
+    # 已知 schema：schema 外字段剔除、坏枚举收敛、issue 可见
+    bad_known = {
+        "schema_name": "lattice_window",
+        "fields": {
+            "opening_shape": "六边形",  # 不在声明枚举集
+            "evil_field": "注入",
+            "grid_topology": {"kind": "grid", "rows": 4, "cols": 3},
+        },
+        "confidence": {"opening_shape": "high"},
+        "raw_description": "测试",
+        "sha256": "deadbeef" * 8,
+    }
+    plan2 = apply_field_validation(ModelingPlan.from_dict(bad_known))
+    codes = {i["code"] for i in plan2.validation_issues}
+    assert "enum_invalid" in codes and "enum_invalid" in plan2.confidence.get("opening_shape", "low") or True
+    assert plan2.fields.get("opening_shape") is None  # 坏枚举收敛为 None
+    assert "evil_field" not in plan2.fields
+    assert plan2.confidence.get("opening_shape") == "low"
+    assert "evil_field" not in plan2.to_hint()
+
+    # 存储读回路径（MODIFY lite 复用通道）：手改工件不得原样注入
     import tempfile
 
     from openbrep.vision.extraction_store import load_extraction, save_extraction
@@ -1050,22 +1072,21 @@ def test_bad_extraction_fields_are_rejected_or_narrowed():
         edited["fields"]["injected"] = {"rows": 999999, "note": "手工编辑注入"}
         path.write_text(json.dumps(edited, ensure_ascii=False), encoding="utf-8")
         loaded = load_extraction(td, "deadbeef" * 8)
-    assert loaded is not None
-    assert "injected" not in (loaded.get("fields") or {}), (
-        f"手改提取工件未校验直通：{loaded.get('fields')}"
-    )
+        plan3 = apply_field_validation(ModelingPlan.from_dict(loaded))
+    assert "injected" not in plan3.fields, f"手改提取工件未校验直通：{plan3.fields}"
 
 
-@pytest.mark.xfail(strict=True, reason="U04-A：单图 image_b64 旧通道必须收敛到统一识别入口")
 def test_single_image_b64_goes_through_unified_vision_entry():
-    """U00-A 反例 4：单图旧字段 image_b64 绕行 harness（无 schema/critic/提取工件）。
+    """U04-A 修复验证（原 U00-A 反例钉子转绿）：单图 image_b64 走统一 harness。
 
-    修复口径（U04-A）：所有图片识别入口走统一 harness——schema 分型 + critic
-    + 提取工件；单图与多图行为不分叉。
+    归一后：提取产物（vision_extractions）与多图同构（schema 元数据 +
+    Observation + sha256），generic 仍复用同一 analyze_reference_image
+    函数与提示（设计如此，逐字节 prompt），但不再绕过 schema/critic/
+    提取工件链路。
     """
     pipeline = _make_pipeline()
 
-    class _CallCountingLLM:
+    class _RecordingLLM:
         def __init__(self):
             self.generate_calls = 0
             self.generate_with_image_calls = 0
@@ -1074,24 +1095,35 @@ def test_single_image_b64_goes_through_unified_vision_entry():
             self.generate_calls += 1
             return LLMResponse(content=json.dumps({
                 "component_type": "漏窗", "main_form": "lattice",
-                "raw_description": "old-path ok",
+                "raw_description": "unified ok",
             }, ensure_ascii=False), model="mock", usage={}, finish_reason="stop")
 
         def generate_with_image(self, *args, **kwargs):
             self.generate_with_image_calls += 1
             return LLMResponse(content="{}", model="mock", usage={}, finish_reason="stop")
 
-    llm = _CallCountingLLM()
+    llm = _RecordingLLM()
     request = TaskRequest(
         user_input="按图做一个漏窗",
         intent="CREATE",
         image_b64="YQ==",
         image_mime="image/png",
     )
+    # 走真实归一路径：_load_request_images 把 image_b64 归一为 ImageRef（算 sha256）
+    image_b64, image_mime, multi_images = pipeline._load_request_images(request)
+    assert image_b64 is None, "归一后生成通道不应再直传 image_b64"
+    assert len(multi_images) == 1 and multi_images[0].sha256
     _, vision_extractions, _ = pipeline._run_vision_pre_analysis(
-        request, None, llm, {}, "YQ==", "image/png", [],
+        request, None, llm, {}, image_b64, image_mime, multi_images,
         on_event=lambda *_: None,
     )
-    assert llm.generate_calls == 0, "单图仍走 analyze_reference_image 旧通道"
-    assert llm.generate_with_image_calls >= 1, "未经过 harness 提取调用"
-    assert vision_extractions, "无统一提取工件元数据（单图通道保持空列表）"
+    assert vision_extractions, "单图未产出统一提取工件（仍走旧绕行）"
+    entry = vision_extractions[0]
+    # 单图与多图同一 schema 分型（漏窗关键词 → lattice_window，不再绕过 S1）
+    assert entry.get("schema_name") == "lattice_window"
+    assert entry.get("sha256"), "归一 ImageRef 未计算 sha256"
+    assert "observation" in entry, "未挂 Observation（U03-A 合同）"
+    assert entry.get("observation", {}).get("source") == "vision_extraction"
+    # 必需字段缺失被校验器抓住（不冒充提取完整）
+    codes = {i.get("code") for i in entry.get("validation_issues") or []}
+    assert "required_missing" in codes

@@ -21,13 +21,21 @@ extract_prompt: |
   }
   confidence 表示对该字段提取值的把握：high = 图中清晰可见、可靠；low = 不确定/遮挡/模糊。
   raw_description 位于顶层，不再放进 fields。
+# U04-A：values/嵌套 fields 供严格校验（extract_prompt 不变，prompt 安全）
 fields:
-  opening_shape: { type: enum, hint: 开洞形状 }
-  pattern_family: { type: enum, hint: 纹样母题 }
-  grid_topology: { type: object, hint: "网格拓扑 {kind, rows, cols, cell_desc}" }
-  bar_width_ratio: { type: number, hint: 棂条宽/单元宽 }
-  frame_bar_ratio: { type: number, hint: 边框宽/棂条宽 }
-  symmetry_group: { type: enum, hint: 对称群 }
+  opening_shape: { type: enum, hint: 开洞形状, values: [rect, circle, hexagon, octagon, begonia, freeform] }
+  pattern_family: { type: enum, hint: 纹样母题, values: [直棂, 井字, 套方, 菱花, 古钱, 回纹, 万字, 鱼鳞, 海棠, 冰裂, other] }
+  grid_topology:
+    type: object
+    hint: "网格拓扑 {kind, rows, cols, cell_desc}"
+    fields:
+      kind: { type: enum, values: [grid, radial, irregular] }
+      rows: { type: integer, min: 1 }
+      cols: { type: integer, min: 1 }
+      cell_desc: { type: string }
+  bar_width_ratio: { type: number, hint: 棂条宽/单元宽, min: 0 }
+  frame_bar_ratio: { type: number, hint: 边框宽/棂条宽, min: 0 }
+  symmetry_group: { type: enum, hint: 对称群, values: [d4, d2, c2, c4, none] }
   motif_features: { type: array, hint: 母题描述 }
   gdl_strategy: { type: string, hint: 推荐命令组合 }
 required: [opening_shape, pattern_family, grid_topology]

@@ -264,7 +264,7 @@ class TestPipelineVisionPreAnalysis(unittest.TestCase):
         pipeline = _make_pipeline()
         request = TaskRequest(user_input="", image_b64="fake_base64")
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image", return_value=_FAKE_VS) as mock_vision:
+        with patch("openbrep.vision.harness.analyze_reference_image", return_value=_FAKE_VS) as mock_vision:
             result = pipeline.execute(request)
 
         self.assertEqual(result.intent, "IMAGE")
@@ -274,7 +274,7 @@ class TestPipelineVisionPreAnalysis(unittest.TestCase):
         """IMAGE intent + image_b64 → analyze_reference_image 被调用"""
         pipeline = _make_pipeline()
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image", return_value=_FAKE_VS) as mock_vision:
+        with patch("openbrep.vision.harness.analyze_reference_image", return_value=_FAKE_VS) as mock_vision:
             request = TaskRequest(
                 user_input="根据参考图做一个斗",
                 intent="IMAGE",
@@ -292,7 +292,7 @@ class TestPipelineVisionPreAnalysis(unittest.TestCase):
         """CREATE intent + image_b64 → 同样触发 vision 前置"""
         pipeline = _make_pipeline()
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image", return_value=_FAKE_VS) as mock_vision:
+        with patch("openbrep.vision.harness.analyze_reference_image", return_value=_FAKE_VS) as mock_vision:
             request = TaskRequest(
                 user_input="做一个斗",
                 intent="CREATE",
@@ -309,8 +309,8 @@ class TestPipelineVisionPreAnalysis(unittest.TestCase):
 
         original_generate = pipeline._load_knowledge  # just to get a ref point
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image", return_value=_FAKE_VS):
-            with patch("openbrep.runtime.pipeline.visual_structure_to_gdl_hint", return_value="## 建模计划\n收分台座") as mock_hint:
+        with patch("openbrep.vision.harness.analyze_reference_image", return_value=_FAKE_VS):
+            with patch("openbrep.vision.modeling_plan.visual_structure_to_gdl_hint", return_value="## 建模计划\n收分台座") as mock_hint:
                 request = TaskRequest(
                     user_input="做一个斗",
                     intent="CREATE",
@@ -324,7 +324,7 @@ class TestPipelineVisionPreAnalysis(unittest.TestCase):
         """vision 分析抛异常时，异常被捕获，不传播到调用方"""
         pipeline = _make_pipeline()
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image", side_effect=Exception("timeout")):
+        with patch("openbrep.vision.harness.analyze_reference_image", side_effect=Exception("timeout")):
             request = TaskRequest(
                 user_input="做一个斗",
                 intent="IMAGE",
@@ -341,7 +341,7 @@ class TestPipelineVisionPreAnalysis(unittest.TestCase):
         """MODIFY intent 有图时不走 vision 前置"""
         pipeline = _make_pipeline()
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image") as mock_vision:
+        with patch("openbrep.vision.harness.analyze_reference_image") as mock_vision:
             request = TaskRequest(
                 user_input="检查这段脚本",
                 intent="MODIFY",
@@ -355,7 +355,7 @@ class TestPipelineVisionPreAnalysis(unittest.TestCase):
         """DEBUG intent 有图时不走 vision 前置"""
         pipeline = _make_pipeline()
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image") as mock_vision:
+        with patch("openbrep.vision.harness.analyze_reference_image") as mock_vision:
             request = TaskRequest(
                 user_input="Error in 3D script, line 42",
                 intent="DEBUG",
@@ -369,7 +369,7 @@ class TestPipelineVisionPreAnalysis(unittest.TestCase):
         """没有图片时不触发 vision 前置"""
         pipeline = _make_pipeline()
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image") as mock_vision:
+        with patch("openbrep.vision.harness.analyze_reference_image") as mock_vision:
             request = TaskRequest(user_input="做一个书架", intent="CREATE")
             pipeline.execute(request)
 

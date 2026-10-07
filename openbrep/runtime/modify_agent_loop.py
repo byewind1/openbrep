@@ -368,18 +368,29 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     # system 消息（不作工具、不进 user 消息，D10）；新提取 best-effort 落盘
     # （D7 复用铺路，失败 warning 不阻断）。
     vision_extractions: list[dict] = []
-    if request.images:
+    if request.images or request.image_b64:
+        # U04-A：单图旧字段（image_b64）归一为 ImageRef，与多图同一条 lite 通道；
+        # lite 策略显式记录（无 critic），不冒充完整核对。
         try:
             from openbrep.vision.extraction_store import (
                 load_extraction,
                 plan_to_dict,
                 save_extraction,
             )
-            from openbrep.vision.harness import run as vision_harness_run
+            from openbrep.vision.harness import (
+                apply_field_validation,
+                run as vision_harness_run,
+            )
             from openbrep.vision.modeling_plan import ModelingPlan
             from openbrep.vision.multi_image import resolve_and_preprocess
 
-            multi_images = resolve_and_preprocess(request.images)
+            _images = list(request.images)
+            if not _images and request.image_b64:
+                from openbrep.runtime.pipeline import ImageRef
+
+                _images = [ImageRef(token="图1", b64=request.image_b64,
+                                    mime=request.image_mime or "image/png")]
+            multi_images = resolve_and_preprocess(_images)
             hint_parts: list[str] = []
             for idx, img in enumerate(multi_images, start=1):
                 token = img.token or f"图{idx}"
@@ -393,8 +404,9 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                         logger.warning("P5e: extraction load failed for %s: %s", token, exc)
                         stored = None
                     if stored is not None:
-                        # 哈希命中：复用缓存提取，零 vision LLM 调用（D7）
-                        plan = ModelingPlan.from_dict(stored)
+                        # 哈希命中：复用缓存提取，零 vision LLM 调用（D7）；
+                        # U04-A：读回内容与提取同口径 schema 严格校验（手改工件不穿透）
+                        plan = apply_field_validation(ModelingPlan.from_dict(stored))
                         reused = True
                         reused_from_model = str(stored.get("model") or "")
                     else:
@@ -873,6 +885,9 @@ def _agent_loop_metadata(
         metadata["changed_files"] = sorted(set(changed_files))
     if vision_extractions:
         metadata["vision_extractions"] = vision_extractions
+        # U04-A：lite 策略显式记录——MODIFY 图片走简化档（无 critic、无完整
+        # schema critic 核对），不得冒充完整视觉审查（完整审查归 U12）。
+        metadata["vision_mode"] = "lite_no_critic"
     return metadata
 
 

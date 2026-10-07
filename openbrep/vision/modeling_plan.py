@@ -46,6 +46,9 @@ class ModelingPlan:
     # required + critic_checks 是 D4 规定的可编辑范围；generic 两者皆空 → 只读确认。
     required: list = field(default_factory=list)
     critic_checks: list = field(default_factory=list)
+    # U04-A：schema 严格校验问题清单（required_missing/enum_invalid/range_invalid/
+    # unfounded_match/unknown_schema…）——不阻塞交付，但必须可见。
+    validation_issues: list = field(default_factory=list)
 
     # ── hint 标记格式（P5c，测试钉死）──────────────────────────
     # low 置信顶层字段        → key: value（低置信）
@@ -138,6 +141,7 @@ class ModelingPlan:
             critic_degraded=bool(data.get("critic_degraded")),
             required=list(data.get("required") or []),
             critic_checks=list(data.get("critic_checks") or []),
+            validation_issues=list(data.get("validation_issues") or []),
         )
 
 

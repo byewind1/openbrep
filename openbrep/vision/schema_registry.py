@@ -77,6 +77,42 @@ def get_schema(name: str, schemas: dict[str, VisionSchema] | None = None) -> Vis
     return schemas[name]
 
 
+# U04-A：字段声明的合法类型集（校验在提取/确认/读回三条入口统一执行）
+FIELD_TYPES = frozenset({"string", "number", "integer", "enum", "array", "object", "boolean"})
+
+
+def _validate_field_declarations(filename: str, where: str, fields: dict, depth: int = 0) -> None:
+    """字段声明结构校验：{type, hint?, values?(enum), fields?(object 嵌套), min/max?(数值)}。"""
+    if depth > 4:
+        raise ValueError(f"Vision schema {filename}: {where} 嵌套超过 4 层")
+    for key, decl in fields.items():
+        where_key = f"{where}.{key}"
+        if not isinstance(decl, dict):
+            raise ValueError(f"Vision schema {filename}: {where_key} 必须是映射 ({{type, ...}})")
+        type_tag = decl.get("type")
+        if type_tag not in FIELD_TYPES:
+            raise ValueError(
+                f"Vision schema {filename}: {where_key}.type 必须是 {sorted(FIELD_TYPES)} 之一，"
+                f"实际 {type_tag!r}"
+            )
+        values = decl.get("values")
+        if values is not None:
+            if not isinstance(values, list) or not values:
+                raise ValueError(f"Vision schema {filename}: {where_key}.values 必须是非空数组")
+            if type_tag != "enum":
+                raise ValueError(f"Vision schema {filename}: {where_key}.values 仅 enum 类型可声明")
+        sub = decl.get("fields")
+        if sub is not None:
+            if type_tag != "object":
+                raise ValueError(f"Vision schema {filename}: {where_key}.fields 仅 object 类型可声明")
+            if not isinstance(sub, dict):
+                raise ValueError(f"Vision schema {filename}: {where_key}.fields 必须是映射")
+            _validate_field_declarations(filename, where_key, sub, depth + 1)
+        for bound in ("min", "max"):
+            if bound in decl and decl[bound] is not None and not isinstance(decl[bound], (int, float)):
+                raise ValueError(f"Vision schema {filename}: {where_key}.{bound} 必须是数字")
+
+
 def _load_schema_file(path: Path) -> VisionSchema:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -113,6 +149,7 @@ def _load_schema_file(path: Path) -> VisionSchema:
     fields = raw.get("fields")
     if not isinstance(fields, dict):
         raise ValueError(f"Vision schema {path.name}: 'fields' must be a mapping")
+    _validate_field_declarations(path.name, "fields", fields)
 
     required = raw.get("required") or []
     if not isinstance(required, list) or not all(isinstance(k, str) for k in required):

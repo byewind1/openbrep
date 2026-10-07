@@ -23,7 +23,7 @@ extract_prompt: |
   raw_description 位于顶层，不再放进 fields。
 fields:
   component_type: { type: string, hint: 构件中文名 }
-  shelf_count: { type: number, hint: 层板数量 }
+  shelf_count: { type: number, hint: 层板数量, min: 0 }
   shelf_layout: { type: string, hint: 层板布局描述 }
   frame_profile: { type: string, hint: 框架断面描述 }
   symmetry: { type: array, hint: 对称轴 }

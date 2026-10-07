@@ -63,6 +63,16 @@ class _FakeObjectPlan:
     def to_prompt(self) -> str:
         return "## 对象规划\n书架"
 
+    def to_user_summary(self) -> str:
+        return "书架"
+
+    def to_dict(self) -> dict:
+        return {"object_type": "bookshelf"}
+
+    @property
+    def validation_checks(self) -> list:
+        return []
+
 
 # ── 1. validate_image_payload ─────────────────────────────
 
@@ -395,7 +405,7 @@ class TestMultiImagePipeline(unittest.TestCase):
             generate_with_images=fake_generate_with_images,
             generate=MagicMock(return_value=LLMResponse(content="x", model="m", usage={}, finish_reason="stop")),
         )
-        with patch("openbrep.runtime.pipeline.analyze_reference_image") as mock_analyze:
+        with patch("openbrep.vision.harness.analyze_reference_image") as mock_analyze:
             request = TaskRequest(
                 user_input="按图修改",
                 intent="MODIFY",
@@ -446,47 +456,50 @@ class TestMultiImagePipeline(unittest.TestCase):
             with PILImage.open(io_bytes(raw)) as img:
                 self.assertEqual(img.size, (1568, 784))
 
-    def test_single_image_old_path_zero_regression(self):
-        """零回归门禁：image_b64 单图请求走旧路径——不 import PIL、不预处理、
-        不走多图方法；analyze 收到的是原始字节、prompt 一字不变。"""
+    def test_single_image_unified_path_characterization(self):
+        """U04-A：单图旧字段归一后的特征契约（取代旧"绕行零回归"契约）。
+
+        旧合同（image_b64 完全走旧路径、不预处理、直传生成）被派单 U04-A
+        明确废除——单图与多图必须同一入口。新契约：预处理 + harness generic
+        提取（原 analyze 函数与提示逐字节不变）+ 生成走统一 images 通道。
+        """
         pipeline = _make_pipeline()
         captured = {}
 
-        def fake_generate_with_image(text_prompt, image_b64, image_mime="image/png", system_prompt=None, **kwargs):
-            captured["generate_with_image"] = (text_prompt, image_b64, image_mime, system_prompt)
+        def fake_generate_with_images(text_prompt, images, system_prompt=None, **kwargs):
+            captured["images"] = images
+            captured["prompt"] = text_prompt
             return LLMResponse(content="[FILE: scripts/3d.gdl]\nBLOCK 1,1,1\nEND", model="mock", usage={}, finish_reason="stop")
 
         mock_llm = MagicMock()
         mock_llm.generate.return_value = LLMResponse(content="x", model="m", usage={}, finish_reason="stop")
-        mock_llm.generate_with_image.side_effect = fake_generate_with_image
+        mock_llm.generate_with_images.side_effect = fake_generate_with_images
         pipeline._make_llm = lambda req: mock_llm
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image", return_value=_FAKE_VS) as mock_analyze, \
-             patch("openbrep.runtime.pipeline.visual_structure_to_gdl_hint", return_value="hint"), \
-             patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()), \
-             patch("openbrep.vision.multi_image.resolve_and_preprocess", side_effect=AssertionError("旧路径不得进入多图通道")) as mock_resolve:
+        with patch("openbrep.vision.harness.analyze_reference_image", return_value=_FAKE_VS) as mock_analyze, \
+             patch("openbrep.vision.modeling_plan.visual_structure_to_gdl_hint", return_value="hint"), \
+             patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()):
             request = TaskRequest(
                 user_input="做一个斗",
                 intent="CREATE",
-                image_b64="fake_base64",
+                image_b64="Zmlyc3Q=",  # "first" 的 base64（可解码，验证预处理链）
                 image_mime="image/png",
             )
-            pipeline.execute(request)
+            result = pipeline.execute(request)
 
-        # 不经过多图预处理
-        mock_resolve.assert_not_called()
-        # 走旧 generate_with_image（不是新方法）
-        mock_llm.generate_with_image.assert_called_once()
-        mock_llm.generate_with_images.assert_not_called()
-        # analyze 收到原始字节（无预处理）、prompt 不变
+        # 归一：单图经过与多图相同的预处理/分型/提取链路
+        mock_analyze.assert_called_once()
         analyze_args = mock_analyze.call_args.args
-        self.assertEqual(analyze_args[0], "fake_base64")
-        self.assertEqual(analyze_args[1], "image/png")
-        self.assertEqual(analyze_args[2], "做一个斗")
-        # 生成调用收到的是原始字节
-        _, gen_b64, gen_mime, _ = captured["generate_with_image"]
-        self.assertEqual(gen_b64, "fake_base64")
-        self.assertEqual(gen_mime, "image/png")
+        self.assertEqual(analyze_args[2], "做一个斗")  # prompt 语义不变
+        metadata = result.metadata or {}
+        entries = metadata.get("vision_extractions") or []
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].get("schema_name"), "generic")
+        # 生成走统一 images 通道（不再 image_b64 直传）
+        mock_llm.generate_with_images.assert_called_once()
+        gen_images = captured["images"]
+        self.assertEqual(len(gen_images), 1)
+        self.assertEqual(gen_images[0].get("mime"), "image/png")
 
     def test_multi_image_module_imports_pil_lazily(self):
         """openbrep.vision.multi_image 模块级不 import PIL（仅预处理函数内延迟 import）。"""
