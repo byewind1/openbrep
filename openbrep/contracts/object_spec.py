@@ -39,39 +39,30 @@ from openbrep.parameter_units import UnitValueError, normalize_typed_value
 
 SCHEMA_VERSION = 1
 
-# ── 框架注册执行器（U03-B 扩展；spec 只允许引用这里出现过的 check_id）────
+# ── 框架注册执行器（U03-A 平面入口；U03-B 起唯一权威在 contracts.bindings）──
 
-BUILTIN_CHECK_EXECUTORS: frozenset[str] = frozenset({
-    "compile",            # 编译门（compiler）
-    "static",             # 静态检查（static_checker）
-    "lint",               # GDL linter
-    "semantic",           # 语义验证（semantic_verifier）
-    "plan_check",         # 计划校验（verification.run_plan_validation_checks）
-    "project_contract",   # 项目合同（contracts/*）
-    "effect_contract",    # 效果契约（runtime/effect_contract）
-    "reserved_param_semantic_bug",  # 保留名语义（naming_alignment）
-})
+from openbrep.contracts.bindings import (  # noqa: E402  （模块底部适配，避免循环）
+    BUILTIN_CHECK_EXECUTORS as _BUILTIN_EXECUTOR_IDS,
+    known_check_executor as _bindings_known_executor,
+    register_check_executor as _bindings_register,
+    reset_executor_specs_for_tests as _bindings_reset,
+)
 
-_registered_executors: set[str] = set(BUILTIN_CHECK_EXECUTORS)
+BUILTIN_CHECK_EXECUTORS: frozenset[str] = frozenset(_BUILTIN_EXECUTOR_IDS)
 
 
 def register_check_executor(check_id: str) -> bool:
-    """注册框架检查执行器（U03-B 扩展入口）；重复注册幂等返回 False。"""
-    check_id = str(check_id or "").strip()
-    if not check_id or check_id in _registered_executors:
-        return False
-    _registered_executors.add(check_id)
-    return True
+    """注册框架检查执行器（U03-A 签名；U03-B 起委托 bindings 规格注册表）。"""
+    return _bindings_register(check_id)
 
 
 def known_check_executor(check_id: str) -> bool:
-    return str(check_id or "").strip() in _registered_executors
+    return _bindings_known_executor(check_id)
 
 
 def reset_check_executors_for_tests() -> None:
     """测试辅助：恢复到内置集（测试注册的执行器不外泄）。"""
-    _registered_executors.clear()
-    _registered_executors.update(BUILTIN_CHECK_EXECUTORS)
+    _bindings_reset()
 
 
 # ── 受限关系语法 ─────────────────────────────────────────────
