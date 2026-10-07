@@ -144,6 +144,13 @@ def capture_snapshot(project: HSFProject | None, project_epoch: int, draft_scrip
     saved = None
     if project is not None and project.root.is_dir():
         files = {name: (project.root / name).read_bytes() for name in collect_managed_source_files(project.root)}
+        # Adopted ObjectSpec is project context rather than editable HSF source,
+        # but changing it still invalidates a snapshot/Plan binding.
+        from openbrep.contracts.project_store import CONTRACT_RELATIVE_PATH
+
+        contract_path = project.root / CONTRACT_RELATIVE_PATH
+        if contract_path.is_file():
+            files[CONTRACT_RELATIVE_PATH] = contract_path.read_bytes()
         saved = compute_source_fingerprint(project.root)
         # Disk XML may have been externally edited without refreshing session.
         disk = HSFProject.load_from_disk(str(project.root))

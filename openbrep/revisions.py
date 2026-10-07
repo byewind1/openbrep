@@ -74,6 +74,19 @@ def create_revision(
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
 
+    # U05-A: an adopted ObjectSpec is project state, but not editable HSF
+    # source. Keep it beside each revision with its own manifest field so old
+    # revisions remain readable and source fingerprints retain their meaning.
+    from openbrep.contracts.project_store import CONTRACT_RELATIVE_PATH
+
+    contract_path = root / CONTRACT_RELATIVE_PATH
+    contract_revision_path = None
+    if contract_path.is_file():
+        contract_revision_path = "contract/object_spec.json"
+        target = tmp_dir / contract_revision_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(contract_path, target)
+
     extra_metadata = metadata or {}
     compile_metadata = extra_metadata.get("compile") or {}
     manifest = {
@@ -86,6 +99,7 @@ def create_revision(
         "message": message,
         "source_format": "hsf-project",
         "files": files,
+        "object_spec_file": contract_revision_path,
         "trigger": trigger,
         "intent": intent,
         "user_instruction": user_instruction,
@@ -195,14 +209,34 @@ def restore_revision(
     if not files:
         raise ValueError(f"Revision {revision_id} has no source files")
 
-    _remove_managed_source_files(root)
-    for rel_path in files:
-        src = source_revision / rel_path
-        if not src.exists():
-            raise FileNotFoundError(f"Revision file not found: {src}")
-        dst = root / rel_path
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+    # Restore HSF source and the matching adopted spec through the same
+    # recoverable journal. A legacy revision intentionally clears a newer spec.
+    from openbrep.contracts.project_store import commit_project_state
+
+    spec_relpath = manifest.get("object_spec_file")
+    object_spec = None
+    if spec_relpath:
+        if spec_relpath != "contract/object_spec.json":
+            raise ValueError(f"Unsafe revision contract path: {spec_relpath!r}")
+        spec_path = source_revision / spec_relpath
+        if not spec_path.is_file():
+            raise FileNotFoundError(f"Revision contract file not found: {spec_path}")
+        contract_payload = json.loads(spec_path.read_text(encoding="utf-8"))
+        object_spec = contract_payload.get("object_spec")
+
+    def write_revision_source() -> None:
+        _remove_managed_source_files(root)
+        for rel_path in files:
+            src = source_revision / rel_path
+            if not src.exists():
+                raise FileNotFoundError(f"Revision file not found: {src}")
+            dst = root / rel_path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+    result = commit_project_state(root, object_spec, source_writer=write_revision_source)
+    if not result.ok:
+        raise OSError(f"Source/spec revision restore failed: {result.error}")
 
     restore_message = message or f"Restore {revision_id}"
     return create_revision(
