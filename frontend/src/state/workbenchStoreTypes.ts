@@ -90,6 +90,8 @@ import type {
 
 export interface WorkbenchApi {
   conversationTurn: typeof import('../api/client').conversationTurn
+  requestVisualReview: typeof import('../api/client').requestVisualReview
+  fetchSavedVisualReviews: typeof import('../api/client').fetchSavedVisualReviews
   fetchTurnEvents: typeof import('../api/client').fetchTurnEvents
   listTurnEvents: typeof import('../api/client').listTurnEvents
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
@@ -115,6 +117,7 @@ export interface WorkbenchApi {
   runHostVerification: (request: HostVerificationRequest) => Promise<HostVerificationRunResult>
   fetchEffectiveParameters: (parameters?: Record<string, unknown>) => Promise<EffectiveParametersResult>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
+  adoptImportContractCandidate?: (expectedSourceFingerprint: string, candidateHash: string) => Promise<WorkbenchSnapshot>
   newProject: () => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   importGsmFile: (path?: string) => Promise<WorkbenchSnapshot>
@@ -278,6 +281,8 @@ export interface WorkbenchState {
   parameterIssues: string[]
   draftParameters: Record<string, unknown>
   sourceFingerprint: string | null
+  objectContract: import('../api/types').WorkbenchSnapshot['object_contract'] | null
+  importContractCandidate: import('../api/types').WorkbenchSnapshot['import_contract_candidate'] | null
   effectiveParameters: Record<string, EffectiveParameterObservation>
   effectiveParameterDiagnostics: EffectiveParameterDiagnostic[]
   effectiveParametersBusy: boolean
@@ -388,6 +393,7 @@ export interface WorkbenchState {
   newProject: () => Promise<void>
   importGdlFile: (path?: string) => Promise<void>
   importGsmFile: (path?: string) => Promise<void>
+  adoptImportContractCandidate: () => Promise<void>
   importBlenderScript: (path?: string) => Promise<void>
   exportHsfProject: (parentDir?: string, name?: string, scriptOverrides?: Record<string, string>) => Promise<boolean>
   saveProject: () => Promise<boolean>
@@ -434,9 +440,10 @@ export interface WorkbenchState {
   deleteLlmProvider: (name: string) => Promise<LlmProviderWriteResult>
   saveLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettings>
   actOnAdvisorProposal: (id: string, action: 'select' | 'execute', approveCreate?: () => Promise<boolean>) => Promise<void>
-  sendChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan', approveCreate?: () => Promise<boolean>) => Promise<void>
+  sendChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan', approveCreate?: () => Promise<boolean>, confirmBeforeExecute?: boolean) => Promise<void>
   stopChat: () => void
   confirmPendingPlan: (approve: boolean) => Promise<void>
+  revisePendingPlan: (instruction: string) => Promise<void>
   /** P5d-2 提取确认门：approve=true 用编辑后的 extractions 重发创建；false 取消清态 */
   confirmPendingExtraction: (extractions: VisionExtraction[], approve: boolean) => Promise<void>
   confirmPendingSkillProposal: (approve: boolean) => Promise<void>
@@ -462,6 +469,7 @@ export interface WorkbenchState {
   /** 面板填入草稿后消费 seed，防止旧结果再被填入 */
   consumeAssistantDraftSeed: () => void
   adoptAssistantMessageCode: (index: number) => Promise<void>
+  reviewVisualTurn: (turnId: string, force?: boolean) => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
   createProjectFromPrompt: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
   generateAssistantChanges: (message: string, images?: AssistantImageAttachment[]) => Promise<void>

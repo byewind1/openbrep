@@ -40,6 +40,21 @@ def test_valid_finding_reference_retains_location():
     assert result.facts[0]['evidence'][0]['file'] == 'scripts/3d.gdl'
 
 
+def test_modify_plan_keeps_delta_and_preserved_constraints_explicit():
+    report = InspectionReport('i1', {}, 0, ())
+    result = parse_advisor_output(answer(plan={
+        'intent_summary': '只增加背板',
+        'user_visible_changes': ['增加背板'],
+        'change_delta': ['在柜体背面新增背板'],
+        'preserved_constraints': ['保留现有门扇数量和铰链位置'],
+        'affected_files': ['scripts/3d.gdl'],
+        'risk': '增加一个板件',
+    }), report, mode='plan')
+
+    assert result.plan['change_delta'] == ['在柜体背面新增背板']
+    assert result.plan['preserved_constraints'] == ['保留现有门扇数量和铰链位置']
+
+
 def test_no_project_advisor_does_not_create_output(tmp_path):
     snapshot = capture_snapshot(None, 0)
     report = inspect_snapshot(snapshot)
@@ -75,7 +90,7 @@ def test_advisor_extracts_relevant_subroutine_when_script_exceeds_budget(tmp_pat
     snapshot = capture_snapshot(project, 1)
     report = inspect_snapshot(snapshot, requested=False)
     llm = MockLLM(responses=[answer()])
-    result = advise(snapshot, '把PatternHuiwen改成连续方折', llm=llm, report=report)
+    advise(snapshot, '把PatternHuiwen改成连续方折', llm=llm, report=report)
     sent = json.loads(llm.call_history[0][1]['content'])
     three_d = sent['sections'].get('scripts/3d.gdl', '')
     assert 'PatternHuiwen' in three_d

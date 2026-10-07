@@ -8,16 +8,13 @@ synthetic 最小对象合同（只读规划报告与合同测试同一规格）�
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from openbrep.contracts.object_spec import (
-    ContractError,
     ExecutionPlan,
-    Observation,
     ObjectSpec,
-    execution_plan_from_gdl_object_plan as adapt_gdl_object_plan,
+    Observation,
     known_check_executor,
     load_synthetic_minimal_contract,
     observation_from_modeling_plan,
@@ -26,6 +23,9 @@ from openbrep.contracts.object_spec import (
     parse_observation,
     register_check_executor,
     reset_check_executors_for_tests,
+)
+from openbrep.contracts.object_spec import (
+    execution_plan_from_gdl_object_plan as adapt_gdl_object_plan,
 )
 
 
@@ -164,6 +164,23 @@ def test_enum_value_rejected_and_enum_requires_declaration():
     assert any(e.code == "MISSING_FIELD" and "enum_values" in e.field_path for e in result.errors)
 
 
+def test_gdl_index_parameter_types_are_validated_as_integer_indices():
+    data = _spec_data(relations=[], params=[
+        {"param_id": "p.material", "gdl_name": "mat_body", "type": "Material", "default_value": 1},
+        {"param_id": "p.pen", "gdl_name": "pen", "type": "PenColor", "default_value": 2},
+    ])
+
+    result = parse_object_spec(data)
+
+    assert result.ok
+    invalid = _spec_data(relations=[], params=[
+        {"param_id": "p.material", "gdl_name": "mat_body", "type": "Material", "default_value": 1.5},
+    ])
+    invalid_result = parse_object_spec(invalid)
+    assert not invalid_result.ok
+    assert any(error.code == "INVALID_VALUE" and error.field_path == "params[0].default_value" for error in invalid_result.errors)
+
+
 def test_nan_and_non_integer_rejected():
     result = parse_object_spec(_spec_data(params=[
         {"param_id": "p.width", "gdl_name": "A", "type": "Length", "unit": "m",
@@ -244,8 +261,10 @@ def test_observation_from_modeling_plan_adapter():
     assert isinstance(obs, Observation)
     assert obs.source == "vision_extraction"
     statuses = {i.field_path: i.status for i in obs.items}
-    assert statuses["opening_shape"] == "observed"
-    assert statuses["grid_topology"] == "observed"
+    assert statuses["opening.shape"] == "observed"
+    assert statuses["pattern.rows"] == "observed"
+    assert statuses["pattern.cols"] == "unknown"
+    assert next(i for i in obs.items if i.field_path == "pattern.rows").confidence == "low"
     assert statuses["raw_description"] == "inferred"
     assert any(r.startswith("extraction:") for r in obs.source_refs)
     parsed = parse_observation(obs.to_dict())
@@ -285,6 +304,27 @@ def test_execution_plan_from_gdl_object_plan_adapter():
     assert all(r.check_id is None and r.status == "unknown" for r in plan.requirements)
     assert len(plan.requirements) == 2
     assert plan.plan_hash
+
+
+def test_unexecutable_textual_check_roundtrips_as_unknown():
+    parsed = parse_object_spec({
+        "schema_version": 1,
+        "spec_id": "spec-text-only-check",
+        "object_type": "cabinet",
+        "params": [],
+        "requirements": [{
+            "requirement_id": "req-door-count",
+            "text": "双门分缝可见",
+            "kind": "check",
+            "check_id": None,
+        }],
+        "relations": [],
+    })
+
+    assert parsed.ok
+    requirement = parsed.value.requirements[0]
+    assert requirement.status == "unknown"
+    assert parse_object_spec(parsed.value.to_dict()).value.requirements[0].status == "unknown"
 
 
 # ── synthetic 最小对象合同（同一规格两处消费）────────────────

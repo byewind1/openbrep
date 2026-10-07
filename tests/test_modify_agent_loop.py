@@ -13,19 +13,18 @@
 from __future__ import annotations
 
 import unittest
-
-import pytest
 from pathlib import Path
 
 from openbrep.compiler import MockHSFCompiler
 from openbrep.config import GDLAgentConfig
+from openbrep.contracts.stair import StairContractCheck, StairContractReport
 from openbrep.core import GDLAgent
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import MockLLM
 from openbrep.runtime.modify_agent_tools import ModifyToolRegistry, normalize_script_path
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
+from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
 from openbrep.source_fingerprint import compute_source_fingerprint
-
 
 # ── 公共构造 ──────────────────────────────────────────────
 
@@ -121,6 +120,13 @@ class TestAgentLoopFlow(unittest.TestCase):
         self.assertIn("工具调用 2/10 次", result.plain_text)
         self.assertIn("LLM 调用 3 次", result.plain_text)
         self.assertIn("✅ 编译通过", result.plain_text)
+        self.assertEqual(result.metadata["execution"]["run_control"]["tool_calls"], 2)
+        self.assertEqual(result.metadata["execution"]["run_control"]["tool_budget"], 10)
+        self.assertEqual(result.metadata["execution"]["run_control"]["terminal_reason"], "completed")
+        impact = result.metadata["impact_report"]
+        self.assertIn("scripts/2d.gdl", impact["affected_scripts"])
+        self.assertIn("static", impact["checks"])
+        self.assertFalse(impact["coverage"]["complete"])
 
     def setUp(self):
         import tempfile
@@ -490,17 +496,6 @@ if __name__ == "__main__":
 
 # ── S3：完成门禁 ──────────────────────────────────────────
 
-from unittest.mock import patch  # noqa: E402
-
-from openbrep.semantic_verifier import (  # noqa: E402
-    SemanticIssue,
-    SemanticVerificationResult,
-)
-from openbrep.contracts.stair import (  # noqa: E402
-    StairContractCheck,
-    StairContractReport,
-)
-
 
 def _blocking_semantic():
     return SemanticVerificationResult(
@@ -852,7 +847,7 @@ class TestEffectContractGate(unittest.TestCase):
     def setUp(self):
         import tempfile
         self._td = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._td.name)  # noqa: Path imported at module top
+        self.tmp = Path(self._td.name)
 
     def tearDown(self):
         self._td.cleanup()
@@ -927,19 +922,10 @@ class TestEffectContractGate(unittest.TestCase):
         self.assertNotIn("effect", result.metadata["acceptance"])
 
 
-# ── U00-A 基线反例（xfail 钉住，修复卡转绿后移除标记）──────────
-# 派单：Obsidian《OpenBrep-GDL统一重构编码派单-2026-10-07/U00-A》。
-# xfail(strict=True) 约定同 tests/test_task_feedback_regression.py。
-
-
-@pytest.mark.xfail(strict=True, reason="U06-A RunControl：取消请求到达后不得再执行写工具（工具前检查）")
 def test_write_tool_not_executed_after_cancel_during_llm_call(tmp_path):
     """U00-A 反例 5：取消请求在 LLM 调用期间到达，已决策的写工具仍执行落盘。
 
-    普通 loop 的 ModifyToolRegistry.write_guard=None，取消检查只在主循环
-    迭代边界（modify_agent_loop.py 主循环顶部），工具派发后到提交之间没有
-    授权检查——SSE 断连置 cancel_event 时，这一轮工具写入照常落盘。修复
-    口径（U06-A RunControl）：工具派发/提交前有取消检查；实施转绿后移除标记。
+    工具授权在模型返回后与源码提交点各检查一次；取消已置位时不改源文件。
     """
     from openbrep.runtime.modify_agent_loop import run_modify_agent_loop
 
@@ -965,7 +951,9 @@ def test_write_tool_not_executed_after_cancel_during_llm_call(tmp_path):
         project, tmp_path,
         should_cancel=lambda: flag["cancelled"],
     )
-    run_modify_agent_loop(_make_pipeline(mock_llm, tmp_path), request)
+    result = run_modify_agent_loop(_make_pipeline(mock_llm, tmp_path), request)
     assert project.get_script(ScriptType.SCRIPT_3D) == original, (
         "取消请求已置位后写工具仍执行：源码被变更"
     )
+    assert result.success is False
+    assert result.metadata["execution"]["cancelled"] is True

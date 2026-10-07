@@ -35,13 +35,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from openbrep.parameter_units import UnitValueError, normalize_typed_value
-
 SCHEMA_VERSION = 1
 
 # ── 框架注册执行器（U03-A 平面入口；U03-B 起唯一权威在 contracts.bindings）──
 
-from openbrep.contracts.bindings import (  # noqa: E402  （模块底部适配，避免循环）
+from openbrep.contracts.bindings import (  # noqa: E402, I001  （模块底部适配，避免循环）
     BUILTIN_CHECK_EXECUTORS as _BUILTIN_EXECUTOR_IDS,
     known_check_executor as _bindings_known_executor,
     register_check_executor as _bindings_register,
@@ -249,6 +247,28 @@ class PlanStep:
         }
 
 
+@dataclass
+class PlanRequirementMapping:
+    """Trace how one requirement is covered by parts, parameters, scripts and scenarios."""
+
+    requirement_id: str
+    part_refs: list[str] = field(default_factory=list)
+    parameter_refs: list[str] = field(default_factory=list)
+    script_refs: list[str] = field(default_factory=list)
+    scenario_refs: list[str] = field(default_factory=list)
+    source_refs: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requirement_id": self.requirement_id,
+            "part_refs": list(self.part_refs),
+            "parameter_refs": list(self.parameter_refs),
+            "script_refs": list(self.script_refs),
+            "scenario_refs": list(self.scenario_refs),
+            "source_refs": list(self.source_refs),
+        }
+
+
 PLAN_STEP_KINDS = frozenset({"create_project", "modify_script", "set_param", "verify"})
 
 
@@ -259,6 +279,7 @@ class ExecutionPlan:
     observation_ref: str             # Observation.observation_id
     steps: list[PlanStep] = field(default_factory=list)
     requirements: list[Requirement] = field(default_factory=list)   # 冻结自 spec
+    requirement_mappings: list[PlanRequirementMapping] = field(default_factory=list)
     plan_hash: str = ""              # canonical JSON（不含 plan_hash 字段）的 sha256
     schema_version: int = SCHEMA_VERSION
 
@@ -271,6 +292,8 @@ class ExecutionPlan:
             "steps": [s.to_dict() for s in self.steps],
             "requirements": [r.to_dict() for r in self.requirements],
         }
+        if self.requirement_mappings:
+            data["requirement_mappings"] = [m.to_dict() for m in self.requirement_mappings]
         if with_hash:
             data["plan_hash"] = self.plan_hash or execution_plan_hash_dict(data)
         return data
@@ -291,8 +314,10 @@ def canonical_json(data: dict[str, Any]) -> str:
 
 _PARAM_TYPES = frozenset({
     "Length", "Angle", "RealNum", "Integer", "Boolean", "String", "enum",
+    "PenColor", "Material", "FillPattern", "LineType",
 })
 _CANONICAL_UNITS = {"Length": "m", "Angle": "deg"}
+_INTEGER_INDEX_TYPES = frozenset({"Integer", "PenColor", "Material", "FillPattern", "LineType"})
 
 
 def _validate_typed_spec_value(
@@ -321,7 +346,7 @@ def _validate_typed_spec_value(
         return _err("INVALID_VALUE", field_path, f"{type_tag} 值必须是数字")
     if not math.isfinite(float(value)):
         return _err("NOT_FINITE", field_path, "值不能是 NaN 或无穷")
-    if type_tag == "Integer" and float(value) != int(value):
+    if type_tag in _INTEGER_INDEX_TYPES and float(value) != int(value):
         return _err("INVALID_VALUE", field_path, "Integer 值必须是整数")
     return None
 
@@ -463,6 +488,11 @@ def parse_object_spec(data: dict[str, Any]) -> ParseResult:
         kind = str(raw.get("kind") or "check")
         if kind not in ("check", "constraint", "assumption"):
             errors.append(_err("INVALID_VALUE", f"{path}.kind", f"未知 kind {kind!r}"))
+        requirement_status = str(raw.get("status") or (
+            "unknown" if kind == "check" and not raw.get("check_id") else "defined"
+        ))
+        if requirement_status not in {"defined", "unknown"}:
+            errors.append(_err("INVALID_VALUE", f"{path}.status", "status 必须是 defined/unknown"))
         check_id = raw.get("check_id")
         if check_id is not None:
             check_id = str(check_id).strip()
@@ -474,7 +504,7 @@ def parse_object_spec(data: dict[str, Any]) -> ParseResult:
         requirements.append(Requirement(
             requirement_id=requirement_id, text=text, kind=kind,
             check_id=check_id or None, params=dict(raw.get("params") or {}),
-            status="defined",
+            status=requirement_status,
         ))
 
     relations: list[Relation] = []
@@ -575,13 +605,51 @@ def parse_execution_plan(data: dict[str, Any]) -> ParseResult:
                 "UNKNOWN_EXECUTOR", f"{path}.check_id",
                 f"check_id {check_id!r} 未在框架注册",
             ))
+        requirement_kind = str(raw.get("kind") or "check") if isinstance(raw, dict) else "check"
+        requirement_status = str(raw.get("status") or (
+            "unknown" if requirement_kind == "check" and not check_id else "defined"
+        )) if isinstance(raw, dict) else "unknown"
         requirements.append(Requirement(
             requirement_id=requirement_id,
             text=str(raw.get("text") or "") if isinstance(raw, dict) else "",
+            kind=requirement_kind,
             check_id=str(check_id).strip() if check_id else None,
             params=dict(raw.get("params") or {}) if isinstance(raw, dict) else {},
-            status=str(raw.get("status") or "defined") if isinstance(raw, dict) else "defined",
+            status=requirement_status,
         ))
+
+    requirement_ids = {item.requirement_id for item in requirements}
+    mappings: list[PlanRequirementMapping] = []
+    mapping_ids: set[str] = set()
+    for idx, raw in enumerate(data.get("requirement_mappings") or []):
+        path = f"requirement_mappings[{idx}]"
+        if not isinstance(raw, dict):
+            errors.append(_err("INVALID_VALUE", path, "必须是对象"))
+            continue
+        allowed_fields = {
+            "requirement_id", "part_refs", "parameter_refs", "script_refs",
+            "scenario_refs", "source_refs",
+        }
+        for unknown in sorted(set(raw) - allowed_fields):
+            errors.append(_err("INVALID_VALUE", f"{path}.{unknown}", "未知映射字段"))
+        req_id = str(raw.get("requirement_id") or "").strip()
+        if not req_id or req_id not in requirement_ids:
+            errors.append(_err("INVALID_VALUE", f"{path}.requirement_id", "必须引用本计划中已声明的 requirement"))
+        if req_id in mapping_ids:
+            errors.append(_err("DUPLICATE_ID", f"{path}.requirement_id", f"重复映射 {req_id!r}"))
+        mapping_ids.add(req_id)
+        refs: dict[str, list[str]] = {}
+        for field_name in ("part_refs", "parameter_refs", "script_refs", "scenario_refs", "source_refs"):
+            raw_refs = raw.get(field_name) or []
+            if not isinstance(raw_refs, list) or any(not isinstance(value, str) or not value.strip() for value in raw_refs):
+                errors.append(_err("INVALID_VALUE", f"{path}.{field_name}", "必须是非空字符串数组"))
+                refs[field_name] = []
+            else:
+                refs[field_name] = list(dict.fromkeys(value.strip() for value in raw_refs))
+        for script_ref in refs["script_refs"]:
+            if not script_ref.startswith("scripts/") or not script_ref.endswith(".gdl") or ".." in script_ref.split("/"):
+                errors.append(_err("INVALID_VALUE", f"{path}.script_refs", f"不是受支持的 HSF 脚本路径：{script_ref!r}"))
+        mappings.append(PlanRequirementMapping(requirement_id=req_id, **refs))
 
     if errors:
         return ParseResult(errors=errors)
@@ -589,6 +657,7 @@ def parse_execution_plan(data: dict[str, Any]) -> ParseResult:
         plan_id=plan_id, spec_ref=spec_ref,
         observation_ref=str(data.get("observation_ref") or ""),
         steps=steps, requirements=requirements,
+        requirement_mappings=mappings,
         plan_hash=str(data.get("plan_hash") or ""),
     )
     provided_hash = str(data.get("plan_hash") or "")
@@ -616,18 +685,54 @@ def observation_from_modeling_plan(plan, *, source_refs: Optional[list[str]] = N
     data = plan_to_dict(plan)
     items: list[ObservationItem] = []
     degraded = bool(data.get("degraded")) or bool(data.get("critic_degraded"))
-    for key, value in (data.get("fields") or {}).items():
-        confidence = (data.get("confidence") or {}).get(key, "unknown")
-        if degraded or value is None:
+    fields = data.get("fields") or {}
+    domain_declarations: dict = {}
+    domain_aliases: dict[str, tuple[str, ...]] = {}
+    try:
+        from openbrep.domain_skills import DomainSkillRegistry
+
+        loaded = DomainSkillRegistry.builtin().load(str(data.get("schema_name") or ""))
+        if loaded.ok and loaded.skill is not None:
+            domain_declarations = loaded.skill.manifest["observation"]["fields"]
+            if loaded.skill.skill_id == "lattice_window":
+                from openbrep.vision.domain_skill_schema import (
+                    domain_observation_aliases,
+                    normalize_domain_observation_fields,
+                )
+
+                domain_aliases = domain_observation_aliases(loaded.skill.skill_id)
+                fields = normalize_domain_observation_fields(loaded.skill.skill_id, fields)
+    except Exception:
+        domain_declarations = {}
+    observed_paths = list(dict.fromkeys([*domain_declarations, *fields]))
+    for key in observed_paths:
+        value = fields.get(key)
+        declaration = domain_declarations.get(key, {})
+        confidence_map = data.get("confidence") or {}
+        confidence = confidence_map.get(key, "unknown")
+        if confidence == "unknown":
+            confidence = next((confidence_map.get(alias) for alias in domain_aliases.get(key, ()) if alias in confidence_map), "unknown")
+        evidence_map = data.get("evidence") or {}
+        evidence = evidence_map.get(key)
+        if not evidence:
+            evidence = next((evidence_map.get(alias) for alias in domain_aliases.get(key, ()) if alias in evidence_map), None)
+        if key not in fields or degraded or value is None:
             items.append(ObservationItem(
                 field_path=key, status="unknown", value=None,
                 confidence="unknown" if degraded else confidence,
-                note="提取降级" if degraded else "提取值为 null",
+                unit=declaration.get("unit"),
+                note=(
+                    "提取降级" if degraded else
+                    "领域Skill要求澄清" if declaration.get("unknown_policy") == "ask" else
+                    "遮挡或图像证据不足" if key not in fields else "提取值为 null"
+                ),
             ))
         else:
             items.append(ObservationItem(
                 field_path=key, status="observed", value=value,
+                unit=declaration.get("unit"),
                 confidence=confidence,
+                note=str(evidence or ""),
             ))
     if data.get("raw_description"):
         items.append(ObservationItem(

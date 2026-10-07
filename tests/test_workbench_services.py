@@ -597,6 +597,34 @@ def test_project_script_service_reads_memory_script_content(tmp_path):
     assert response["content"] == "BLOCK A, B, ZZYZX\n"
 
 
+def test_project_script_service_saves_transactionally_and_stales_contract(tmp_path):
+    from openbrep.contracts.project_store import commit_project_state, load_project_contract
+
+    project = HSFProject.create_new("ScriptShelf", str(tmp_path))
+    project.save_to_disk()
+    spec = {
+        "schema_version": 1,
+        "spec_id": "shelf-v1",
+        "object_type": "shelf",
+        "params": [],
+        "requirements": [],
+        "relations": [],
+    }
+    assert commit_project_state(project, spec).ok
+    session = SimpleNamespace(
+        project=project,
+        source_path=project.root,
+        refresh_same_project=lambda refreshed: setattr(session, "project", refreshed),
+    )
+    service = WorkbenchProjectScriptService(session)
+
+    response = service.save_project_script("3d.gdl", {"content": "BLOCK 3, 3, 3\n"})
+
+    assert response["ok"] is True
+    assert session.project.get_script(ScriptType.SCRIPT_3D) == "BLOCK 3, 3, 3\n"
+    assert load_project_contract(project.root).status == "stale"
+
+
 def test_project_parameter_service_applies_values_and_snapshots(tmp_path):
     project = HSFProject.create_new("ParamShelf", str(tmp_path))
     project.save_to_disk()

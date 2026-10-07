@@ -23,45 +23,75 @@
       "overall.width": {
         "type": "length",
         "unit": "m",
+        "description": "柜体外包络宽度；除非图纸标注或有可信尺度参照，不要给精确测量值",
         "unknown_policy": "preserve"
       },
       "overall.depth": {
         "type": "length",
         "unit": "m",
+        "description": "柜体外包络深度；缺侧视/比例参照则未知",
         "unknown_policy": "preserve"
       },
       "overall.height": {
         "type": "length",
         "unit": "m",
+        "description": "柜体外包络高度；缺标注/可信尺度参照则未知",
         "unknown_policy": "preserve"
       },
       "parts.doors.count": {
         "type": "count",
+        "description": "可见门扇数量；双门不可合并成一扇",
         "unknown_policy": "preserve"
       },
       "parts.shelves.count": {
         "type": "count",
+        "description": "能够从图中辨认的层板数量；遮挡部分不推断",
         "unknown_policy": "preserve"
       },
       "parts.drawers.count": {
         "type": "count",
+        "description": "可见抽屉数量；区分门扇与抽屉面板",
         "unknown_policy": "preserve"
       },
       "materials.body": {
         "type": "material",
+        "description": "柜体主体可见材质/表面类别；图像无法区分时未知",
         "unknown_policy": "ask"
       },
       "materials.front": {
         "type": "material",
+        "description": "门板或抽屉面可见材质/表面类别；图像无法区分时未知",
         "unknown_policy": "ask"
       },
       "state.visibility": {
         "type": "state",
+        "description": "图中呈现的可见性/视角状态，不据此推断隐藏结构",
         "unknown_policy": "preserve"
       },
       "occlusion.hidden_structure": {
         "type": "state",
+        "description": "记录内部构造是否被遮挡；遮挡的层板/五金保持未知",
         "unknown_policy": "preserve"
+      },
+      "parts.doors.state": {
+        "type": "state",
+        "description": "可见门扇处于打开、关闭或其他状态；无证据则未知",
+        "unknown_policy": "preserve"
+      },
+      "parts.shelves.layout": {
+        "type": "string",
+        "description": "可见层板的相对布局；不补全遮挡处",
+        "unknown_policy": "preserve"
+      },
+      "parts.drawers.layout": {
+        "type": "string",
+        "description": "可见抽屉的相对布局与分区",
+        "unknown_policy": "preserve"
+      },
+      "materials.hardware": {
+        "type": "material",
+        "description": "把手、拉手等五金的可见材质/饰面；不能判定时未知",
+        "unknown_policy": "ask"
       }
     }
   },
@@ -82,7 +112,7 @@
       "kind": "synthetic",
       "license": "CC0-1.0",
       "split": "contract",
-      "sha256": "d05fafbf6ed11214c67ba7cf3a718e76780e22a9ab876f4b0823cb8f9809f06f",
+      "sha256": "fca2c9caf3eb8476d88fbe8b3159e88f7ada921c5989882da4317ffc2b912970",
       "expected": {
         "unknown_fields_remain_unknown": true,
         "dimension_unit": "m"

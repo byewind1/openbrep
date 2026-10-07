@@ -10,6 +10,7 @@ import {
   fetchCodexStatus,
   refreshCodexModels,
   saveCodexEntry,
+  savePlanApprovalDefault,
 } from '../../api/client'
 import type {
   CodexDeviceCodeResult,
@@ -39,9 +40,10 @@ interface AiSettingsPanelProps {
   onSaveApiKey?: (model: string, apiKey: string) => Promise<unknown>
   /** 卡07：服务商管理接线（未接线时保持旧 UI 原样） */
   providerManager?: ProviderManagerPanelProps
+  onReloadRuntimeSettings?: () => Promise<void>
 }
 
-export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, onModelChange, onSaveApiKey, providerManager }: AiSettingsPanelProps) {
+export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, onModelChange, onSaveApiKey, providerManager, onReloadRuntimeSettings }: AiSettingsPanelProps) {
   const t = useT()
   const [testResult, setTestResult] = useState<LlmConnectionTestResult | null>(null)
   const [testing, setTesting] = useState(false)
@@ -88,6 +90,9 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [entryFeedback, setEntryFeedback] = useState<{ ok: boolean; text: string } | null>(null)
   const [entryInfos, setEntryInfos] = useState<CodexEntryInfo[]>([])
   const [localHint, setLocalHint] = useState<{ detected: boolean; state: string; models: number } | null>(null)
+  const [approvalDefaultDraft, setApprovalDefaultDraft] = useState(llmSettings.confirm_before_execute ?? false)
+  const [approvalDefaultSaving, setApprovalDefaultSaving] = useState(false)
+  const [approvalDefaultFeedback, setApprovalDefaultFeedback] = useState<{ ok: boolean; text: string } | null>(null)
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   function applyCodexCatalog(result: CodexModelsResult) {
@@ -140,6 +145,29 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   useEffect(() => {
     setEntryDraft(codexEntry)
   }, [codexEntry])
+
+  useEffect(() => {
+    setApprovalDefaultDraft(llmSettings.confirm_before_execute ?? false)
+  }, [llmSettings.confirm_before_execute])
+
+  async function saveApprovalDefault() {
+    if (approvalDefaultSaving || approvalDefaultDraft === (llmSettings.confirm_before_execute ?? false)) return
+    setApprovalDefaultSaving(true)
+    setApprovalDefaultFeedback(null)
+    try {
+      const result = await savePlanApprovalDefault(approvalDefaultDraft)
+      if (!result.ok) {
+        setApprovalDefaultFeedback({ ok: false, text: result.error ?? t('settings.ai.planApproval.saveFailed') })
+        return
+      }
+      setApprovalDefaultFeedback({ ok: true, text: t('settings.ai.planApproval.saved') })
+      await onReloadRuntimeSettings?.()
+    } catch (error) {
+      setApprovalDefaultFeedback({ ok: false, text: error instanceof Error ? error.message : t('settings.ai.planApproval.saveFailed') })
+    } finally {
+      setApprovalDefaultSaving(false)
+    }
+  }
 
   // 双入口：挂载时读一次入口清单（含「本机是否已有 Codex 配置」的只读探测）
   useEffect(() => {
@@ -631,6 +659,34 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
 
   return (
     <div className="settings-panel-form">
+      <div className="settings-row" data-testid="plan-approval-default-row">
+        <div>
+          <strong>{t('settings.ai.planApproval.title')}</strong>
+          <p className="settings-hint">{t('settings.ai.planApproval.hint')}</p>
+        </div>
+        <select
+          aria-label={t('settings.ai.planApproval.title')}
+          value={approvalDefaultDraft ? 'confirm' : 'auto'}
+          disabled={approvalDefaultSaving}
+          onChange={(event) => {
+            setApprovalDefaultDraft(event.target.value === 'confirm')
+            setApprovalDefaultFeedback(null)
+          }}
+        >
+          <option value="auto">{t('settings.ai.planApproval.auto')}</option>
+          <option value="confirm">{t('settings.ai.planApproval.confirm')}</option>
+        </select>
+        <button type="button" data-testid="plan-approval-default-save"
+          disabled={approvalDefaultSaving || approvalDefaultDraft === (llmSettings.confirm_before_execute ?? false)}
+          onClick={() => void saveApprovalDefault()}>
+          {approvalDefaultSaving ? '…' : t('settings.ai.planApproval.save')}
+        </button>
+      </div>
+      {approvalDefaultFeedback ? (
+        <p className={`settings-test-result ${approvalDefaultFeedback.ok ? 'success' : 'error'}`} data-testid="plan-approval-default-feedback">
+          {approvalDefaultFeedback.text}
+        </p>
+      ) : null}
       <div className="llm-connection-wizard" data-testid="llm-connection-wizard">
         <div className="llm-connection-card" data-testid="openai-api-card">
           <div>

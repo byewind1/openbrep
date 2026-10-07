@@ -106,6 +106,7 @@ class ApplyOutcome:
     revision_id: Optional[str] = None
     warnings: list[str] = field(default_factory=list)
     changed_files: Optional[list[str]] = None
+    error_code: Optional[str] = None
 
 
 # ── 系统提示词（DSL 意图解析）──────────────────────────────
@@ -506,6 +507,7 @@ def apply_param_modify(
     intent: str = "MODIFY",
     metadata: dict[str, Any] | None = None,
     create_revision: Callable[..., Any] | None = None,
+    commit_executor: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> ApplyOutcome:
     """快照→应用→落盘（与 apply_parameter_value 相同的落盘语义）+ 变更守护。
 
@@ -521,6 +523,72 @@ def apply_param_modify(
 
     on_disk = _project_on_disk(project)
     revision_id: Optional[str] = None
+
+    # All deterministic operations share the source/spec coordinator. Rename
+    # touches scripts too and is committed through the crash-recoverable HSF
+    # transaction; fresh contracts reject identity changes for explicit replanning.
+    if on_disk:
+        from openbrep.parameter_mutations import mutate_project_parameters
+        from openbrep.source_fingerprint import compute_source_fingerprint
+
+        operations: list[dict[str, Any]] = []
+        for op in plan.operations:
+            if op.op == "set_value":
+                operations.append({"op": "set_value", "name": op.param, "value": op.value})
+            elif op.op == "add_param":
+                operations.append({"op": "add", "name": op.name, "type": op.type,
+                                   "value": op.value, "description": op.description})
+            elif op.op == "del_param":
+                operations.append({"op": "delete", "name": op.param})
+            elif op.op == "rename_param":
+                from openbrep.naming_alignment import replace_identifier
+
+                op.occurrences = sum(
+                    replace_identifier(content, op.from_name, op.name)[1]
+                    for content in project.scripts.values()
+                )
+                operations.append({"op": "rename", "name": op.from_name, "new_name": op.name})
+
+        def snapshot_before_write() -> None:
+            nonlocal revision_id
+            try:
+                revision = create_revision(
+                    project.root,
+                    message=before_message,
+                    gsm_name=project.name,
+                    metadata=metadata,
+                    trigger=trigger,
+                    intent=intent,
+                    user_instruction=user_instruction,
+                    changed_files=_plan_changed_files_hint(plan, project),
+                    parent_revision_id=get_latest_revision_id(project.root),
+                )
+                revision_id = revision.revision_id
+            except Exception as exc:
+                warnings.append(f"自动版本快照失败：{exc}")
+
+        mutation = mutate_project_parameters(
+            project,
+            expected_source_fingerprint=compute_source_fingerprint(project.root),
+            operations=operations,
+            before_commit=snapshot_before_write,
+            commit_executor=commit_executor,
+        )
+        if not mutation.ok:
+            return ApplyOutcome(
+                applied=False,
+                revision_id=revision_id,
+                warnings=warnings + [mutation.error or "参数操作被拒绝"],
+                changed_files=[],
+                error_code=mutation.error_code,
+            )
+        return ApplyOutcome(
+            applied=True,
+            revision_id=revision_id,
+            warnings=warnings,
+            changed_files=mutation.changed_files,
+        )
+
     if not on_disk:
         warnings.append("项目尚未保存为 HSF 目录，已跳过自动版本快照")
     else:

@@ -13,6 +13,58 @@ const baseProps = {
 }
 
 describe('AssistantPanel', () => {
+  test('offers evidence-bound visual review for a completed image generation', () => {
+    const onReviewVisualTurn = vi.fn()
+    render(<AssistantPanel {...baseProps} onReviewVisualTurn={onReviewVisualTurn} messages={[
+      { role: 'user', content: '参考图生成', images: [{ name: 'ref.png', mime: 'image/png', b64: 'AA==' }] },
+      { role: 'assistant', content: '已生成', turnTaskRef: { turn_id: 'turn-review', run_id: 'run-review' },
+        visualReview: { review_id: 'review-1', run_id: 'run-review', source_fingerprint: 'sha', plan_id: 'plan-1', model: 'test', status: 'partial', coverage: [{ target_id: 'overall-object', status: 'unknown' }], findings: [{ finding_id: 'finding-1', target_id: 'overall-object', outcome: 'unknown', severity: 'minor', summary: '背面不可见', failure_layer: 'unobservable', uncertainty: '没有背面参考', evidence: [] }], missing_target_ids: [] } },
+    ]} />)
+
+    expect(screen.getByText(/不构成自动验收/)).toBeTruthy()
+    expect(screen.getByText(/无法判断/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '重新对照参考图' }))
+    expect(onReviewVisualTurn).toHaveBeenCalledWith('turn-review', false)
+  })
+
+  test('pending plan can be revised before approval', () => {
+    const onRevisePlan = vi.fn()
+    render(<AssistantPanel {...baseProps}
+      pendingPlan={{
+        turn_id: 'turn-1', plan_id: 'plan-1', plan_version: 1,
+        intent_summary: '加背板', user_visible_changes: [], affected_files: [], risk: '',
+      }}
+      onConfirmPlan={vi.fn()} onRevisePlan={onRevisePlan}
+    />)
+    fireEvent.change(screen.getByLabelText('修改计划要求'), { target: { value: '保留层数，只新增背板。' } })
+    fireEvent.click(screen.getByRole('button', { name: '重新规划并检查' }))
+    expect(onRevisePlan).toHaveBeenCalledWith('保留层数，只新增背板。')
+  })
+
+  test('approval toggle uses the saved default and resets after the current turn', () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} llmSettings={{
+      model: 'deepseek-chat', models: [], api_key: '', api_base: '', max_retries: 5,
+      assistant_settings: '', confirm_before_execute: false,
+    }} />)
+
+    const approval = screen.getByRole('button', { name: '生成前计划审批（仅当前一轮）' })
+    expect(approval.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(approval)
+    fireEvent.change(screen.getByLabelText('Ask or generate'), { target: { value: '添加背板' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    expect(onChat).toHaveBeenCalledWith('添加背板', [], 'auto', true)
+    expect(approval.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  test('approval toggle starts from the saved preference', () => {
+    render(<AssistantPanel {...baseProps} llmSettings={{
+      model: 'deepseek-chat', models: [], api_key: '', api_base: '', max_retries: 5,
+      assistant_settings: '', confirm_before_execute: true,
+    }} />)
+    expect(screen.getByRole('button', { name: '生成前计划审批（仅当前一轮）' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
   test('attaches an image and sends via onChat', async () => {
     const onChat = vi.fn()
     const file = new File(['fake image'], 'shelf.png', { type: 'image/png' })
@@ -480,6 +532,16 @@ describe('AssistantPanel plan confirmation card (V3)', () => {
     )
     expect(screen.getByRole('button', { name: '确认修改' })).toHaveProperty('disabled', true)
     expect(screen.getByRole('button', { name: '取消' })).toHaveProperty('disabled', true)
+  })
+
+  test('restored historical plan is marked read-only and cannot be approved', () => {
+    render(<AssistantPanel {...baseProps} hasProject pendingPlan={{
+      turn_id: 'old-turn', plan_id: 'old-plan', plan_version: 1,
+      intent_summary: '把书架加高', user_visible_changes: ['高度增加'], affected_files: [], risk: '尺寸变化',
+      restored_display_only: true,
+    }} onConfirmPlan={vi.fn()} />)
+    expect(screen.getByText(/历史计划，仅供查看/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '确认修改' })).toHaveProperty('disabled', true)
   })
 })
 

@@ -20,24 +20,74 @@
       "overall.width": {
         "type": "length",
         "unit": "m",
+        "description": "构件外包络宽度；没有可信比例或标注时保持未知",
         "unknown_policy": "preserve"
       },
       "overall.height": {
         "type": "length",
         "unit": "m",
+        "description": "构件外包络高度；没有可信比例或标注时保持未知",
         "unknown_policy": "preserve"
       },
       "frame.depth": {
         "type": "length",
         "unit": "m",
+        "description": "边框进深，需正视或侧视证据",
         "unknown_policy": "ask"
+      },
+      "opening.shape": {
+        "type": "string",
+        "description": "洞口形状；辨不清具体类型时描述可见外轮廓",
+        "unknown_policy": "preserve"
       },
       "pattern.family": {
         "type": "string",
+        "description": "可辨识的纹样母题名称",
         "unknown_policy": "preserve"
       },
       "pattern.count": {
         "type": "count",
+        "description": "可见重复单元或构件数量，不外推被遮挡部分",
+        "unknown_policy": "preserve"
+      },
+      "pattern.kind": {
+        "type": "string",
+        "description": "可见拓扑类别，如网格、放射或不规则；无法判断则未知",
+        "unknown_policy": "preserve"
+      },
+      "pattern.rows": {
+        "type": "count",
+        "description": "正视图中可见的横向排数；遮挡时保持未知",
+        "unknown_policy": "preserve"
+      },
+      "pattern.cols": {
+        "type": "count",
+        "description": "正视图中可见的纵向列数；遮挡时保持未知",
+        "unknown_policy": "preserve"
+      },
+      "pattern.cell_description": {
+        "type": "string",
+        "description": "重复单元的可见形状描述",
+        "unknown_policy": "preserve"
+      },
+      "pattern.bar_width_ratio": {
+        "type": "number",
+        "description": "仅在同一平面尺度可比较时估计棂宽与单元宽的比例",
+        "unknown_policy": "preserve"
+      },
+      "frame.bar_ratio": {
+        "type": "number",
+        "description": "边框宽与棂宽的相对比例；无同平面证据时未知",
+        "unknown_policy": "preserve"
+      },
+      "symmetry.group": {
+        "type": "string",
+        "description": "由可见构件形态支持的对称类别",
+        "unknown_policy": "preserve"
+      },
+      "pattern.motif_features": {
+        "type": "array",
+        "description": "可见母题特征的短描述数组",
         "unknown_policy": "preserve"
       },
       "materials.frame": {
@@ -46,10 +96,12 @@
       },
       "state.opening": {
         "type": "state",
+        "description": "图中可见的开启/关闭状态；不同状态图必须分组保存",
         "unknown_policy": "preserve"
       },
       "occlusion.pattern_regions": {
         "type": "state",
+        "description": "纹样被遮挡或不可见的区域；不得根据对称性补全",
         "unknown_policy": "preserve"
       }
     }
@@ -71,7 +123,7 @@
       "kind": "synthetic",
       "license": "CC0-1.0",
       "split": "contract",
-      "sha256": "c08dfeaf242a87df5b81a2cf4bc7a1e544a10bdc1f42eae9cb603005849eaa4b",
+      "sha256": "b785dcc3e080dbddffb0a0923a041d284909f692fac61c3e6dfd14cb98e95555",
       "expected": {
         "unknown_fields_remain_unknown": true,
         "dimension_unit": "m"

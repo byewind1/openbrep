@@ -19,13 +19,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from openbrep.compiler import MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import MockLLM
 from openbrep.runtime.pipeline import ImageRef, TaskPipeline, TaskRequest
+from openbrep.vision.harness import extraction_cache_context
 
 _GENERIC_JSON = json.dumps({
     "component_type": "书架",
@@ -91,7 +92,6 @@ class TestModifyVisionHarness(_TempDirMixin, unittest.TestCase):
         """带图 MODIFY → 走 harness（critic_pass=False）；critic 函数零调用。"""
         calls: list[dict] = []
 
-        real_run_import = None
         from openbrep.vision import harness as harness_module
 
         original_run = harness_module.run
@@ -144,6 +144,11 @@ class TestModifyVisionHarness(_TempDirMixin, unittest.TestCase):
         project = _make_project(self.tmp)
         b64 = _image_b64()
         sha = _sha(b64)
+        user_input = "这是漏窗，按这张图调整这个构件"
+        cache_context = extraction_cache_context(
+            ImageRef(token="图1", b64=b64, mime="image/png", sha256=sha),
+            user_input=user_input, model="", schema_name="lattice_window",
+        )
         # 预置提取工件（D7 内容哈希寻址；模拟此前 CREATE 落盘）
         vision_dir = project.root / ".openbrep" / "vision"
         vision_dir.mkdir(parents=True, exist_ok=True)
@@ -158,6 +163,7 @@ class TestModifyVisionHarness(_TempDirMixin, unittest.TestCase):
             "raw_description": "",
             "sha256": sha,
             "model": "mock-vision-model",
+            "cache_context": cache_context,
             "created_at": "2026-08-12T00:00:00+00:00",
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -167,6 +173,7 @@ class TestModifyVisionHarness(_TempDirMixin, unittest.TestCase):
             pipeline = _make_pipeline(mock_llm, self.tmp)
             request = _make_request(
                 project, self.tmp,
+                user_input=user_input,
                 images=[ImageRef(token="图1", b64=b64, mime="image/png")],
             )
             result = pipeline.execute(request)

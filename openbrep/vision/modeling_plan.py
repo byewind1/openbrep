@@ -49,6 +49,11 @@ class ModelingPlan:
     # U04-A：schema 严格校验问题清单（required_missing/enum_invalid/range_invalid/
     # unfounded_match/unknown_schema…）——不阻塞交付，但必须可见。
     validation_issues: list = field(default_factory=list)
+    editable_fields: list = field(default_factory=list)
+    domain_skill_id: str = ""
+    domain_skill_status: str = "legacy"
+    domain_skill_version: str = ""
+    evidence: dict = field(default_factory=dict)
 
     # ── hint 标记格式（P5c，测试钉死）──────────────────────────
     # low 置信顶层字段        → key: value（低置信）
@@ -142,6 +147,11 @@ class ModelingPlan:
             required=list(data.get("required") or []),
             critic_checks=list(data.get("critic_checks") or []),
             validation_issues=list(data.get("validation_issues") or []),
+            editable_fields=list(data.get("editable_fields") or []),
+            domain_skill_id=str(data.get("domain_skill_id") or ""),
+            domain_skill_status=str(data.get("domain_skill_status") or "legacy"),
+            domain_skill_version=str(data.get("domain_skill_version") or ""),
+            evidence=dict(data.get("evidence") or {}),
         )
 
 

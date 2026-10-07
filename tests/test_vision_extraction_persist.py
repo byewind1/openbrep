@@ -65,6 +65,7 @@ class TestServiceExtractionPersist(unittest.TestCase):
                     "critic_degraded": False,
                     "raw_description": "",
                     "sha256": sha1,
+                    "cache_context": {"role": "outline", "schema_name": "lattice_window", "model": "mock"},
                 },
                 {
                     "token": "图2",
@@ -127,6 +128,14 @@ class TestServiceExtractionPersist(unittest.TestCase):
             # load_extraction 往返（P5e 复用铺路）
             loaded = load_extraction(project_root, sha1)
             self.assertEqual(loaded["fields"]["opening_shape"], "rect")
+            self.assertIsNotNone(load_extraction(
+                project_root, sha1,
+                expected_context={"role": "outline", "schema_name": "lattice_window", "model": "mock"},
+            ))
+            self.assertIsNone(load_extraction(
+                project_root, sha1,
+                expected_context={"role": "pattern", "schema_name": "lattice_window", "model": "mock"},
+            ))
 
             # 无落盘失败 warning
             self.assertEqual(response.get("warnings") or [], [])

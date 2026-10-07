@@ -22,8 +22,10 @@ _SYSTEM = '''你是专业 GDL 顾问。本轮只读：不修改文件、不编�
 {"conclusion":"回答", "basis":[{"text":"依据", "finding_refs":["有效id"]}],
 "suggestions":["建议"],"tradeoffs":["取舍"],"assumptions":["假设"],"proposals":[]}
 可选proposal字段：title/target_intent/goal/scope/constraints/assumptions/tradeoffs/evidence_refs。
-计划模式额外输出plan：intent_summary/user_visible_changes/affected_files/risk/
-constraints/assumptions/acceptance_criteria/finding_refs/optional_suggestions。不要自行生成批准状态。
+计划模式额外输出plan：intent_summary/user_visible_changes/change_delta/
+preserved_constraints/affected_files/risk/constraints/assumptions/acceptance_criteria/
+finding_refs/optional_suggestions。change_delta只写本次拟改内容；preserved_constraints
+明确列出本次必须保持的既有行为/构造。不要自行生成批准状态。
 如果 omitted_sections 非空：你缺少部分源码/历史，结论必须先声明覆盖不足；
 不确定具体改法时给方向性建议并说明需要查看的缺失内容，不得输出确定性具体修改步骤。
 '''
@@ -100,6 +102,9 @@ def parse_advisor_output(content: str, report: InspectionReport, *, mode='consul
             raise ValueError('Invalid plan schema')
         for key in ('constraints', 'assumptions', 'acceptance_criteria', 'finding_refs', 'optional_suggestions'):
             plan[key] = _strings(raw.get(key, []), key)
+        for key in ('change_delta', 'preserved_constraints'):
+            if key in raw:
+                plan[key] = _strings(raw.get(key), key)
         if any(ref not in valid for ref in plan['finding_refs']):
             raise ValueError('Invalid plan finding reference')
     parts = [data['conclusion']]

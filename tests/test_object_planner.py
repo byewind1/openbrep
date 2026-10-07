@@ -1,12 +1,20 @@
-import unittest
-import tempfile
 import json
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from openbrep.compiler import MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import LLMResponse
+from openbrep.object_planner import (
+    GDLObjectPlan,
+    infer_minimum_plan,
+    parse_gdl_object_plan,
+    plan_gdl_object,
+)
+from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 
 
 def _apply_real_changes(project, changes):
@@ -16,11 +24,63 @@ def _apply_real_changes(project, changes):
             if script_type.value in file_path:
                 project.scripts[script_type] = content + "\n"
 
-from openbrep.object_planner import infer_minimum_plan, parse_gdl_object_plan, plan_gdl_object
-from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
-
-
 class TestObjectPlanner(unittest.TestCase):
+    def test_typed_plan_prepare_is_read_only_and_execution_reuses_the_same_plan(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            work_dir = Path(tmpdir) / "not-created-before-approval"
+            pipeline = TaskPipeline(config=GDLAgentConfig(), trace_dir=str(Path(tmpdir) / "traces"))
+            mock_llm = MagicMock()
+            pipeline._make_llm = lambda _req: mock_llm
+            pipeline._load_knowledge = lambda: ""
+            pipeline._load_skills = lambda _inst: ""
+            typed = GDLObjectPlan(
+                object_type="parametric_cabinet",
+                geometry=["柜体与双门"],
+                assumptions=["未指定背板厚度，采用候选默认值"],
+                parts=[{"part_id": "carcass", "description": "柜体"}],
+                typed_parameters=[{"param_id": "p.width", "gdl_name": "A", "type": "Length", "unit": "m", "description": "宽度", "default_value": 1.2}],
+                requirement_mappings=[{"requirement_id": "req-size", "text": "宽度为1200mm", "kind": "constraint", "part_refs": ["carcass"], "parameter_refs": ["p.width"], "script_refs": ["scripts/3d.gdl"], "scenario_refs": ["default"], "source_refs": ["user:request"]}],
+                script_3d_strategy=["按参数A生成柜体"],
+            )
+            with patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=typed) as planner:
+                prepared = pipeline.prepare_typed_plan(TaskRequest(
+                    user_input="生成宽1200mm双门柜",
+                    intent="CREATE",
+                    work_dir=str(work_dir),
+                ))
+                self.assertTrue(prepared.success)
+                self.assertEqual(prepared.metadata["planning_artifact"]["status"], "ready")
+                self.assertFalse(work_dir.exists())
+                frozen = prepared.metadata["prepared_typed_plan"]
+                before_hash = frozen["planning_artifact"]["execution_plan"]["plan_hash"]
+
+                pipeline._make_compiler = lambda: MockHSFCompiler()
+                with patch("openbrep.runtime.pipeline.GDLAgent") as agent_cls:
+                    agent = MagicMock()
+                    agent.generate_only.return_value = ({
+                        "scripts/3d.gdl": "BLOCK A, B, ZZYZX\nEND\n",
+                        "scripts/2d.gdl": "PROJECT2 3, 270, 2\nEND\n",
+                    }, "已按计划生成")
+                    agent._apply_changes.side_effect = _apply_real_changes
+                    agent_cls.return_value = agent
+                    delivered = pipeline.execute(TaskRequest(
+                        user_input="生成宽1200mm双门柜",
+                        intent="CREATE",
+                        work_dir=str(work_dir),
+                        prepared_typed_plan=frozen,
+                        plan_selection="user_approved",
+                    ))
+
+            self.assertTrue(delivered.success, repr(delivered.__dict__))
+            self.assertEqual(planner.call_count, 1)
+            self.assertEqual(delivered.metadata["planning_artifact"]["execution_plan"]["plan_hash"], before_hash)
+            self.assertEqual(delivered.project.get_parameter("A").value, "1.2")
+            self.assertIn("paramlist.xml", delivered.scripts)
+            self.assertEqual(delivered.metadata["parameter_contract"]["reconciled"], ["A"])
+            self.assertEqual(delivered.metadata["plan_selection"], "user_approved")
+            report = json.loads(Path(delivered.metadata["object_plan_report"]).read_text(encoding="utf-8"))
+            self.assertEqual(report["plan_selection"], "user_approved")
+
     def test_parse_gdl_object_plan_from_json(self):
         plan = parse_gdl_object_plan(
             """
@@ -31,6 +91,9 @@ class TestObjectPlanner(unittest.TestCase):
               "parameters": ["Length A = 宽度"],
               "command_candidates": ["BLOCK", "PROJECT2"],
               "validation_checks": ["ADD/DEL 平衡"],
+              "parts": [{"part_id": "carcass", "description": "柜体"}],
+              "typed_parameters": [{"param_id": "p.width", "gdl_name": "A", "type": "Length", "unit": "m", "default_value": 1.2, "description": "宽度"}],
+              "requirement_mappings": [{"requirement_id": "req-size", "text": "宽度可编辑", "kind": "constraint", "part_refs": ["carcass"], "parameter_refs": ["p.width"], "script_refs": ["scripts/3d.gdl"], "check_id": null, "scenario_refs": ["front-default"], "source_refs": ["user:request"]}],
               "script_3d_strategy": ["BLOCK 组合"],
               "script_2d_strategy": ["PROJECT2"],
               "material_strategy": ["材质参数"],
@@ -45,6 +108,9 @@ class TestObjectPlanner(unittest.TestCase):
         self.assertIn("BLOCK", plan.command_candidates)
         self.assertIn("ADD/DEL 平衡", plan.validation_checks)
         self.assertIn("ADD/DEL 平衡", plan.risks)
+        self.assertEqual(plan.typed_parameters[0]["param_id"], "p.width")
+        self.assertIn("parts=['carcass']", plan.to_prompt())
+        self.assertIn("A (Length) = 1.2 m", plan.to_prompt())
 
     def test_plan_gdl_object_falls_back_when_llm_fails(self):
         llm = MagicMock()

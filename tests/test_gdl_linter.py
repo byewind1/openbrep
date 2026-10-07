@@ -20,6 +20,21 @@ class TestRule001ATN(unittest.TestCase):
         self.assertIn("_lint_dx = dx", result.fixed_code)
         self.assertIn("_lint_dy = dy", result.fixed_code)
 
+    def test_does_not_duplicate_existing_denominator_quadrant_correction(self):
+        code = (
+            "angle = ATN(dx / dz)\n"
+            "IF dz < 0 THEN\n"
+            "    angle = angle + 180\n"
+            "ENDIF"
+        )
+
+        checked = GDLLinter(script_type="3D").check(code)
+        fixed = GDLLinter(script_type="3D").fix(code)
+
+        self.assertEqual(checked.issues, [])
+        self.assertEqual(fixed.fix_count, 0)
+        self.assertEqual(fixed.fixed_code, code)
+
 
 class TestRule002Circle2(unittest.TestCase):
 

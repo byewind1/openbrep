@@ -13,18 +13,16 @@
 from __future__ import annotations
 
 import json
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from openbrep.compiler import MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse, MockLLM
 from openbrep.runtime.param_modify import (
-    ApplyOutcome,
     ParamModifyPlan,
     ParamOp,
     apply_param_modify,
@@ -37,9 +35,9 @@ from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 def _make_project() -> HSFProject:
     proj = HSFProject.create_new("test_shelf", work_dir="./workdir")
     proj.parameters = [
-        GDLParameter(name="A", type_tag="Length", description="宽度", value="0.9"),
-        GDLParameter(name="B", type_tag="Length", description="深度", value="0.4"),
-        GDLParameter(name="ZZYZX", type_tag="Length", description="高度", value="1.8"),
+        GDLParameter(name="A", type_tag="Length", description="宽度", value="0.9", is_fixed=True),
+        GDLParameter(name="B", type_tag="Length", description="深度", value="0.4", is_fixed=True),
+        GDLParameter(name="ZZYZX", type_tag="Length", description="高度", value="1.8", is_fixed=True),
         GDLParameter(name="shelf_count", type_tag="Integer", description="层板数量", value="4"),
         GDLParameter(name="shelf_thk", type_tag="Length", description="层板厚度", value="0.018"),
         GDLParameter(name="show_frame", type_tag="Boolean", description="显示边框", value="1"),
@@ -339,7 +337,7 @@ class TestApplyParamModify(unittest.TestCase):
         self.assertIn('Name="brand"', paramlist)
         self.assertNotIn('Name="ratio"', paramlist)
 
-    def test_guard_rolls_back_when_out_of_scope_file_changes(self):
+    def test_structured_edit_preserves_untouched_libpartdata(self):
         # 构造一个 save_to_disk 会改 libpartdata.xml 的项目（解析器不认识的额外属性）
         src = self.tmp / "Shelf"
         proj = _make_project()
@@ -352,14 +350,12 @@ class TestApplyParamModify(unittest.TestCase):
 
         plan = ParamModifyPlan(operations=[ParamOp(op="set_value", param="shelf_count", value="5", old_value="4")], raw={})
         outcome = apply_param_modify(proj, plan, create_revision=lambda *a, **k: MagicMock(revision_id="r1"))
-        self.assertFalse(outcome.applied)
-        # 内存与磁盘都回滚
-        self.assertEqual(proj.get_parameter("shelf_count").value, "4")
+        self.assertTrue(outcome.applied)
+        # 结构化参数写入只更改 paramlist，保留不认识的 libpartdata 字节。
+        self.assertEqual(proj.get_parameter("shelf_count").value, "5")
         paramlist = (src / "paramlist.xml").read_text(encoding="utf-8")
-        self.assertIn("<Value>4</Value>", paramlist)
-        self.assertNotIn("<Value>5</Value>", paramlist)
+        self.assertIn("<Value>5</Value>", paramlist)
         self.assertIn('Extra="keepme"', lp.read_text(encoding="utf-8"))
-        self.assertTrue(any("守护回滚" in w for w in outcome.warnings))
 
     def test_apply_skips_revision_when_not_on_disk(self):
         proj = _make_project()  # 未落盘（独立 workdir，保证 root 不存在）

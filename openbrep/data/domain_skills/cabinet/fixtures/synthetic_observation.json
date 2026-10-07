@@ -11,5 +11,5 @@
       {"field_path": "occlusion.hidden_structure", "status": "unknown", "value": null}
     ]
   },
-  "expected": {"unknown_fields_remain_unknown": true}
+  "expected": {"unknown_fields_remain_unknown": true, "dimension_unit": "m"}
 }

@@ -202,13 +202,13 @@ export function WorkbenchApp() {
   // P0-C：有项目打开时的"生成"意图先确认（建筑基础_v1 事故：
   // "参考图1生成坐斗"被当成改当前项目，全文重写覆盖了打开的项目）。
   // 新建项目不会改动当前项目文件；想改当前项目可取消后改用修改类表述。
-  async function handleChat(message: string, images?: AssistantImageAttachment[], requestedMode: 'auto' | 'plan' = 'auto') {
+  async function handleChat(message: string, images?: AssistantImageAttachment[], requestedMode: 'auto' | 'plan' = 'auto', confirmBeforeExecute = false) {
     if (llmSettings.conversation_entry !== 'legacy') {
       await sendChat(message, images, requestedMode, () => confirm({
         title: t('chat.confirmCreateTitle'),
         message: t('chat.confirmCreateMessage', { name: project?.name || '' }),
         confirmLabel: t('chat.confirmCreateOk'),
-      }))
+      }), confirmBeforeExecute)
       return
     }
     if (project && detectChatIntent(message, true) === 'create') {
@@ -224,8 +224,10 @@ export function WorkbenchApp() {
     await sendChat(message, images)
   }
   const confirmPendingPlan = useWorkbenchStore((state) => state.confirmPendingPlan)
+  const revisePendingPlan = useWorkbenchStore((state) => state.revisePendingPlan)
   const confirmPendingExtraction = useWorkbenchStore((state) => state.confirmPendingExtraction)
   const confirmPendingSkillProposal = useWorkbenchStore((state) => state.confirmPendingSkillProposal)
+  const reviewVisualTurn = useWorkbenchStore((state) => state.reviewVisualTurn)
   const stopChat = useWorkbenchStore((state) => state.stopChat)
   const interruptedContext = useWorkbenchStore((state) => state.interruptedContext)
   const openScript = useWorkbenchStore((state) => state.openScript)
@@ -518,6 +520,7 @@ export function WorkbenchApp() {
             assistantBusy={assistantBusy || sourceActionBusy}
             pendingPlan={pendingPlan}
             onConfirmPlan={(approve) => void confirmPendingPlan(approve)}
+            onRevisePlan={(instruction) => void revisePendingPlan(instruction)}
             pendingExtraction={pendingExtraction}
             onConfirmExtraction={(extractions, approve) => void confirmPendingExtraction(extractions, approve)}
             pendingSkillProposal={pendingSkillProposal}
@@ -536,11 +539,12 @@ export function WorkbenchApp() {
             hasProject={!!project}
             interruptedContext={interruptedContext}
             onProposalAction={(id, action) => void actOnAdvisorProposal(id, action, () => confirm({ title: t('chat.confirmCreateTitle'), message: t('chat.confirmCreateMessage', { name: project?.name || '' }), confirmLabel: t('chat.confirmCreateOk') }))}
-            onChat={(message, images, requestedMode) => void handleChat(message, images, requestedMode)}
+            onChat={(message, images, requestedMode, confirmBeforeExecute) => void handleChat(message, images, requestedMode, confirmBeforeExecute)}
             onStop={stopChat}
             onClearAssistantHistory={() => void clearAssistantHistory()}
             onDeleteAssistantMessages={(indices) => deleteAssistantMessages(indices)}
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
+            onReviewVisualTurn={(turnId, force) => void reviewVisualTurn(turnId, force)}
             onOpenScript={openScriptInEditor}
             onSaveRevision={(message) => saveRevision(message)}
             onRevealLine={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine ?? null)}

@@ -22,6 +22,33 @@ afterEach(() => {
 })
 
 describe('AiSettingsPanel save-and-verify', () => {
+  test('plan approval preference remains a draft until explicit save', async () => {
+    const onReloadRuntimeSettings = vi.fn().mockResolvedValue(undefined)
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/entry')) return new Response(JSON.stringify({ ok: true, entry: 'managed', entries: [], local_hint: null }), { status: 200 })
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ ok: true, state: 'signed_out', connected: false }), { status: 200 })
+      if (url.endsWith('/plan-approval')) return new Response(JSON.stringify({ ok: true, llm: { confirm_before_execute: true } }), { status: 200 })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({ confirm_before_execute: false })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn().mockResolvedValue({ ok: true })}
+        onReloadRuntimeSettings={onReloadRuntimeSettings}
+      />,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: '生成前审批计划' }), { target: { value: 'confirm' } })
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/plan-approval'))).toBe(false)
+    fireEvent.click(screen.getByTestId('plan-approval-default-save'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/settings/llm/plan-approval', expect.objectContaining({ method: 'POST' })))
+    expect(onReloadRuntimeSettings).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('plan-approval-default-feedback').textContent).toContain('审批偏好已保存')
+  })
+
   test('refreshes one incomplete cc-switch provider without selecting a model', async () => {
     const onModelChange = vi.fn().mockResolvedValue(undefined)
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

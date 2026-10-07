@@ -20,7 +20,7 @@ _TOP_LEVEL_FIELDS = frozenset({
     "aliases", "observation", "plan_policy", "requirements", "allowed_variations",
     "fixtures", "methodology_path",
 })
-_FIELD_TYPES = frozenset({"length", "angle", "number", "integer", "boolean", "string", "enum", "material", "state", "count"})
+_FIELD_TYPES = frozenset({"length", "angle", "number", "integer", "boolean", "string", "enum", "material", "state", "count", "array"})
 _STATUSES = frozenset({"development", "proposed", "active", "verified", "deprecated"})
 _SPLITS = frozenset({"contract", "train", "validation", "test", "golden"})
 
@@ -50,6 +50,32 @@ class SkillLoadResult:
     @property
     def ok(self) -> bool:
         return self.skill is not None and not self.issues
+
+
+@dataclass(frozen=True)
+class DomainSkillFixture:
+    """A manifest-bound fixture and its parsed observation, never an executable asset."""
+
+    skill_id: str
+    version: str
+    fixture_id: str
+    kind: str
+    license: str
+    split: str
+    sha256: str
+    expected: dict[str, Any]
+    payload: dict[str, Any]
+    observation: Any
+
+
+@dataclass(frozen=True)
+class FixtureLoadResult:
+    fixture: DomainSkillFixture | None = None
+    issues: tuple[SkillIssue, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return self.fixture is not None and not self.issues
 
 
 @dataclass(frozen=True)
@@ -120,7 +146,11 @@ class DomainSkillRegistry:
             if not result.ok:
                 continue
             skill = result.skill
-            if intent not in skill.manifest["intents"]:
+            if skill.status == "deprecated":
+                continue
+            if str(intent or "").casefold() not in {
+                str(value).casefold() for value in skill.manifest["intents"]
+            }:
                 continue
             aliases = [skill_id, *skill.manifest["aliases"]]
             if any(str(alias).casefold() in text for alias in aliases):
@@ -133,6 +163,132 @@ class DomainSkillRegistry:
             return DomainSkillSelection("unsupported")
         status = "matched" if all(skill.status in {"active", "verified"} for skill in skills) else "unverified"
         return DomainSkillSelection(status, skills)
+
+    def load_fixture(self, skill_id: str, fixture_id: str) -> FixtureLoadResult:
+        """Load a package-declared fixture after revalidating provenance and shape.
+
+        This supports synthetic contract tests and future licensed evaluation.
+        It never runs package code and does not treat fixture expectations as
+        evidence of domain truth.
+        """
+        loaded = self.load(skill_id)
+        if not loaded.ok or loaded.skill is None:
+            return FixtureLoadResult(issues=loaded.issues)
+        declaration = next((item for item in loaded.skill.manifest["fixtures"]
+                            if item.get("fixture_id") == fixture_id), None)
+        if declaration is None:
+            return FixtureLoadResult(issues=(SkillIssue(
+                "FIXTURE_NOT_FOUND", f"fixtures.{fixture_id}",
+                "fixture is not declared by this domain Skill",
+            ),))
+        target = _contained_path(loaded.skill.package_path, str(declaration["path"]))
+        if target is None:
+            return FixtureLoadResult(issues=(SkillIssue(
+                "UNSAFE_PATH", f"fixtures.{fixture_id}.path", "path escapes Skill package",
+            ),))
+        try:
+            raw = target.read_bytes()
+            payload = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return FixtureLoadResult(issues=(SkillIssue(
+                "FIXTURE_INVALID", f"fixtures.{fixture_id}.path", str(exc),
+            ),))
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != declaration.get("sha256"):
+            return FixtureLoadResult(issues=(SkillIssue(
+                "FIXTURE_HASH_MISMATCH", f"fixtures.{fixture_id}.sha256",
+                "fixture changed after manifest validation",
+            ),))
+        if not isinstance(payload, dict):
+            return FixtureLoadResult(issues=(SkillIssue(
+                "FIXTURE_INVALID", f"fixtures.{fixture_id}", "fixture must be a JSON object",
+            ),))
+        issues = self._validate_fixture_payload(loaded.skill, declaration, payload)
+        if issues:
+            return FixtureLoadResult(issues=tuple(issues))
+        observation_data = payload["observation"]
+        from openbrep.contracts.object_spec import parse_observation
+
+        parsed = parse_observation({
+            "schema_version": 1,
+            "observation_id": fixture_id,
+            "source": observation_data["source"],
+            "source_refs": [f"domain-skill:{skill_id}/{fixture_id}"],
+            "items": observation_data["items"],
+        })
+        if not parsed.ok:
+            return FixtureLoadResult(issues=tuple(
+                SkillIssue(error.code, f"fixtures.{fixture_id}.{error.field_path}", error.message)
+                for error in parsed.errors
+            ))
+        return FixtureLoadResult(DomainSkillFixture(
+            skill_id=skill_id,
+            version=loaded.skill.version,
+            fixture_id=fixture_id,
+            kind=str(declaration["kind"]),
+            license=str(declaration["license"]),
+            split=str(declaration["split"]),
+            sha256=digest,
+            expected=dict(declaration["expected"]),
+            payload=payload,
+            observation=parsed.value,
+        ))
+
+    @staticmethod
+    def _validate_fixture_payload(
+        skill: DomainSkill,
+        declaration: dict[str, Any],
+        payload: Any,
+    ) -> list[SkillIssue]:
+        issues: list[SkillIssue] = []
+        base = f"fixtures.{declaration['fixture_id']}"
+
+        def issue(code: str, path: str, message: str) -> None:
+            issues.append(SkillIssue(code, path, message))
+
+        if payload.get("fixture_schema_version") != 1:
+            issue("FIXTURE_SCHEMA_VERSION", f"{base}.fixture_schema_version", "only fixture schema version 1 is supported")
+        if payload.get("fixture_id") != declaration.get("fixture_id"):
+            issue("FIXTURE_ID_MISMATCH", f"{base}.fixture_id", "fixture id does not match manifest")
+        if payload.get("kind") != declaration.get("kind"):
+            issue("FIXTURE_KIND_MISMATCH", f"{base}.kind", "fixture kind does not match manifest")
+        expected = payload.get("expected")
+        if not isinstance(expected, dict) or expected != declaration.get("expected"):
+            issue("FIXTURE_EXPECTATION_MISMATCH", f"{base}.expected", "fixture expectations must match the manifest")
+            expected = {}
+        observation = payload.get("observation")
+        if not isinstance(observation, dict) or not isinstance(observation.get("items"), list):
+            issue("FIXTURE_OBSERVATION_INVALID", f"{base}.observation", "observation must contain an item array")
+            return issues
+        if not isinstance(observation.get("source"), str) or not observation["source"].strip():
+            issue("FIXTURE_OBSERVATION_INVALID", f"{base}.observation.source", "source must be a non-empty string")
+        declarations = skill.manifest["observation"]["fields"]
+        seen: set[str] = set()
+        for index, item in enumerate(observation["items"]):
+            path = f"{base}.observation.items[{index}]"
+            if not isinstance(item, dict):
+                issue("FIXTURE_OBSERVATION_INVALID", path, "item must be an object")
+                continue
+            field_path = item.get("field_path")
+            if not isinstance(field_path, str) or field_path not in declarations:
+                issue("FIXTURE_UNKNOWN_FIELD", f"{path}.field_path", "field is not declared by the Skill")
+                continue
+            if field_path in seen:
+                issue("FIXTURE_DUPLICATE_FIELD", f"{path}.field_path", "field appears more than once")
+            seen.add(field_path)
+            status = item.get("status", "observed")
+            if status == "unknown" and item.get("value") is not None:
+                issue("FIXTURE_UNKNOWN_HAS_VALUE", f"{path}.value", "unknown observations must not carry a value")
+            if status in {"observed", "inferred"} and item.get("value") is None:
+                issue("FIXTURE_VALUE_MISSING", f"{path}.value", "observed/inferred observations require a value")
+            declared_unit = declarations[field_path].get("unit")
+            if item.get("unit") != declared_unit:
+                issue("FIXTURE_UNIT_MISMATCH", f"{path}.unit", f"expected canonical unit {declared_unit!r}")
+        if declaration["kind"] == "synthetic" and expected.get("unknown_fields_remain_unknown") is True:
+            if not any(item.get("status") == "unknown" and item.get("value") is None
+                       for item in observation["items"] if isinstance(item, dict)):
+                issue("FIXTURE_EXPECTATION_FAILED", f"{base}.expected.unknown_fields_remain_unknown", "fixture has no preserved unknown observation")
+        return issues
 
     def _validate_manifest(self, package: Path, value: Any) -> list[SkillIssue]:
         issues: list[SkillIssue] = []
@@ -189,8 +345,18 @@ class DomainSkillRegistry:
                     issue("INVALID_UNIT", f"observation.fields.{path}.unit", "unit is only valid for length or angle")
                 if declaration.get("unknown_policy") not in {"preserve", "ask", "assumption"}:
                     issue("INVALID_UNKNOWN_POLICY", f"observation.fields.{path}.unknown_policy", "must preserve, ask, or assumption")
-                if declaration.get("type") == "enum" and not isinstance(declaration.get("enum_values"), list):
-                    issue("INVALID_ENUM", f"observation.fields.{path}.enum_values", "enum fields require an explicit value list")
+                if "required" in declaration and not isinstance(declaration["required"], bool):
+                    issue("INVALID_VALUE", f"observation.fields.{path}.required", "required must be boolean")
+                if "description" in declaration and not isinstance(declaration["description"], str):
+                    issue("INVALID_VALUE", f"observation.fields.{path}.description", "description must be a string")
+                if declaration.get("type") == "enum":
+                    values = declaration.get("enum_values")
+                    if not isinstance(values, list) or not values or any(not isinstance(item, str) or not item for item in values):
+                        issue("INVALID_ENUM", f"observation.fields.{path}.enum_values", "enum fields require non-empty string values")
+                    elif len(values) != len(set(values)):
+                        issue("INVALID_ENUM", f"observation.fields.{path}.enum_values", "enum values must be unique")
+                elif "enum_values" in declaration:
+                    issue("INVALID_ENUM", f"observation.fields.{path}.enum_values", "enum_values is only valid for enum fields")
 
         plan_policy = value.get("plan_policy")
         if not isinstance(plan_policy, dict):
@@ -201,6 +367,10 @@ class DomainSkillRegistry:
                 issue("UNKNOWN_FIELD", f"plan_policy.{key}", "field is not supported")
             if plan_policy.get("unobserved_values") not in {"assumption_or_question", "question", "preserve_unknown"}:
                 issue("INVALID_PLAN_POLICY", "plan_policy.unobserved_values", "must preserve unknowns or request clarification")
+            if plan_policy.get("conflict_policy") not in {"ask_user", "preserve_unknown"}:
+                issue("INVALID_PLAN_POLICY", "plan_policy.conflict_policy", "must ask_user or preserve_unknown")
+            if plan_policy.get("requirement_mapping") not in {"retain_source_and_field_path"}:
+                issue("INVALID_PLAN_POLICY", "plan_policy.requirement_mapping", "unsupported requirement mapping policy")
 
         requirements = value.get("requirements")
         if not isinstance(requirements, list):

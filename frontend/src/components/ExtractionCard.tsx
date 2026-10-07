@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useT } from '../i18n'
-import type { VisionExtraction } from '../api/types'
+import type { VisionExtraction, VisionFusion } from '../api/types'
 
 /**
  * 读图提取卡片（P5d-1，只读）。
@@ -18,6 +18,7 @@ export function ExtractionCardList({ extractions }: { extractions: VisionExtract
       {visible.map((ext, i) => (
         <ExtractionCard key={`${ext.sha256 ?? ''}-${i}`} extraction={ext} />
       ))}
+      <FusionConflictNotice fusion={visible.find((e) => e.fusion)?.fusion} />
     </div>
   )
 }
@@ -26,6 +27,31 @@ function renderValue(value: unknown): string {
   if (value === null || value === undefined) return '—'
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+function FusionConflictNotice({ fusion }: { fusion?: VisionFusion }) {
+  const t = useT()
+  const conflicts = fusion?.conflicts ?? []
+  if (!conflicts.length) return null
+  return (
+    <section className="assistant-vision-degraded" role="alert">
+      <strong>{t('vision.extraction.conflictsTitle')}</strong>
+      <p>{t('vision.extraction.conflictsHelp')}</p>
+      <ul>
+        {conflicts.map((conflict) => (
+          <li key={`${conflict.state_key ?? 'default'}:${conflict.field_path}`}>
+            <code>{conflict.field_path}</code>：
+            {conflict.candidates.map((candidate, index) => (
+              <span key={index} title={candidate.evidence || undefined}>
+                {index ? ' / ' : ''}{renderValue(candidate.value)}{candidate.unit ? ` ${candidate.unit}` : ''}
+                {candidate.role ? ` (${candidate.role})` : ''}
+              </span>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
 }
 
 /** 顶层字段行的附加标记：嵌套路径修正（grid_topology.rows 4→3）与低置信（低置信：grid_topology.rows） */
@@ -65,6 +91,18 @@ function ExtractionCard({ extraction }: { extraction: VisionExtraction }) {
       {critic_degraded ? (
         <p className="assistant-vision-degraded">⚠️ {t('vision.extraction.criticDegraded')}</p>
       ) : null}
+      {extraction.domain_skill_status === 'unverified' ? (
+        <p className="assistant-vision-degraded">⚠️ {t('vision.extraction.skillUnverified', {
+          skill: extraction.domain_skill_id ?? schemaName ?? '',
+          version: extraction.domain_skill_version ?? '',
+        })}</p>
+      ) : null}
+      {extraction.domain_skill_status === 'unsupported' ? (
+        <p className="assistant-vision-degraded">{t('vision.extraction.skillUnsupported')}</p>
+      ) : null}
+      {extraction.domain_skill_status === 'ambiguous' ? (
+        <p className="assistant-vision-degraded">{t('vision.extraction.skillAmbiguous')}</p>
+      ) : null}
       {extraction.reused_from_model ? (
         <p className="assistant-vision-reused">
           ♻️ {t('vision.extraction.reusedFrom')}：{extraction.reused_from_model}
@@ -81,7 +119,7 @@ function ExtractionCard({ extraction }: { extraction: VisionExtraction }) {
               return (
                 <tr key={key} className={low ? 'is-low-confidence' : undefined}>
                   <th>{key}</th>
-                  <td>
+                  <td title={(extraction.evidence ?? {})[key] || undefined}>
                     {correction ? (
                       <span
                         className="assistant-vision-correction"
@@ -178,18 +216,21 @@ export function ExtractionConfirmCard({
   // 可编辑范围按每张图各自的 schema 计算（设计 D4）；多图混合 schema 时不能取并集，
   // 否则 A 图的可编辑路径会把 B 图的同名字段也变成输入框
   const editablePathsFor = (ext: VisionExtraction) =>
-    new Set<string>([...(ext.required ?? []), ...(ext.critic_checks ?? [])])
+    new Set<string>([...(ext.required ?? []), ...(ext.critic_checks ?? []), ...(ext.editable_fields ?? [])])
 
   function buildConfirmed(): VisionExtraction[] {
     return visible.map((ext, extIndex) => {
       const fields = JSON.parse(JSON.stringify(ext.fields ?? {})) as Record<string, unknown>
+      const userOverrides: Record<string, unknown> = {}
       for (const [key, raw] of Object.entries(drafts)) {
         const [idx, path] = key.split('|')
         if (Number(idx) !== extIndex) continue
         const original = getNested(ext.fields, path)
-        setNested(fields, path, coerceEditedValue(original, raw))
+        const edited = coerceEditedValue(original, raw)
+        setNested(fields, path, edited)
+        userOverrides[path] = edited
       }
-      return { ...ext, fields }
+      return { ...ext, fields, user_overrides: userOverrides }
     })
   }
 
@@ -209,6 +250,7 @@ export function ExtractionConfirmCard({
           onDraft={setDrafts}
         />
       ))}
+      <FusionConflictNotice fusion={visible.find((e) => e.fusion)?.fusion} />
       <div className="plan-confirm-actions">
         <button
           type="button"
@@ -268,6 +310,18 @@ function EditableExtraction({
       </div>
       {degraded ? <p className="assistant-vision-degraded">⚠️ {t('vision.extraction.degraded')}</p> : null}
       {critic_degraded ? <p className="assistant-vision-degraded">⚠️ {t('vision.extraction.criticDegraded')}</p> : null}
+      {extraction.domain_skill_status === 'unverified' ? (
+        <p className="assistant-vision-degraded">⚠️ {t('vision.extraction.skillUnverified', {
+          skill: extraction.domain_skill_id ?? schemaName ?? '',
+          version: extraction.domain_skill_version ?? '',
+        })}</p>
+      ) : null}
+      {extraction.domain_skill_status === 'unsupported' ? (
+        <p className="assistant-vision-degraded">{t('vision.extraction.skillUnsupported')}</p>
+      ) : null}
+      {extraction.domain_skill_status === 'ambiguous' ? (
+        <p className="assistant-vision-degraded">{t('vision.extraction.skillAmbiguous')}</p>
+      ) : null}
       {rows.length ? (
         <table className="assistant-vision-fields">
           <tbody>
@@ -280,7 +334,7 @@ function EditableExtraction({
                 return (
                   <tr key={key} className={lowNested ? 'is-low-confidence' : undefined}>
                     <th>{key}</th>
-                    <td>
+                    <td title={(extraction.evidence ?? {})[key] || undefined}>
                       {nested.map((path) => {
                         const current = getNested(fields, path)
                         const low = (confidence ?? {})[path] === 'low'
@@ -315,7 +369,7 @@ function EditableExtraction({
                 return (
                   <tr key={key} className={low ? 'is-low-confidence' : undefined}>
                     <th>{key}</th>
-                    <td>
+                    <td title={(extraction.evidence ?? {})[key] || undefined}>
                       <label className="assistant-vision-edit-row">
                         <input
                           className="assistant-vision-edit-input"
@@ -342,7 +396,7 @@ function EditableExtraction({
               return (
                 <tr key={key} className={low ? 'is-low-confidence' : undefined}>
                   <th>{key}</th>
-                  <td>
+                  <td title={(extraction.evidence ?? {})[key] || undefined}>
                     {correction ? (
                       <span className="assistant-vision-correction" title={correction.evidence ? t('vision.extraction.evidenceHint') : undefined}>
                         {renderValue(correction.old)} → {renderValue(correction.new)}

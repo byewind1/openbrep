@@ -4,14 +4,14 @@ import pytest
 
 from openbrep.contracts.project_store import (
     CONTRACT_RELATIVE_PATH,
+    commit_project_source_state,
     commit_project_state,
     load_project_contract,
     recover_project_state,
 )
 from openbrep.hsf_project import HSFProject
+from openbrep.revisions import copy_project_metadata, create_revision, restore_revision
 from openbrep.source_fingerprint import compute_source_fingerprint
-from openbrep.revisions import create_revision, restore_revision
-from openbrep.revisions import copy_project_metadata
 from openbrep.source_snapshot import capture_snapshot
 from openbrep.workbench.project_session_service import project_to_snapshot
 
@@ -48,6 +48,38 @@ def test_normal_source_save_makes_contract_explicitly_stale(tmp_path):
     project.save_to_disk()
 
     assert load_project_contract(project.root).status == "stale"
+
+
+def test_coordinated_manual_source_edit_preserves_contract_as_stale(tmp_path):
+    project = HSFProject.create_new("Shelf", str(tmp_path))
+    assert commit_project_state(project, _spec()).ok
+    contract_before = (project.root / CONTRACT_RELATIVE_PATH).read_bytes()
+    candidate = HSFProject.load_from_disk(str(project.root))
+    candidate.set_script(next(iter(candidate.scripts)), "BLOCK 4, 4, 4\n")
+
+    result = commit_project_source_state(candidate)
+
+    assert result.ok
+    assert (project.root / CONTRACT_RELATIVE_PATH).read_bytes() == contract_before
+    assert load_project_contract(project.root).status == "stale"
+
+
+def test_coordinated_source_edit_failure_restores_source_and_contract(tmp_path):
+    project = HSFProject.create_new("Shelf", str(tmp_path))
+    assert commit_project_state(project, _spec()).ok
+    contract_before = (project.root / CONTRACT_RELATIVE_PATH).read_bytes()
+    source_before = (project.root / "scripts/3d.gdl").read_bytes()
+
+    def partial_writer():
+        (project.root / "scripts/3d.gdl").write_text("PARTIAL\n", encoding="utf-8")
+        raise OSError("simulated source failure")
+
+    result = commit_project_source_state(project, source_writer=partial_writer)
+
+    assert not result.ok
+    assert (project.root / "scripts/3d.gdl").read_bytes() == source_before
+    assert (project.root / CONTRACT_RELATIVE_PATH).read_bytes() == contract_before
+    assert load_project_contract(project.root).status == "fresh"
 
 
 def test_failed_source_writer_rolls_back_source_and_contract(tmp_path):

@@ -591,6 +591,8 @@ class LLMConfig:
     # 无效值一律按默认解释（fail safe），保存时只写规范枚举。
     codex_entry: str = "managed"
     conversation_entry: str = "unified"
+    # U05-C: 默认是否在执行前展示计划并等待批准。单轮覆盖不写入配置。
+    confirm_before_execute: bool = False
     # R5：角色级 fallback/cooldown/revert 配置。默认空字典，不启用任何
     # 新的重试路径；由 model_retry.RetryRouter 负责规范化读取。
     retry: dict[str, object] = field(default_factory=dict)
@@ -1214,6 +1216,7 @@ class GDLAgentConfig:
                     else {}
                 ),
                 **({"conversation_entry": "legacy"} if self.llm.effective_conversation_entry() == "legacy" else {}),
+                "confirm_before_execute": bool(self.llm.confirm_before_execute),
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
                 "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
@@ -1282,6 +1285,8 @@ class GDLAgentConfig:
             lines.append(f'codex_entry = "{self.llm.effective_codex_entry()}"')
         if self.llm.effective_conversation_entry() == "legacy":
             lines.append('conversation_entry = "legacy"')
+        if self.llm.confirm_before_execute:
+            lines.append("confirm_before_execute = true")
         if self.llm.api_base:
             lines.append(f'api_base = "{self.llm.api_base}"')
         lines += [

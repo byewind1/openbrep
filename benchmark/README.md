@@ -84,3 +84,12 @@ python benchmark/ab_compare.py --suite benchmark/tasks/modify/ --mode mock --llm
 `benchmark/results/modify_ab_summary.md`。新路径胜率不高于旧路径则不推广，
 仅作为可开关的实验路径存在。
 
+## Domain Skill vision evaluation reports
+
+`benchmark/vision_evaluation.py` aggregates normalized H1/H2/H3 run records
+after a Domain Skill supplies its own frozen case list and predeclared gate.
+It keeps skill/version, stage, model channel, and development/holdout split
+separate; failed and unknown runs remain in the denominator, and missing cases
+are reported as incomplete coverage. A report without the matching expected
+case list and Skill-owned gate is `uncalibrated`, never a pass. This module
+does not define visual truth, select or label images, or call a model.

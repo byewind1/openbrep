@@ -4470,6 +4470,7 @@ _ALLOWED_FUNCS = {
     "TAN": lambda x: math.tan(math.radians(x)),
     "INT": lambda x: float(int(x)),
     "ROUND": lambda x: float(round(x)),
+    "MOD": lambda x, y: float(x % y),
     "MIN": lambda *x: min(x),
     "MAX": lambda *x: max(x),
     # P14：GDL NOT 的函数形态 not(x)（_translate_gdl_expr 译为大写调用）

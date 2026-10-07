@@ -12,6 +12,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from openbrep.compiler import MockHSFCompiler
 from openbrep.config import GDLAgentConfig
@@ -314,18 +315,14 @@ class TestPipelineAcceptance(unittest.TestCase):
         self.assertTrue(any("已修改文件" in line for line in acceptance["summary_lines"]))
 
     def test_failed_modify_has_no_acceptance(self):
-        # 修改在应用前抛异常（save_to_disk 失败）→ execute 兜底返回，不带 acceptance
+        # 结构化参数的原子写失败 → execute 兜底返回，不带 acceptance。
         pipeline = self._pipeline(MockLLM(responses=["unused"]))
         project = _make_project(self.tmp)
-
-        def broken_save():
-            raise OSError("disk full")
-
-        project.save_to_disk = broken_save
-        result = pipeline.execute(TaskRequest(
-            user_input="把 shelf_count 改成 5", intent="MODIFY", project=project,
-            work_dir=str(self.tmp), output_dir=str(self.tmp / "out"), agent_loop=False,
-        ))
+        with patch("openbrep.parameter_mutations._atomic_write", side_effect=OSError("disk full")):
+            result = pipeline.execute(TaskRequest(
+                user_input="把 shelf_count 改成 5", intent="MODIFY", project=project,
+                work_dir=str(self.tmp), output_dir=str(self.tmp / "out"), agent_loop=False,
+            ))
         self.assertFalse(result.success)
         self.assertFalse(result.metadata.get("acceptance"))
 

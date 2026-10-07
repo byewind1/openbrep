@@ -286,6 +286,7 @@ def apply_parameter_value(
     changed_files: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
     create_revision: Callable[..., Any] | None = None,
+    commit_executor: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> tuple[Optional[str], list[str]]:
     """快照→改值→落盘：参数值变更的统一落盘语义。
 
@@ -308,7 +309,17 @@ def apply_parameter_value(
 
     if not _project_on_disk(project):
         warnings.append("项目尚未保存为 HSF 目录，已跳过自动版本快照")
-    else:
+        param = project.get_parameter(param_name)
+        if param is not None:
+            param.value = new_value
+        project.save_to_disk()
+        return revision_id, warnings
+
+    from openbrep.parameter_mutations import mutate_project_parameters
+    from openbrep.source_fingerprint import compute_source_fingerprint
+
+    def snapshot_before_write() -> None:
+        nonlocal revision_id
         try:
             revision = create_revision(
                 project.root,
@@ -318,15 +329,20 @@ def apply_parameter_value(
                 trigger=trigger,
                 intent=intent,
                 user_instruction=user_instruction,
-                changed_files=list(changed_files or []),
+                changed_files=list(changed_files or ["paramlist.xml"]),
                 parent_revision_id=get_latest_revision_id(project.root),
             )
             revision_id = revision.revision_id
         except Exception as exc:
             warnings.append(f"自动版本快照失败：{exc}")
 
-    param = project.get_parameter(param_name)
-    if param is not None:
-        param.value = new_value
-    project.save_to_disk()
+    result = mutate_project_parameters(
+        project,
+        expected_source_fingerprint=compute_source_fingerprint(project.root),
+        operations=[{"op": "set_value", "name": param_name, "value": new_value}],
+        before_commit=snapshot_before_write,
+        commit_executor=commit_executor,
+    )
+    if not result.ok:
+        warnings.append(f"PARAMETER_MUTATION_REJECTED:{result.error_code}: {result.error or ''}")
     return revision_id, warnings

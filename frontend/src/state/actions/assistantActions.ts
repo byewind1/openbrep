@@ -60,6 +60,7 @@ export function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem
   // 卡05：任务时间线与事件记录关联持久化——重开项目可复盘执行过程
   if (message.thinkingSteps?.length) meta.thinking_steps = message.thinkingSteps
   if (message.turnTaskRef) meta.task_ref = message.turnTaskRef
+  if (message.pendingPlan !== undefined) meta.pending_plan = message.pendingPlan
   // 任务类 assistant 消息即使无 delivery 也写入 meta.delivery=null 标记，
   // 便于刷新后区分「本就没有卡」与「旧记录未关联」
   if (message.role === 'assistant' && (message.delivery || message.deliverySource || message.changedFiles?.length)) {
@@ -149,6 +150,8 @@ function normalizeHistoryMessage(raw: AssistantMessage): AssistantMessage {
   const changedFiles =
     (bag.changedFiles as string[] | undefined) ??
     ((bag.changed_files as string[] | undefined) ?? (meta.changed_files as string[] | undefined))
+  const pendingPlan = (bag.pendingPlan as PendingPlan | null | undefined)
+    ?? (meta.pending_plan as PendingPlan | null | undefined)
   return {
     ...raw,
     delivery: delivery || undefined,
@@ -157,6 +160,7 @@ function normalizeHistoryMessage(raw: AssistantMessage): AssistantMessage {
     originalInstruction: originalInstruction || undefined,
     runId: runId ?? undefined,
     changedFiles: changedFiles || undefined,
+    pendingPlan: pendingPlan ?? undefined,
   }
 }
 
@@ -515,6 +519,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
           runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
           turnTaskRef: taskRef,
+          pendingPlan: null,
         })
       : compactExtras({
           errorCategory: classifyAssistantError(finalReply),
@@ -524,10 +529,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
           runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
           turnTaskRef: taskRef,
+          pendingPlan: null,
         })
     set((state) => ({
       assistantBusy: false,
       assistantMessages: replacePendingAssistantMessage(state.assistantMessages, finalReply, replyExtras),
+      pendingPlan: null,
       lastError: result.ok ? null : finalReply,
       preview: result.preview ?? state.preview,
       warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
@@ -553,11 +560,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
   }
 
   async function finishUnified(result: import('../../api/types').ConversationTurnResult, epoch: number,
-    steps: AssistantThinkingStep[], message: string) {
+    steps: AssistantThinkingStep[], message: string, originalHasImages = false) {
     if (projectSwitchedSince(epoch)) return discardStaleResult('Conversation result discarded: project switched.')
     // 卡05：任务事件记录关联（重开复盘的锚点）
     const taskRef: import('../../api/types').TurnTaskRef | undefined = result.turn_id
-      ? { turn_id: result.turn_id, run_id: result.assistant?.run_id ?? null, schema_version: 1 }
+      ? { turn_id: result.turn_id, run_id: result.assistant?.run_id ?? null, reference_available: originalHasImages, schema_version: 1 }
       : undefined
     if (result.awaiting_extraction_confirmation && result.extractions?.length) {
       set((state) => ({ assistantBusy: false, pendingExtraction: { turn_id: result.turn_id, extractions: result.extractions!, message, images: [] },
@@ -566,10 +573,16 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       return
     }
     if (result.result_kind === 'awaiting_confirmation' && result.pending_plan) {
+      const pendingPlan: PendingPlan = {
+        ...result.pending_plan,
+        turn_id: result.turn_id,
+        original_request: message,
+        original_has_images: originalHasImages,
+      }
       set((state) => ({ assistantBusy: false,
-        pendingPlan: { ...result.pending_plan!, turn_id: result.turn_id },
+        pendingPlan,
         assistantMessages: replacePendingAssistantMessage(state.assistantMessages, PLAN_PENDING_CONTENT,
-          { turnTaskRef: taskRef, thinkingSteps: [...steps] }),
+          { turnTaskRef: taskRef, thinkingSteps: [...steps], pendingPlan }),
       }))
       await persistAssistantHistory()
       return
@@ -579,8 +592,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadRecentProjects()
-      set((state) => ({ assistantBusy: false, assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
-        result.assistant?.reply ?? 'Project created.', { verification: result.assistant?.verification ?? undefined, turnTaskRef: taskRef }) }))
+      set((state) => ({ assistantBusy: false, pendingPlan: null, assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
+        result.assistant?.reply ?? 'Project created.', { verification: result.assistant?.verification ?? undefined, turnTaskRef: taskRef, pendingPlan: null }) }))
       await persistAssistantHistory()
       return
     }
@@ -592,11 +605,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     const reply = result.ok
       ? result.assistant?.reply ?? '本轮未执行。'
       : turnErrorText(result.code, result.error ?? (result.cancelled ? '⏹ 已取消本轮。' : '本轮未执行。'))
+    const refreshedPlan = result.pending_plan
+      ? { ...result.pending_plan, turn_id: result.turn_id }
+      : null
     set((state) => ({ assistantBusy: false,
       assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply,
         { advisor: result.advisor, turnTaskRef: taskRef, thinkingSteps: closeRunningSteps(steps),
-          recordingFailed: result.events_recording?.status === 'degraded' }),
+          recordingFailed: result.events_recording?.status === 'degraded', pendingPlan: refreshedPlan }),
       lastError: result.ok ? null : reply,
+      pendingPlan: refreshedPlan,
     }))
     // RF04：咨询/失败/取消等全部终端分支都立即落盘聊天正文与 task_ref
     await persistAssistantHistory()
@@ -634,7 +651,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
   }
 
   async function sendUnified(message: string, images: AssistantImageAttachment[], requestedMode: 'auto' | 'plan',
-    approveCreate?: () => Promise<boolean>, proposal?: { id: string; action: 'select' | 'execute' }) {
+    approveCreate?: () => Promise<boolean>, proposal?: { id: string; action: 'select' | 'execute' }, confirmBeforeExecute = false) {
     const epoch = get().projectEpoch
     const controller = new AbortController()
     const history = buildAssistantHistory(get().assistantMessages)
@@ -646,7 +663,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     // 卡05：prepare 也流式——语义路由/咨询/计划生成的阶段即时上时间线
     const prepareSteps: AssistantThinkingStep[] = []
     const prepare = () => api.conversationTurn({ phase: 'prepare', client_turn_id: crypto.randomUUID(),
-      message, history, images, requested_mode: proposal?.action === 'select' ? 'consult' : requestedMode, project_epoch: epoch,
+      message, history, images, requested_mode: proposal?.action === 'select' ? 'consult' : requestedMode,
+      confirm_before_execute: confirmBeforeExecute, project_epoch: epoch,
       stream: true,
       // R2（二轮 review）：效果契约的 change_kind 由后端按本轮任务意图确定性
       // 推导（材质/新增选项/参数/几何），不再用"有图片"替代意图判断——
@@ -679,12 +697,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             } else execution = { result, steps: [...prepareSteps] }
           }
           if (execution) {
-            await finishUnified(execution.result, epoch, execution.steps, message)
+            await finishUnified(execution.result, epoch, execution.steps, message, images.length > 0)
             return
           }
         }
       }
-      await finishUnified(result, epoch, [...prepareSteps], message)
+      await finishUnified(result, epoch, [...prepareSteps], message, images.length > 0)
     } catch (error) {
       if (!projectSwitchedSince(epoch)) {
         set((state) => ({ assistantBusy: false,
@@ -807,7 +825,27 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       }
       // ST03 F2：刷新后恢复 delivery 卡；旧/缺关联记录显示 unlinked
       const hydrated = hydrateHistoryMessages(result.messages ?? [])
-      set({ assistantMessages: hydrated })
+      const historicPending = [...hydrated].reverse().find((message) => message.pendingPlan)?.pendingPlan
+      // Workbench snapshot may already have restored the live server turn. An
+      // empty/older history response must not erase that authoritative state.
+      let restoredPending: PendingPlan | null = get().pendingPlan
+      if (historicPending) {
+        restoredPending = { ...historicPending, restored_display_only: true }
+        if (historicPending.turn_id) {
+          try {
+            const status = await api.conversationTurn({ phase: 'status', turn_id: historicPending.turn_id })
+            if (status.result_kind === 'awaiting_confirmation' && status.pending_plan) {
+              restoredPending = {
+                ...status.pending_plan,
+                turn_id: historicPending.turn_id,
+                original_request: historicPending.original_request,
+                original_has_images: historicPending.original_has_images,
+              }
+            }
+          } catch { /* History still shows the plan as display-only. */ }
+        }
+      }
+      set({ assistantMessages: hydrated, pendingPlan: restoredPending })
       // RF04：进程退出后未完成的任务——从任务索引发现（不依赖前端末次 save），
       // 合成"已开始未结束"条目并恢复其执行过程，不伪造最终答复。
       if (typeof api.listTurnEvents === 'function') {
@@ -944,6 +982,37 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
 
     consumeAssistantDraftSeed() {
       set({ assistantDraftSeed: null })
+    },
+
+    async reviewVisualTurn(turnId: string, force = false) {
+      const epoch = get().projectEpoch
+      const runId = get().assistantMessages.find((message) => message.turnTaskRef?.turn_id === turnId)?.turnTaskRef?.run_id
+      const update = (patch: Partial<AssistantMessage>) => set((state) => ({
+        assistantMessages: state.assistantMessages.map((message) =>
+          message.turnTaskRef?.turn_id === turnId ? { ...message, ...patch } : message,
+        ),
+      }))
+      update({ visualReviewBusy: true, visualReviewError: undefined })
+      try {
+        if (!force && runId) {
+          const saved = await api.fetchSavedVisualReviews(runId)
+          if (projectSwitchedSince(epoch)) return
+          const prior = saved.ok ? saved.reports?.[0] : undefined
+          if (prior) {
+            update({ visualReviewBusy: false, visualReview: prior, visualReviewRestored: true })
+            return
+          }
+        }
+        const result = await api.requestVisualReview(turnId, epoch)
+        if (projectSwitchedSince(epoch)) return
+        if (!result.ok || !result.review) {
+          update({ visualReviewBusy: false, visualReviewError: result.error ?? '视觉对照失败。' })
+          return
+        }
+        update({ visualReviewBusy: false, visualReview: result.review, visualReviewError: undefined, visualReviewRestored: false })
+      } catch (error) {
+        if (!projectSwitchedSince(epoch)) update({ visualReviewBusy: false, visualReviewError: String(error) })
+      }
     },
 
     async adoptAssistantMessageCode(index: number) {
@@ -1123,11 +1192,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     // ── Unified chat entry point ───────────────────────────────────────────
     // Detects intent → routes to explain / generate / create.
     // Supports AbortController for ESC / stop-button interruption.
-    async sendChat(message: string, images: AssistantImageAttachment[] = [], requestedMode: 'auto' | 'plan' = 'auto', approveCreate?: () => Promise<boolean>) {
+    async sendChat(message: string, images: AssistantImageAttachment[] = [], requestedMode: 'auto' | 'plan' = 'auto', approveCreate?: () => Promise<boolean>, confirmBeforeExecute = false) {
       if (!guardSourceBusy()) return
       const trimmed = message.trim()
       if (!trimmed) return
-      if (get().llmSettings.conversation_entry !== 'legacy') return sendUnified(trimmed, images, requestedMode, approveCreate)
+      if (get().llmSettings.conversation_entry !== 'legacy') return sendUnified(trimmed, images, requestedMode, approveCreate, undefined, confirmBeforeExecute)
 
       const hasProject = !!get().project
       const interrupted = get().interruptedContext
@@ -1360,6 +1429,20 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         set({ lastError: '没有待确认的修改计划，请先发起一次修改。' })
         return
       }
+      if (plan.restored_display_only) {
+        if (approve) {
+          set({ lastError: '这份历史计划没有可用的执行许可；请重新规划后再审批。' })
+          return
+        }
+        set((state) => ({
+          pendingPlan: null,
+          assistantMessages: state.assistantMessages.map((message) => message.pendingPlan?.plan_id === plan.plan_id
+            ? { ...message, pendingPlan: null, content: '⏹ 已关闭历史计划。重新规划后才能执行。' }
+            : message),
+        }))
+        await persistAssistantHistory()
+        return
+      }
       if (plan.turn_id) {
         const epoch = get().projectEpoch
         const controller = new AbortController()
@@ -1418,6 +1501,56 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         }))
       }, undefined, history)
       await finishModifyStream(result, epoch, '⏳ 正在按已确认的计划执行修改…', thinkingSteps)
+    },
+
+    async revisePendingPlan(instruction: string) {
+      if (!guardSourceBusy()) return
+      const plan = get().pendingPlan
+      if (!plan?.turn_id || !plan.plan_id || !Number.isInteger(plan.plan_version)) {
+        set({ lastError: '当前计划不能修改，请重新生成计划。' })
+        return
+      }
+      const revisionInstruction = instruction.trim()
+      if (!revisionInstruction) return
+      if (plan.restored_display_only) {
+        if (plan.original_has_images) {
+          set({ lastError: '这份计划使用过参考图；请在输入区重新附上图片，再发起审批计划。' })
+          return
+        }
+        const originalRequest = plan.original_request?.trim()
+        if (!originalRequest) {
+          set({ lastError: '历史计划没有可恢复的原始要求，请在输入区重新描述任务。' })
+          return
+        }
+        set((state) => ({
+          pendingPlan: null,
+          assistantMessages: state.assistantMessages.map((message) => message.pendingPlan?.plan_id === plan.plan_id
+            ? { ...message, pendingPlan: null, content: '📝 正在按修订要求重新规划…' }
+            : message),
+        }))
+        await persistAssistantHistory()
+        await get().sendChat(`${originalRequest}\n用户要求修改计划：${revisionInstruction}`, [], 'auto', undefined, true)
+        return
+      }
+      const epoch = get().projectEpoch
+      const controller = new AbortController()
+      set({ assistantBusy: true, chatAbortController: controller })
+      try {
+        const result = await api.conversationTurn({
+          phase: 'revise',
+          turn_id: plan.turn_id,
+          plan_id: plan.plan_id,
+          plan_version: plan.plan_version,
+          revision_instruction: revisionInstruction,
+        }, undefined, controller.signal)
+        if (result.pending_plan) set({ pendingPlan: { ...result.pending_plan, turn_id: result.turn_id } })
+        else if (result.result_kind !== 'awaiting_confirmation') set({ pendingPlan: null })
+        await finishUnified(result, epoch, [], plan.original_request ?? revisionInstruction, plan.original_has_images)
+      } catch (error) {
+        if (!projectSwitchedSince(epoch)) set({ lastError: String(error) })
+      } finally {
+        if (get().chatAbortController === controller) set({ assistantBusy: false, chatAbortController: null })
+      }
     },
 
     /** P5d-2 提取确认门：approve=true 用编辑后的 extractions 重发创建（跳过 harness）；false 取消清态。 */

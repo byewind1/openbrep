@@ -142,6 +142,20 @@ def run_semantic_repair_loop(
     """
     # 延迟导入：与 pipeline 保持一致，便于测试 patch 模块属性
     from openbrep.semantic_verifier import verify_semantics
+    from openbrep.static_checker import StaticChecker
+
+    def _stack_issues() -> list[Any]:
+        """Return deterministic transform-stack errors that the static repair
+        pre-pass intentionally leaves to the bounded repair loop.
+        """
+        try:
+            return [
+                issue for issue in StaticChecker().check(project).errors
+                if issue.check_type == "stack_imbalance"
+            ]
+        except Exception as exc:  # static analysis must never break delivery
+            logger.warning("Static stack check failed during semantic repair: %s", exc)
+            return []
 
     new_cleaned = dict(cleaned)
     accepted = 0
@@ -150,14 +164,13 @@ def run_semantic_repair_loop(
         compile_result is not None and compile_result.success
     )
 
-    while (
-        compile_gate_ok
-        and new_cleaned
-        and any(issue.blocking for issue in semantic_result.issues)
-        and round_no < max_rounds
-    ):
-        round_no += 1
+    while compile_gate_ok and new_cleaned and round_no < max_rounds:
         prev_blocking = [i for i in semantic_result.issues if i.blocking]
+        prev_stack = _stack_issues()
+        prev_issue_count = len(prev_blocking) + len(prev_stack)
+        if not prev_issue_count:
+            break
+        round_no += 1
         prev_scripts = dict(project.scripts)
         prev_params = deepcopy(project.parameters)
         prev_cleaned = dict(new_cleaned)
@@ -165,6 +178,9 @@ def run_semantic_repair_loop(
 
         issue_lines = "\n".join(
             f"- [{i.check_type}] {i.detail}" for i in prev_blocking
+        )
+        issue_lines += ("\n" if issue_lines and prev_stack else "") + "\n".join(
+            f"- [stack_imbalance] {i.detail}" for i in prev_stack
         )
         hint_issues = [
             i for i in semantic_result.issues
@@ -179,11 +195,15 @@ def run_semantic_repair_loop(
             "message": f"🧩 几何语义验证未过（第 {round_no} 轮），正在自动修复…"
         })
         logger.info(
-            "Semantic repair round %d; blocking=%d", round_no, len(prev_blocking),
+            "Semantic repair round %d; blocking=%d stack=%d",
+            round_no, len(prev_blocking), len(prev_stack),
+        )
+        check_label = (
+            "几何语义验证/结构检查" if prev_stack else "几何语义验证"
         )
         repair_instruction = (
             f"{instruction}\n\n"
-            f"脚本已能编译，但几何语义验证发现以下问题（第 {round_no} 轮），"
+            f"脚本已能编译，但{check_label}发现以下问题（第 {round_no} 轮），"
             f"请基于当前脚本进行最小改动修复：\n{issue_lines}{hint_block}"
         )
 
@@ -265,7 +285,9 @@ def run_semantic_repair_loop(
 
             new_semantic = verify_semantics(project)
             new_blocking = [i for i in new_semantic.issues if i.blocking]
-            if round_compile_ok and len(new_blocking) < len(prev_blocking):
+            new_stack = _stack_issues()
+            new_issue_count = len(new_blocking) + len(new_stack)
+            if round_compile_ok and new_issue_count < prev_issue_count:
                 # 接受本轮修复
                 new_cleaned.update(round_cleaned)
                 semantic_result = new_semantic
@@ -273,7 +295,7 @@ def run_semantic_repair_loop(
                 auto_repair_info = _join_info(
                     auto_repair_info,
                     f"🧩 第 {round_no} 轮几何语义修复生效："
-                    f"阻断问题 {len(prev_blocking)} → {len(new_blocking)}",
+                    f"阻断问题 {prev_issue_count} → {new_issue_count}",
                 )
             else:
                 # 未改善或改坏编译：回退并恢复编译产物，保证交付不劣化
@@ -286,9 +308,7 @@ def run_semantic_repair_loop(
                 else:
                     project.save_to_disk()
                     compile_result = prev_compile_result
-                reject_reason = (
-                    "修复后编译失败" if not round_compile_ok else "阻断问题数未下降"
-                )
+                reject_reason = "修复后编译失败" if not round_compile_ok else "阻断问题数未下降"
                 auto_repair_info = _join_info(
                     auto_repair_info,
                     f"🧩 第 {round_no} 轮几何语义修复{reject_reason}，已回退",

@@ -60,9 +60,10 @@ class GDLLinter:
                 continue
 
             if "RULE-001" not in self.disabled_rules:
-                issue = self._check_rule_001(idx, line)
-                if issue:
-                    issues.append(issue)
+                if not self._has_manual_quadrant_correction(lines, idx - 1, line):
+                    issue = self._check_rule_001(idx, line)
+                    if issue:
+                        issues.append(issue)
 
             if "RULE-002" not in self.disabled_rules:
                 issue = self._check_rule_002(idx, line)
@@ -106,12 +107,13 @@ class GDLLinter:
             replaced = False
 
             if not replaced and "RULE-001" not in self.disabled_rules:
-                fix_lines, issue = self._fix_rule_001(idx, line)
-                if issue:
-                    issues.append(issue)
-                    if fix_lines is not None:
-                        fixed_lines.extend(fix_lines)
-                        replaced = True
+                if not self._has_manual_quadrant_correction(lines, idx - 1, line):
+                    fix_lines, issue = self._fix_rule_001(idx, line)
+                    if issue:
+                        issues.append(issue)
+                        if fix_lines is not None:
+                            fixed_lines.extend(fix_lines)
+                            replaced = True
 
             if not replaced and "RULE-002" not in self.disabled_rules:
                 fix_line, issue = self._fix_rule_002(idx, line)
@@ -169,6 +171,42 @@ class GDLLinter:
             severity="WARNING",
             line=line_no,
             message="ATN(y/x) 无法正确处理象限，建议改为 atan2 风格写法",
+        )
+
+    def _has_manual_quadrant_correction(
+        self, lines: list[str], index: int, line: str
+    ) -> bool:
+        """Avoid layering the automatic atan2 fix over an existing correction.
+
+        Some GDL authors intentionally use ``ATN(y / x)`` followed by an
+        ``IF x < 0 THEN angle = angle + 180`` block. Rewriting the assignment
+        and leaving that block in place applies the quadrant correction twice.
+        This narrow look-ahead only recognizes a named denominator and the
+        matching angle adjustment in the following few lines.
+        """
+        match = self._ATN_ASSIGN_RE.match(line)
+        if match is None:
+            return False
+        parsed = self._split_division_expr(match.group("expr").strip())
+        if parsed is None:
+            return False
+        denominator = parsed[1].strip()
+        target = match.group("var")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", denominator):
+            return False
+
+        following = lines[index + 1 : index + 8]
+        condition = re.compile(
+            rf"^\s*IF\s+{re.escape(denominator)}\s*<\s*0\s+THEN\b",
+            re.IGNORECASE,
+        )
+        adjustment = re.compile(
+            rf"^\s*{re.escape(target)}\s*=\s*{re.escape(target)}"
+            rf"\s*\+\s*180\b",
+            re.IGNORECASE,
+        )
+        return any(condition.search(candidate) for candidate in following) and any(
+            adjustment.search(candidate) for candidate in following
         )
 
     def _check_rule_002(self, line_no: int, line: str) -> LintIssue | None:

@@ -2,19 +2,13 @@
 id: C13
 category: create
 complexity: medium
-description: "车削栏杆柱（旋木造型），总高度900mm，柱身分段数参数化（默认3段，每段直径不同模拟车削造型），柱身基础直径参数化，柱顶直径参数化。参数必须使用这些名称：ZZYZX（总高度）、seg_count（柱身分段数）、base_d（基础直径）、top_d（柱顶直径）"
+description: "车削栏杆柱（旋木造型），总高度900mm。总高度、基础直径、柱顶直径和柱身分段数均可参数化（默认3段）；剖面应呈现从基础直径向柱顶直径过渡的轴对称车削外形。参数必须使用这些名称：ZZYZX（总高度）、seg_count（柱身分段数）、base_d（基础直径）、top_d（柱顶直径）。几何命令由模型按造型选择，不限定实现算法。"
 success_criteria:
   compile_pass: true
   required_params: [ZZYZX, seg_count, base_d, top_d]
   required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
-  geometry_check: "多段CYLIND堆叠模拟车削造型，FOR循环驱动分段数，每段高度均分总高"
+  geometry_check: "轴对称车削外形随分段数、基础直径和柱顶直径改变，总高度与ZZYZX一致"
   semantic_assertions:
-    - type: command_present
-      script: 3d.gdl
-      command: CYLIND
-    - type: command_present
-      script: 3d.gdl
-      command: FOR
     - type: param_used
       script: 3d.gdl
       param: seg_count

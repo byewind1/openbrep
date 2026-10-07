@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from openbrep.domain_skills import DomainSkillRegistry
 
@@ -39,6 +38,30 @@ def test_builtin_skill_packages_are_development_only_and_use_synthetic_fixtures(
         assert all(item["kind"] == "synthetic" for item in result.skill.manifest["fixtures"])
 
 
+def test_synthetic_domain_fixtures_load_as_typed_observations():
+    registry = DomainSkillRegistry.builtin()
+
+    for skill_id in registry.skill_ids:
+        package = registry.load(skill_id).skill
+        assert package is not None
+        for declaration in package.manifest["fixtures"]:
+            loaded = registry.load_fixture(skill_id, declaration["fixture_id"])
+            assert loaded.ok, [issue.__dict__ for issue in loaded.issues]
+            fixture = loaded.fixture
+            assert fixture is not None
+            assert fixture.version == package.version
+            assert fixture.sha256 == declaration["sha256"]
+            assert fixture.observation.source == "synthetic"
+            declared_fields = package.manifest["observation"]["fields"]
+            for item in fixture.observation.items:
+                assert item.field_path in declared_fields
+                assert item.unit == declared_fields[item.field_path].get("unit")
+                if item.status == "unknown":
+                    assert item.value is None
+            if fixture.expected.get("unknown_fields_remain_unknown"):
+                assert any(item.status == "unknown" for item in fixture.observation.items)
+
+
 def test_skill_selection_matches_domain_and_intent_without_prompt_injection():
     registry = DomainSkillRegistry.builtin()
 
@@ -50,6 +73,13 @@ def test_skill_selection_matches_domain_and_intent_without_prompt_injection():
     assert unsupported == ()
     assert selected[0].prompt_text == ""
     assert resolution.status == "unverified"
+
+
+def test_fixture_loader_rejects_undeclared_fixture_id():
+    result = DomainSkillRegistry.builtin().load_fixture("cabinet", "invented")
+
+    assert not result.ok
+    assert result.issues[0].code == "FIXTURE_NOT_FOUND"
 
 
 def test_manifest_rejects_unknown_fields_and_unregistered_checks(tmp_path):
@@ -65,6 +95,19 @@ def test_manifest_rejects_unknown_fields_and_unregistered_checks(tmp_path):
 
     assert not result.ok
     assert {issue.code for issue in result.issues} >= {"UNKNOWN_FIELD", "UNKNOWN_CHECK_EXECUTOR"}
+
+
+def test_manifest_rejects_unknown_policy_values(tmp_path):
+    package = tmp_path / "cabinet"
+    package.mkdir()
+    manifest = _manifest()
+    manifest["plan_policy"].update({"conflict_policy": "trust_image", "requirement_mapping": "guess"})
+    (package / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = DomainSkillRegistry(tmp_path).load("cabinet")
+
+    assert not result.ok
+    assert sum(issue.code == "INVALID_PLAN_POLICY" for issue in result.issues) == 2
 
 
 def test_fixture_hash_license_and_package_paths_are_verified(tmp_path):

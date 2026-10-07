@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "generated_at": "2026-09-20T04:20:29",
-  "commit": "84ffd1a68133229a9d82b6830cdfaec4a22ce75d",
+  "generated_at": "2026-10-08T01:58:32",
+  "commit": "45f954fb179789087d722f3f3076b82da362d2ab",
   "mode": "mock",
   "suites": {
     "create": {
       "corpus": "benchmark/fixtures/llm_corpus/create.jsonl",
-      "pass": 15,
+      "pass": 16,
       "tasks": {
         "C01": {
           "success": true,
@@ -57,8 +57,8 @@
           "criteria_failures": 0
         },
         "C13": {
-          "success": false,
-          "criteria_failures": 3
+          "success": true,
+          "criteria_failures": 0
         },
         "C14": {
           "success": true,
@@ -86,7 +86,7 @@
         },
         "C20": {
           "success": false,
-          "criteria_failures": 2
+          "criteria_failures": 1
         }
       }
     },

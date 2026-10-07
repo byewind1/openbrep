@@ -251,6 +251,24 @@ export async function loadProjectPath(path: string): Promise<WorkbenchSnapshot> 
   )
 }
 
+export async function adoptImportContractCandidate(
+  expectedSourceFingerprint: string,
+  candidateHash: string,
+): Promise<WorkbenchSnapshot> {
+  return requestJson<WorkbenchSnapshot>(
+    '/api/project/object-contract/adopt-import-candidate',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expected_source_fingerprint: expectedSourceFingerprint,
+        candidate_hash: candidateHash,
+      }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
 export async function closeProject(): Promise<WorkbenchSnapshot> {
   return requestJson<WorkbenchSnapshot>(
     '/api/project/close',
@@ -863,6 +881,19 @@ export async function updateLlmModel(
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+/** U05-C: 显式保存生成前审批的默认偏好。单轮 toggle 不调用此接口。 */
+export async function savePlanApprovalDefault(confirmBeforeExecute: boolean): Promise<LlmSettingsResult> {
+  return requestJson<LlmSettingsResult>(
+    '/api/settings/llm/plan-approval',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm_before_execute: confirmBeforeExecute }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
@@ -1690,4 +1721,26 @@ export async function fetchSelectedReferences(): Promise<ReferenceAssetInfo[]> {
     { ok: false },
   )
   return result.assets ?? []
+}
+
+export async function requestVisualReview(turnId: string, projectEpoch: number): Promise<{
+  ok: boolean
+  review?: import('./types').VisualReviewReport
+  report_path?: string
+  error?: string
+  code?: string
+}> {
+  return requestJson('/api/vision/review', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ turn_id: turnId, project_epoch: projectEpoch }),
+  }, { ok: false, error: 'OpenBrep local API is not available.' })
+}
+
+export async function fetchSavedVisualReviews(runId: string): Promise<{
+  ok: boolean
+  reports?: import('./types').VisualReviewReport[]
+  error?: string
+}> {
+  return requestJson(`/api/vision/reviews/${encodeURIComponent(runId)}`, { method: 'GET' }, { ok: false, error: 'OpenBrep local API is not available.' })
 }

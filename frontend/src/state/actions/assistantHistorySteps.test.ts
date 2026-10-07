@@ -54,6 +54,30 @@ describe('任务时间线历史往返（卡01 冻结 → 卡05 转绿）', () =>
     ])
     expect(restored[0].thinkingSteps).toBeUndefined()
   })
+
+  it('待审计划随历史保存和恢复，终态 null 会清除待审标记', () => {
+    const message: AssistantMessage = {
+      role: 'assistant',
+      content: '修改计划已生成',
+      pendingPlan: {
+        turn_id: 'turn-plan', plan_id: 'plan-1', plan_version: 1,
+        intent_summary: '调整柜体高度', user_visible_changes: ['高度增加'],
+        affected_files: ['scripts/3d.gdl'], risk: '尺寸变化',
+      },
+    }
+    const saved = withHistoryMeta(message)
+    expect(saved.meta?.pending_plan).toEqual(message.pendingPlan)
+    const restored = hydrateHistoryMessages([
+      { role: 'assistant', content: saved.content, meta: saved.meta } as AssistantMessage,
+    ])
+    expect(restored[0].pendingPlan?.plan_id).toBe('plan-1')
+
+    const terminal = withHistoryMeta({ ...message, content: '已取消', pendingPlan: null })
+    const cleared = hydrateHistoryMessages([
+      { role: 'assistant', content: terminal.content, meta: terminal.meta } as AssistantMessage,
+    ])
+    expect(cleared[0].pendingPlan).toBeUndefined()
+  })
 })
 
 describe('task_ref 与任务事件恢复（卡05）', () => {

@@ -15,14 +15,15 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from typing import TYPE_CHECKING, Optional
 
+from openbrep.compiler import CompileResult
 from openbrep.core import GDLAgent
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject
 from openbrep.llm import assistant_tool_calls_message, tool_result_message
-from openbrep.runtime.modify_agent_tools import ModifyToolRegistry
+from openbrep.runtime.modify_agent_tools import ModifyToolRegistry, WriteRejected
+from openbrep.runtime.run_control import RunControl
 
 if TYPE_CHECKING:
     from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
@@ -105,19 +106,56 @@ def _completion_gate(project, registry, compiler, gsm_path: str):
     上下文完全独立——把"禁止谎报完成"从提示词纪律升级为结构强制。
     返回 (passed, feedback_text, semantic_result)。
     """
+    from openbrep.contracts.project_store import commit_project_source_state
     from openbrep.semantic_verifier import verify_semantics
+    from openbrep.static_checker import StaticChecker
 
-    hsf_dir = project.save_to_disk()
-    compile_result = compiler.hsf2libpart(str(hsf_dir), gsm_path)
+    source_commit = commit_project_source_state(project)
+    compile_result = (
+        compiler.hsf2libpart(str(project.root), gsm_path)
+        if source_commit is not None and source_commit.ok else
+        CompileResult(False, stderr=f"源码事务提交失败：{getattr(source_commit, 'error', '未执行')}", exit_code=1)
+    )
     registry.last_compile_result = compile_result
+    static_result = StaticChecker().check(project)
     semantic_result = verify_semantics(project)
     blocking = semantic_result.blocking_issues
-    if compile_result.success and semantic_result.passed and not blocking:
+    effect_result = None
+    if registry.effect_contract is not None:
+        from openbrep.runtime.effect_contract import evaluate_effect_contract
+        from openbrep.runtime.modify_acceptance import preview_geometry_summary
+
+        before_params = dict(getattr(registry, "before_params", []))
+        after_params = {param.name: param.value for param in project.parameters}
+        parameter_changes = [
+            {"name": name, "from": before_params.get(name), "to": after_params.get(name)}
+            for name in sorted(set(before_params) | set(after_params))
+            if before_params.get(name) != after_params.get(name)
+        ]
+        effect_result = evaluate_effect_contract(
+            registry.effect_contract,
+            before=getattr(registry, "before_preview", None),
+            after=preview_geometry_summary(project),
+            parameter_changes=parameter_changes,
+            changed_files=list(registry.changed_files),
+        )
+    if registry.changed_files and registry.impact_report is None:
+        registry.refresh_impact()
+    if (
+        compile_result.success and static_result.passed and semantic_result.passed and not blocking
+        and (effect_result is None or effect_result.get("satisfied"))
+    ):
         return True, "", semantic_result
     parts = ["完成门禁未通过，当前状态还不能交付："]
     if not compile_result.success:
         err = (compile_result.stderr or compile_result.stdout or "")[:600].strip()
         parts.append(f"\n编译失败：\n```\n{err}\n```")
+    if not static_result.passed:
+        parts.extend(f"- [static:{issue.check_type}] {issue.file}: {issue.detail}" for issue in static_result.errors)
+    if effect_result is not None and not effect_result.get("satisfied"):
+        parts.append(f"- [effect:{effect_result.get('status')}] {effect_result.get('reason')}")
+    if registry.impact_report:
+        parts.append("\n本次影响范围：" + registry._impact_summary(registry.impact_report))
     for issue in blocking:
         parts.append(f"- [{issue.check_type}] {issue.detail}")
     parts.append("\n请用工具继续修复（在剩余预算内），修复后再次确认完成。")
@@ -265,8 +303,11 @@ def _render_confirmed_plan(plan: dict) -> str:
     """把已确认计划渲染成给执行 LLM 的可读文本。"""
     parts = ["已确认的修改计划："]
     parts.append(f"- 意图：{plan.get('intent_summary') or ''}")
-    for change in plan.get("user_visible_changes") or []:
+    delta = plan.get("change_delta") or plan.get("user_visible_changes") or []
+    for change in delta:
         parts.append(f"- 改动：{change}")
+    for constraint in plan.get("preserved_constraints") or []:
+        parts.append(f"- 必须保持：{constraint}")
     files = plan.get("affected_files") or []
     if files:
         parts.append("- 影响文件：" + ", ".join(files))
@@ -315,6 +356,29 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     if (request.confirm_plan and request.confirmed_plan is None) or mode in {"consult", "plan"} or (policy and policy.mode in {"consult", "plan"} and request.confirmed_plan is None):
         return pipeline.execute(request)
 
+    budget = request.agent_loop_budget or DEFAULT_AGENT_LOOP_BUDGET
+    budget = max(1, min(budget, MAX_AGENT_LOOP_BUDGET))
+    from openbrep.config import AGENT_TASK_TIMEOUT_DEFAULT
+
+    _agent_cfg = getattr(pipeline.config, "agent", None)
+    _raw_task_timeout = getattr(_agent_cfg, "agent_task_timeout", None)
+    _task_timeout = (
+        float(_raw_task_timeout)
+        if isinstance(_raw_task_timeout, (int, float)) and _raw_task_timeout > 0
+        else float(AGENT_TASK_TIMEOUT_DEFAULT)
+    )
+    run_control = request.run_control or RunControl(
+        tool_budget=budget,
+        task_timeout=_task_timeout,
+        should_cancel=request.should_cancel,
+    )
+    request.run_control = run_control
+    llm_calls = 0
+    tool_calls_used = 0
+    budget_exhausted = False
+    task_timed_out = False
+    cancelled = False
+
     llm = pipeline._make_llm(request)
     compiler = pipeline._make_compiler()
     clean_instruction, syntax_report = _normalize_modify_request(request)
@@ -352,8 +416,6 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         syntax_report=syntax_report,
     )
 
-    budget = request.agent_loop_budget or DEFAULT_AGENT_LOOP_BUDGET
-    budget = max(1, min(budget, MAX_AGENT_LOOP_BUDGET))
     messages[0]["content"] = (messages[0].get("content") or "") + _AGENT_LOOP_PROTOCOL.format(budget=budget)
 
     # P0-A：显式效果契约 normalize（vision 块和验收门都消费；None = 不判定）
@@ -379,8 +441,10 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             )
             from openbrep.vision.harness import (
                 apply_field_validation,
-                run as vision_harness_run,
+                build_project_hints,
+                extraction_cache_context,
             )
+            from openbrep.vision.harness import run as vision_harness_run
             from openbrep.vision.modeling_plan import ModelingPlan
             from openbrep.vision.multi_image import resolve_and_preprocess
 
@@ -391,15 +455,32 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                 _images = [ImageRef(token="图1", b64=request.image_b64,
                                     mime=request.image_mime or "image/png")]
             multi_images = resolve_and_preprocess(_images)
+            vision_hints = build_project_hints(project, effect_contract) if effect_contract else ""
             hint_parts: list[str] = []
             for idx, img in enumerate(multi_images, start=1):
+                decision = run_control.check(stage="vision")
+                if not decision.allowed:
+                    cancelled = decision.reason == "cancelled"
+                    task_timed_out = decision.reason == "deadline"
+                    break
                 token = img.token or f"图{idx}"
                 plan: Optional[ModelingPlan] = None
                 reused = False
                 reused_from_model = ""
+                cache_context = extraction_cache_context(
+                    img,
+                    user_input=request.user_input,
+                    model=_llm_model_name(llm),
+                    intent="MODIFY",
+                    project_hints=vision_hints,
+                    position=idx,
+                    total=len(multi_images),
+                )
                 if img.b64:
                     try:
-                        stored = load_extraction(project.root, img.sha256)
+                        stored = load_extraction(
+                            project.root, img.sha256, expected_context=cache_context,
+                        )
                     except Exception as exc:
                         logger.warning("P5e: extraction load failed for %s: %s", token, exc)
                         stored = None
@@ -413,18 +494,30 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                         # 未命中：只对这一张图跑简化档 harness（S0→S1→S2→S4，无 critic）
                         # P1-B：显式契约（参考资产/目标分支）存在时注入项目领域提示，
                         # 否则空串语义不变（benchmark/CLI prompt 语料安全）。
-                        from openbrep.vision.harness import build_project_hints
-
-                        hints = build_project_hints(project, effect_contract) if effect_contract else ""
                         plans = vision_harness_run(
                             [img], "MODIFY", request.user_input, llm,
                             on_event=on_event, critic_pass=False,
-                            project_hints=hints,
+                            project_hints=vision_hints,
                         )
+                        decision = run_control.check(stage="vision_return")
+                        if not decision.allowed:
+                            cancelled = decision.reason == "cancelled"
+                            task_timed_out = decision.reason == "deadline"
+                            break
                         plan = plans[0] if plans else None
                         if plan is not None:
                             try:
-                                save_extraction(project.root, plan, model=_llm_model_name(llm))
+                                decision, _ = run_control.commit(
+                                    lambda: save_extraction(
+                                        project.root, plan, model=_llm_model_name(llm),
+                                        cache_context=cache_context,
+                                    ),
+                                    stage="vision_cache_commit",
+                                )
+                                if not decision.allowed:
+                                    cancelled = decision.reason == "cancelled"
+                                    task_timed_out = decision.reason == "deadline"
+                                    break
                             except Exception as exc:
                                 logger.warning("P5e: extraction persist failed for %s: %s", token, exc)
                 if plan is None:
@@ -479,6 +572,8 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     from openbrep.runtime.modify_acceptance import build_modify_acceptance, preview_geometry_summary
     before_params = [(p.name, p.value) for p in project.parameters]
     before_preview = preview_geometry_summary(project)
+    registry.before_params = before_params
+    registry.before_preview = before_preview
 
     # 修改前 revision 快照（建筑基础_v1 事故教训：agent loop 此前零快照，
     # AI 全文重写会直接覆盖打开的项目且无法回滚）。惰性创建：首次实际改动
@@ -509,24 +604,31 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             logger.warning("agent loop before-revision: %s", _warning)
 
     registry.on_before_write = _ensure_before_revision
+    if isinstance(request.confirmed_plan, dict):
+        registry.preserved_constraints = [
+            str(item) for item in request.confirmed_plan.get("preserved_constraints", [])
+            if str(item).strip()
+        ]
 
-    llm_calls = 0
-    tool_calls_used = 0
-    budget_exhausted = False
-    # RF06：任务级截止（[agent] agent_task_timeout）——整个任务跨轮共享，
-    # 到期按当前进度如实收尾；取消与工具预算语义不变。
-    from openbrep.config import AGENT_TASK_TIMEOUT_DEFAULT
+    def _authorize_write() -> str | None:
+        decision = run_control.check(stage="commit")
+        if decision.allowed:
+            return None
+        if decision.reason == "cancelled":
+            return "任务已取消，拒绝迟到的写入。"
+        if decision.reason == "deadline":
+            return "任务时间预算已耗尽，拒绝迟到的写入。"
+        return "任务已结束，拒绝迟到的写入。"
 
-    _agent_cfg = getattr(pipeline.config, "agent", None)
-    _raw_task_timeout = getattr(_agent_cfg, "agent_task_timeout", None)
-    _task_timeout = (
-        float(_raw_task_timeout)
-        if isinstance(_raw_task_timeout, (int, float)) and _raw_task_timeout > 0
-        else float(AGENT_TASK_TIMEOUT_DEFAULT)
-    )
-    _task_deadline = time.monotonic() + _task_timeout
-    task_timed_out = False
-    cancelled = False
+    registry.write_guard = _authorize_write
+
+    def _commit_if_authorized(mutation):
+        decision, _ = run_control.commit(mutation, stage="commit")
+        if not decision.allowed:
+            reason = _authorize_write() or "任务已结束，拒绝迟到的写入。"
+            raise WriteRejected(reason)
+
+    registry.commit_executor = _commit_if_authorized
     final_text = ""
     gate_rejections = 0
     gate_unresolved = False
@@ -537,14 +639,25 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     # ── 计划确认门（V3）：先出非代码语言计划，用户确认后才执行 ──
     plan_failed_note = ""
     if request.confirm_plan and intent == "MODIFY":
-        on_event("status", _architect_status("plan"))
-        confirm_plan = _request_confirmation_plan(messages, llm)
-        if confirm_plan is not None:
-            on_event("plan", confirm_plan)
-            return _build_awaiting_confirmation_result(request, project, intent, confirm_plan)
-        plan_failed_note = (
-            "⚠️ 修改计划生成失败（LLM 未返回合法 JSON），已按旧流程直接执行，未等待确认。"
-        )
+        decision = run_control.check(stage="plan")
+        if not decision.allowed:
+            cancelled = decision.reason == "cancelled"
+            task_timed_out = decision.reason == "deadline"
+        else:
+            on_event("status", _architect_status("plan"))
+            confirm_plan = _request_confirmation_plan(messages, llm)
+            llm_calls += 1
+            decision = run_control.check(stage="plan_return")
+            if not decision.allowed:
+                cancelled = decision.reason == "cancelled"
+                task_timed_out = decision.reason == "deadline"
+            elif confirm_plan is not None:
+                on_event("plan", confirm_plan)
+                return _build_awaiting_confirmation_result(request, project, intent, confirm_plan)
+            else:
+                plan_failed_note = (
+                    "⚠️ 修改计划生成失败（LLM 未返回合法 JSON），已按旧流程直接执行，未等待确认。"
+                )
 
     # ── 计划阶段：已确认计划直接注入；否则 LLM 先输出可审查计划，用户 ESC 可打断 ──
     plan_data: dict[str, object] | None = None
@@ -559,35 +672,39 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         })
     elif request.agent_loop_plan:
         try:
-            if request.should_cancel and request.should_cancel():
-                cancelled = True
-                on_event("status", _architect_status("cancel"))
-                return _build_cancelled_result(
-                    request, project, registry, gsm_path, compiler, intent,
-                    llm_calls=llm_calls, tool_calls=tool_calls_used,
-                )
-            on_event("status", _architect_status("plan"))
-            planning_messages = _inject_planning_prompt(messages)
-            plan_response = llm.generate(planning_messages)
-            llm_calls += 1
-            plan_data = _parse_plan_response(plan_response.content or "")
-            if plan_data:
+            decision = run_control.check(stage="plan")
+            if not decision.allowed:
+                cancelled = decision.reason == "cancelled"
+                task_timed_out = decision.reason == "deadline"
+                if cancelled:
+                    on_event("status", _architect_status("cancel"))
+                elif task_timed_out:
+                    on_event("status", {"stage": "budget", "message": "⚠️ 计划阶段任务预算已耗尽，跳过规划"})
+            else:
                 on_event("status", _architect_status("plan"))
-            if request.should_cancel and request.should_cancel():
-                cancelled = True
-                on_event("status", _architect_status("cancel"))
-                return _build_cancelled_result(
-                    request, project, registry, gsm_path, compiler, intent,
-                    llm_calls=llm_calls, tool_calls=tool_calls_used,
-                )
-            # 把计划作为 assistant 回复注入历史，约束后续工具调用
-            plan_text = plan_response.content or ""
-            if plan_text:
-                messages.append({"role": "assistant", "content": plan_text})
-                messages.append({
-                    "role": "user",
-                    "content": "计划已收到。如果我没有打断，请严格按上述计划调用工具执行修改。",
-                })
+                planning_messages = _inject_planning_prompt(messages)
+                plan_response = llm.generate(planning_messages)
+                llm_calls += 1
+                decision = run_control.check(stage="plan_return")
+                if not decision.allowed:
+                    cancelled = decision.reason == "cancelled"
+                    task_timed_out = decision.reason == "deadline"
+                    if cancelled:
+                        on_event("status", _architect_status("cancel"))
+                    elif task_timed_out:
+                        on_event("status", {"stage": "budget", "message": "⚠️ 计划模型返回时任务预算已耗尽，忽略迟到的计划"})
+                else:
+                    plan_data = _parse_plan_response(plan_response.content or "")
+                    if plan_data:
+                        on_event("status", _architect_status("plan"))
+                    # 把计划作为 assistant 回复注入历史，约束后续工具调用
+                    plan_text = plan_response.content or ""
+                    if plan_text:
+                        messages.append({"role": "assistant", "content": plan_text})
+                        messages.append({
+                            "role": "user",
+                            "content": "计划已收到。如果我没有打断，请严格按上述计划调用工具执行修改。",
+                        })
         except Exception as exc:
             logger.warning("Planning stage failed: %s", exc)
             # 计划阶段失败不阻塞执行，降级到无计划继续
@@ -596,17 +713,31 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     # 称完成——声称完成要过完成门禁（S3）：编译 + 几何语义的结构核验，
     # 未过则把确定性证据打回对话让 AI 继续（有界打回，防止无限扯皮）。
     while True:
-        if request.should_cancel and request.should_cancel():
-            cancelled = True
-            on_event("status", _architect_status("cancel"))
-            break
-        if time.monotonic() >= _task_deadline:
-            task_timed_out = True
-            on_event("status", {"stage": "budget", "message": "⚠️ 任务时间预算耗尽，按当前进度如实收尾"})
+        decision = run_control.check(stage="think")
+        if not decision.allowed:
+            cancelled = decision.reason == "cancelled"
+            task_timed_out = decision.reason == "deadline"
+            budget_exhausted = decision.reason == "tool_budget"
+            if cancelled:
+                on_event("status", _architect_status("cancel"))
+            elif task_timed_out:
+                on_event("status", {"stage": "budget", "message": "⚠️ 任务时间预算耗尽，按当前进度如实收尾"})
             break
         on_event("status", _architect_status("think"))
         response = llm.generate_with_tools(messages, tools=tools)
         llm_calls += 1
+        decision = run_control.check(stage="model_return")
+        if not decision.allowed:
+            cancelled = decision.reason == "cancelled"
+            task_timed_out = decision.reason == "deadline"
+            if response.content:
+                final_text = response.content
+                on_event("assistant_delta", {"content": response.content})
+            if cancelled:
+                on_event("status", _architect_status("cancel"))
+            elif task_timed_out:
+                on_event("status", {"stage": "budget", "message": "⚠️ 模型返回时任务预算已耗尽，忽略迟到的写入请求"})
+            break
         if response.content:
             on_event("assistant_delta", {"content": response.content})
         if not response.has_tool_calls:
@@ -619,11 +750,53 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             fallback_changes = agent._parse_response(final_text)
             applied_changes: dict[str, str] = {}
             if fallback_changes:
+                decision = run_control.check(stage="fallback_write")
+                if not decision.allowed:
+                    cancelled = decision.reason == "cancelled"
+                    task_timed_out = decision.reason == "deadline"
+                    if cancelled:
+                        on_event("status", _architect_status("cancel"))
+                    else:
+                        on_event("status", {"stage": "budget", "message": "⚠️ 最终写入前运行预算已耗尽，忽略迟到的文本写入"})
+                    break
                 cleaned = {k: sanitize_llm_script_output(v, k) for k, v in fallback_changes.items()}
                 _ensure_before_revision()
-                agent._apply_changes(project, cleaned)
-                registry.changed_files.update(cleaned)
-                applied_changes = cleaned
+                parameter_fallback: dict[str, object] = {}
+
+                def apply_fallback_changes() -> None:
+                    parameter_text = cleaned.pop("paramlist.xml", None)
+                    if parameter_text is not None:
+                        result = registry._apply_paramlist_text(
+                            parameter_text, tool_name="file_fallback"
+                        )
+                        parameter_fallback["result"] = result
+                        if not result.ok:
+                            return
+                    if cleaned:
+                        agent._apply_changes(project, cleaned)
+                        registry.changed_files.update(cleaned)
+
+                decision, _ = run_control.commit(
+                    apply_fallback_changes,
+                    stage="fallback_write",
+                )
+                if not decision.allowed:
+                    cancelled = decision.reason == "cancelled"
+                    task_timed_out = decision.reason == "deadline"
+                    if cancelled:
+                        on_event("status", _architect_status("cancel"))
+                    else:
+                        on_event("status", {"stage": "budget", "message": "⚠️ 最终写入前运行预算已耗尽，忽略迟到的文本写入"})
+                    break
+                parameter_result = parameter_fallback.get("result")
+                if parameter_result is not None and not parameter_result.ok:
+                    final_text = (
+                        f"[FILE:] 参数变更未应用：{parameter_result.summary}"
+                    )
+                    break
+                applied_changes = dict(cleaned)
+                if parameter_result is not None and parameter_result.ok:
+                    applied_changes["paramlist.xml"] = registry.changed_files.get("paramlist.xml", "")
             gate_ok, gate_feedback, semantic_result = _completion_gate(
                 project, registry, compiler, gsm_path,
             )
@@ -656,16 +829,21 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
 
         messages.append(assistant_tool_calls_message(response))
         for call in response.tool_calls:
-            if tool_calls_used >= budget:
-                budget_exhausted = True
-                break
             display_name, tool_stage = _tool_display(call.name)
+            decision = run_control.begin_tool(stage=tool_stage)
+            tool_calls_used = decision.tool_calls
+            if not decision.allowed:
+                cancelled = decision.reason == "cancelled"
+                task_timed_out = decision.reason == "deadline"
+                budget_exhausted = decision.reason == "tool_budget"
+                if cancelled:
+                    on_event("status", _architect_status("cancel"))
+                break
             on_event("status", _architect_status(tool_stage, tool=display_name))
             if call.name in ("update_script", "patch_script"):
                 # 写工具首次执行前快照一次（零快照主洞修复）
                 _ensure_before_revision()
             result = registry.execute(call)
-            tool_calls_used += 1
             messages.append(tool_result_message(call.id, result.summary, name=call.name))
             on_event("tool_call", {
                 "name": call.name,
@@ -685,8 +863,13 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     compile_result = registry.last_compile_result
     if compile_result is None:
         # AI 全程未编译：为如实报告补跑一次最终编译（不算工具调用、不做修复）
-        hsf_dir = project.save_to_disk()
-        compile_result = compiler.hsf2libpart(str(hsf_dir), gsm_path)
+        from openbrep.contracts.project_store import commit_project_source_state
+
+        committed = commit_project_source_state(project)
+        compile_result = (
+            compiler.hsf2libpart(str(project.root), gsm_path)
+            if committed.ok else CompileResult(False, stderr=f"源码事务提交失败：{committed.error}", exit_code=1)
+        )
 
     if semantic_result is None:
         # 预算耗尽/取消导致门禁未运行：为报告补一次语义验证（never raises）
@@ -797,6 +980,13 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         if acceptance.get("effect") is not None:
             metadata_effect["evaluation"] = acceptance["effect"]
 
+    final_decision = run_control.check(stage="finalize")
+    if not final_decision.allowed:
+        cancelled = cancelled or final_decision.reason == "cancelled"
+        task_timed_out = task_timed_out or final_decision.reason == "deadline"
+    terminal_reason = "cancelled" if cancelled else "deadline" if task_timed_out else "tool_budget" if budget_exhausted else "completed"
+    run_control.finish(terminal_reason)
+
     # ST02：验证后捕获源指纹；after 由 pipeline delivery finalizer 创建
     loop_metadata = _agent_loop_metadata(
         diff_warnings=diff_warnings,
@@ -810,6 +1000,8 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         budget_exhausted=budget_exhausted,
         cancelled=cancelled,
         task_timed_out=task_timed_out,
+        run_control=run_control.snapshot(),
+        impact_report=registry.impact_report,
         before_revision_id=before_revision_id,
         changed_files=list(registry.changed_files.keys()),
     )
@@ -827,8 +1019,10 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             "⚠️ 任务时间预算耗尽（agent_task_timeout），按当前进度如实收尾；"
             "以上为部分进度，不是完整交付。"
         )
+    elif cancelled and not any("任务被取消" in part for part in output_parts):
+        output_parts.append("⚠️ 任务在最终收口前被取消；以上内容按部分进度处理。")
     return TaskResult(
-        success=verification_report.passed and not task_timed_out,
+        success=verification_report.passed and not task_timed_out and not cancelled,
         intent=intent,
         scripts=registry.changed_files,
         plain_text="\n\n".join(part for part in output_parts if part),
@@ -853,6 +1047,8 @@ def _agent_loop_metadata(
     before_revision_id: str | None,
     changed_files: list[str] | None = None,
     task_timed_out: bool = False,
+    run_control: dict | None = None,
+    impact_report: dict | None = None,
 ) -> dict:
     """agent loop 的 TaskResult.metadata 组装（vision_extractions 有值才写入）。
 
@@ -878,11 +1074,14 @@ def _agent_loop_metadata(
             # RF06：任务级截止细分（与 Codex 桥接同口径）
             "timeout": task_timed_out,
             "timeout_reason": "task_deadline" if task_timed_out else None,
+            "run_control": run_control or {},
         },
         "before_revision_id": before_revision_id or None,
     }
     if changed_files is not None:
         metadata["changed_files"] = sorted(set(changed_files))
+    if impact_report is not None:
+        metadata["impact_report"] = impact_report
     if vision_extractions:
         metadata["vision_extractions"] = vision_extractions
         # U04-A：lite 策略显式记录——MODIFY 图片走简化档（无 critic、无完整
@@ -953,13 +1152,17 @@ def _build_cancelled_result(
     tool_calls: int = 0,
 ) -> "TaskResult":
     """用户在计划阶段取消时，返回一个干净的 TaskResult（未开始修改）。"""
+    from openbrep.contracts.project_store import commit_project_source_state
     from openbrep.naming_alignment import detect_reserved_param_misuse
     from openbrep.runtime.pipeline import TaskResult
     from openbrep.static_checker import StaticChecker
     from openbrep.verification import build_verification_report
 
-    hsf_dir = project.save_to_disk()
-    compile_result = compiler.hsf2libpart(str(hsf_dir), gsm_path)
+    committed = commit_project_source_state(project)
+    compile_result = (
+        compiler.hsf2libpart(str(project.root), gsm_path)
+        if committed.ok else CompileResult(False, stderr=f"源码事务提交失败：{committed.error}", exit_code=1)
+    )
     registry.last_compile_result = compile_result
     static_result = StaticChecker().check(project)
     from openbrep.semantic_verifier import verify_semantics

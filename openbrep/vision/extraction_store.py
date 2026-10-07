@@ -97,12 +97,23 @@ def plan_to_dict(plan) -> dict[str, Any]:
         # P5d-2：schema 元数据随提取透出（前端可编辑卡片据此决定可编辑字段）。
         "required": list(getattr(plan, "required", []) or []),
         "critic_checks": list(getattr(plan, "critic_checks", []) or []),
+        "editable_fields": list(getattr(plan, "editable_fields", []) or []),
+        "domain_skill_id": str(getattr(plan, "domain_skill_id", "") or ""),
+        "domain_skill_status": str(getattr(plan, "domain_skill_status", "legacy") or "legacy"),
+        "domain_skill_version": str(getattr(plan, "domain_skill_version", "") or ""),
+        "evidence": dict(getattr(plan, "evidence", {}) or {}),
         "validation_issues": list(getattr(plan, "validation_issues", []) or []),
         "sha256": str(source[0] or "") if source else "",
     }
 
 
-def save_extraction(project_root: str | Path, plan, *, model: str) -> Optional[Path]:
+def save_extraction(
+    project_root: str | Path,
+    plan,
+    *,
+    model: str,
+    cache_context: Optional[dict[str, str]] = None,
+) -> Optional[Path]:
     """写 ``<root>/.openbrep/vision/extraction-<sha256[:12]>.json``（设计 D7）。
 
     Args:
@@ -123,6 +134,8 @@ def save_extraction(project_root: str | Path, plan, *, model: str) -> Optional[P
         return None
     data = plan_to_dict(plan)
     data["model"] = model
+    if cache_context is not None:
+        data["cache_context"] = dict(cache_context)
     data["created_at"] = datetime.now(timezone.utc).isoformat()
     path = _extraction_path(project_root, sha)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,7 +143,12 @@ def save_extraction(project_root: str | Path, plan, *, model: str) -> Optional[P
     return path
 
 
-def load_extraction(project_root: str | Path, sha256: str) -> Optional[dict]:
+def load_extraction(
+    project_root: str | Path,
+    sha256: str,
+    *,
+    expected_context: Optional[dict[str, str]] = None,
+) -> Optional[dict]:
     """按哈希读取提取工件（P5e 复用铺路，本单只写+读测试）。
 
     传完整 sha256 或前 12 位均可（文件名键取前 12 位）；不存在或
@@ -140,7 +158,10 @@ def load_extraction(project_root: str | Path, sha256: str) -> Optional[dict]:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if expected_context is not None and data.get("cache_context") != expected_context:
+            return None
+        return data
     except Exception as exc:
         logger.warning("extraction_store: load failed %s: %s", path, exc)
         return None

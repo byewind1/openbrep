@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import copy
 import difflib
 import json
 import logging
@@ -23,7 +24,12 @@ from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import ToolCall, ToolDefinition
-from openbrep.parameter_mutations import compact_result_json, mutate_parameters
+from openbrep.parameter_mutations import (
+    compact_result_json,
+    mutate_parameters,
+    mutate_project_parameters,
+)
+from openbrep.paramlist_builder import validate_paramlist
 from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.static_checker import StaticChecker, find_prose_leaks
 
@@ -222,6 +228,9 @@ class ModifyToolRegistry:
         # 签名：(mutation: Callable[[], None]) -> None（授权拒绝时抛 WriteRejected）。
         self.commit_executor: Optional[Callable[[Callable[[], None]], None]] = None
         self.changed_files: dict[str, str] = {}
+        self._changed_parameter_names: set[str] = set()
+        self.impact_report: dict[str, Any] | None = None
+        self.preserved_constraints: list[str] = []
         # diff 范围护栏：记录每个可写文件的修改前内容与最近一次写入方式
         self._baseline_content: dict[str, str] = {
             fp: self._current_file_content(fp) for fp in _valid_file_paths()
@@ -229,6 +238,31 @@ class ModifyToolRegistry:
         self.write_methods: dict[str, str] = {}  # file_path -> "update_script" | "patch_script"
         self.last_compile_result: Optional[CompileResult] = None
         self.tool_log: list[dict] = []
+
+    def refresh_impact(self, changed_parameters: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        from openbrep.quality.cross_script import analyze_mutation_impact
+
+        for item in changed_parameters or []:
+            name = item.get("name") if isinstance(item, dict) else item
+            if name:
+                self._changed_parameter_names.add(str(name))
+        report = analyze_mutation_impact(
+            self.project,
+            {
+                "changed_files": list(self.changed_files),
+                "changed_parameters": sorted(self._changed_parameter_names),
+                "preserved_constraints": list(self.preserved_constraints),
+            },
+        )
+        self.impact_report = report.to_dict()
+        return self.impact_report
+
+    @staticmethod
+    def _impact_summary(report: dict[str, Any]) -> str:
+        scripts = ", ".join(str(name) for name in report.get("affected_scripts", []))
+        checks = ", ".join(str(name) for name in report.get("checks", []))
+        coverage = report.get("status", "partial")
+        return f"影响分析（{coverage}）：复查脚本 {scripts or '—'}；检查 {checks or '—'}。"
 
     # ── 工具定义 ──────────────────────────────────────────
 
@@ -390,6 +424,7 @@ class ModifyToolRegistry:
 
     def _before_commit_write(self) -> None:
         """edit_parameters 提交链：先做惰性快照，再在原子写之前做授权检查。"""
+        self._check_write_guard()
         self.on_before_write()
         self._check_write_guard()
 
@@ -535,11 +570,12 @@ class ModifyToolRegistry:
         holder: dict[str, Any] = {}
 
         def _mutate() -> None:
-            holder["result"] = mutate_parameters(
+            holder["result"] = mutate_project_parameters(
                 self.project,
                 expected_source_fingerprint=str(args.get("expected_source_fingerprint") or ""),
                 operations=args.get("operations"),
                 before_commit=self._before_commit_write,
+                mutation_fn=mutate_parameters,
             )
 
         self._commit(_mutate)
@@ -549,6 +585,7 @@ class ModifyToolRegistry:
             rendered = _render_param_text(self.project.parameters)
             self.changed_files[_PARAMLIST_NAME] = rendered
             self.write_methods[_PARAMLIST_NAME] = "edit_parameters"
+            impact = self.refresh_impact(result.changed_parameters)
             self.on_event(
                 "status",
                 {"stage": "modify", "message": "✏️ 已结构化更新 paramlist.xml"},
@@ -556,8 +593,92 @@ class ModifyToolRegistry:
         return ToolExecutionResult(
             name="edit_parameters",
             ok=result.ok,
-            summary=compact_result_json(result),
-            data=payload,
+            summary=compact_result_json(result) + ("\n" + self._impact_summary(impact) if result.ok and result.changed_files else ""),
+            data={**payload, **({"impact": impact} if result.ok and result.changed_files else {})},
+        )
+
+    def _apply_paramlist_text(self, content: str, *, tool_name: str) -> ToolExecutionResult:
+        """Adapt legacy parameter-row edits into the same validated mutation path."""
+        candidate = copy.deepcopy(self.project)
+        self._apply_changes(candidate, {_PARAMLIST_NAME: content})
+        if candidate.parameters == self.project.parameters:
+            return ToolExecutionResult(
+                name=tool_name, ok=False,
+                summary="参数行未能解析成变更，未做任何改动。",
+            )
+        issues = validate_paramlist(candidate.parameters)
+        if issues:
+            return ToolExecutionResult(name=tool_name, ok=False, summary="参数表无效：" + issues[0])
+
+        old = {param.name: param for param in self.project.parameters}
+        new = {param.name: param for param in candidate.parameters}
+        operations: list[dict[str, Any]] = []
+        for name, param in old.items():
+            if name not in new:
+                if param.is_fixed or name in {"A", "B", "ZZYZX"}:
+                    continue
+                operations.append({"op": "delete", "name": name})
+        for name, param in new.items():
+            current = old.get(name)
+            if current is None:
+                operations.append({
+                    "op": "add", "name": name, "type": param.type_tag,
+                    "value": param.value, "description": param.description,
+                })
+                continue
+            if current.type_tag != param.type_tag:
+                return ToolExecutionResult(
+                    name=tool_name, ok=False,
+                    summary=f"参数 {name} 的类型变更不能通过文本替换完成；请用参数定义工具。",
+                )
+            if current.value != param.value:
+                operations.append({"op": "set_value", "name": name, "value": param.value})
+            if current.description != param.description:
+                operations.append({"op": "set_description", "name": name, "description": param.description})
+        if not operations:
+            return ToolExecutionResult(name=tool_name, ok=True, summary="参数表没有实质变化。")
+
+        fingerprint = None
+        if self.project.root.is_dir():
+            try:
+                fingerprint = compute_source_fingerprint(self.project.root)
+            except Exception as exc:
+                return ToolExecutionResult(name=tool_name, ok=False, summary=f"无法读取源码指纹：{exc}")
+        if fingerprint is None:
+            # An unsaved new project has no persisted source to coordinate yet.
+            # Keep the same parameter validation and authorization boundary.
+            try:
+                self._commit(lambda: setattr(self.project, "parameters", candidate.parameters))
+            except WriteRejected:
+                raise
+            self.changed_files[_PARAMLIST_NAME] = content
+            self.write_methods[_PARAMLIST_NAME] = tool_name
+            return ToolExecutionResult(name=tool_name, ok=True, summary="参数表已更新到未保存项目。")
+
+        holder: dict[str, Any] = {}
+
+        def mutate() -> None:
+            holder["result"] = mutate_project_parameters(
+                self.project,
+                expected_source_fingerprint=fingerprint,
+                operations=operations,
+                before_commit=self._before_commit_write,
+                mutation_fn=mutate_parameters,
+            )
+
+        self._commit(mutate)
+        result = holder.get("result")
+        if result is None:
+            return ToolExecutionResult(name=tool_name, ok=False, summary="参数协调器未执行本次变更。")
+        if not result.ok:
+            return ToolExecutionResult(name=tool_name, ok=False, summary=compact_result_json(result), data=result.to_dict())
+        self.changed_files[_PARAMLIST_NAME] = _render_param_text(self.project.parameters)
+        self.write_methods[_PARAMLIST_NAME] = tool_name
+        impact = self.refresh_impact(result.changed_parameters)
+        return ToolExecutionResult(
+            name=tool_name, ok=True,
+            summary=compact_result_json(result) + "\n" + self._impact_summary(impact),
+            data={**result.to_dict(), "impact": impact},
         )
 
     def _update_script(self, args: dict) -> ToolExecutionResult:
@@ -573,6 +694,11 @@ class ModifyToolRegistry:
             return ToolExecutionResult(name="update_script", ok=False, summary="content 为空，未做任何改动")
         cleaned = sanitize_llm_script_output(content, file_path)
         if file_path == _PARAMLIST_NAME:
+            if not _param_text_ok(cleaned):
+                return ToolExecutionResult(
+                    name="update_script", ok=False,
+                    summary="参数行格式不合法；请使用 `类型 名称 = 值 ! 描述` 格式。",
+                )
             # P12 字符串参数引用一致性守卫（paramlist.xml 不走散文守卫——XML 内容）
             violations = _paramlist_string_change_violations(self.project, cleaned)
             if violations:
@@ -581,6 +707,7 @@ class ModifyToolRegistry:
                     ok=False,
                     summary="拒绝写入 paramlist.xml：\n" + "\n".join(violations),
                 )
+            return self._apply_paramlist_text(cleaned, tool_name="update_script")
         else:
             # P12 GDL 散文守卫：写盘前拦截 markdown 散文泄漏（P8 ellipsis_stub 同族）
             leaks = find_prose_leaks(cleaned)
@@ -601,12 +728,13 @@ class ModifyToolRegistry:
             self.write_methods[file_path] = "update_script"
 
         self._commit(_apply_update)
+        impact = self.refresh_impact()
         self.on_event("status", {"stage": "modify", "message": f"✏️ 已更新 {file_path}"})
         return ToolExecutionResult(
             name="update_script",
             ok=True,
-            summary=f"已更新 {file_path}（{len(cleaned)} 字符）。请调用 compile_script 验证。",
-            data={"file_path": file_path},
+            summary=f"已更新 {file_path}（{len(cleaned)} 字符）。请调用 compile_script 验证。\n{self._impact_summary(impact)}",
+            data={"file_path": file_path, "impact": impact},
         )
 
     def _current_file_content(self, file_path: str) -> str:
@@ -719,6 +847,7 @@ class ModifyToolRegistry:
                     ok=False,
                     summary="拒绝写入 paramlist.xml：\n" + "\n".join(violations) + "\n未做任何改动（全或无）",
                 )
+            return self._apply_paramlist_text(cleaned, tool_name="patch_script")
         else:
             # P12 GDL 散文守卫：写盘前对补丁后的完整内容做散文检查
             leaks = find_prose_leaks(cleaned)
@@ -740,6 +869,7 @@ class ModifyToolRegistry:
             self.write_methods[file_path] = "patch_script"
 
         self._commit(_apply_patch)
+        impact = self.refresh_impact()
         self.on_event("status", {"stage": "modify", "message": f"✏️ 已局部编辑 {file_path}（{len(applied)} 段）"})
         detail = "；".join(
             f"patches[{a['index']}]：第 {a['line']} 行起，old {a['old_lines']} 行 → new {a['new_lines']} 行"
@@ -748,8 +878,8 @@ class ModifyToolRegistry:
         return ToolExecutionResult(
             name="patch_script",
             ok=True,
-            summary=f"已应用 {len(applied)} 段补丁到 {file_path}。{detail}。请调用 compile_script 验证。",
-            data={"file_path": file_path, "patches_applied": len(applied)},
+            summary=f"已应用 {len(applied)} 段补丁到 {file_path}。{detail}。请调用 compile_script 验证。\n{self._impact_summary(impact)}",
+            data={"file_path": file_path, "patches_applied": len(applied), "impact": impact},
         )
 
     def change_ratios(self) -> dict[str, float]:
@@ -785,7 +915,23 @@ class ModifyToolRegistry:
         return warnings, ratios
 
     def _compile_script(self, _args: dict) -> ToolExecutionResult:
-        hsf_dir = self.project.save_to_disk()
+        from openbrep.contracts.project_store import commit_project_source_state
+
+        holder: dict[str, Any] = {}
+
+        def commit_source() -> None:
+            holder["result"] = commit_project_source_state(self.project)
+
+        self._commit(commit_source)
+        committed = holder.get("result")
+        if committed is None:
+            return ToolExecutionResult(name="compile_script", ok=False, summary="源码事务未执行，已拒绝编译。")
+        if not committed.ok:
+            return ToolExecutionResult(
+                name="compile_script", ok=False,
+                summary=f"源码保存失败，未启动编译：{committed.error}",
+            )
+        hsf_dir = self.project.root
         self.last_compile_result = self.compiler.hsf2libpart(str(hsf_dir), self.output_gsm)
         try:
             source_fingerprint = compute_source_fingerprint(self.project.root)

@@ -238,7 +238,13 @@ def _assert_semantic_verification(result) -> list[str]:
     if result.passed:
         return []
     blocking = [i for i in result.issues if i.blocking]
-    return [f"semantic_verification: [{i.check_type}] {i.detail}" for i in blocking]
+    if not blocking:
+        return []
+    # This is one declared semantic_verification assertion. Keep every
+    # diagnostic in its message, while counting the assertion only once even
+    # when (for example) multiple bounding-box axes mismatch.
+    details = "; ".join(f"[{i.check_type}] {i.detail}" for i in blocking)
+    return [f"semantic_verification: {details}"]
 
 
 def _assert_param_responsive(result, param: str) -> list[str]:

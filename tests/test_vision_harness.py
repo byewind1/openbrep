@@ -20,17 +20,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from openbrep.config import GDLAgentConfig
 from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import ImageRef, TaskPipeline, TaskRequest
-from openbrep.vision.harness import build_project_hints, run as harness_run
+from openbrep.vision.harness import build_project_hints, extraction_cache_context
+from openbrep.vision.harness import run as harness_run
 from openbrep.vision.modeling_plan import ModelingPlan
 from openbrep.vision.schema import VisualLayer, VisualStructure
 from openbrep.vision.schema_registry import load_all_schemas, load_schemas_from_dir
 from openbrep.vision.triage import derive_role, select_schema
-
 
 _FAKE_VS = VisualStructure(
     component_type="斗",
@@ -39,6 +37,25 @@ _FAKE_VS = VisualStructure(
     key_features=["收分"],
     parametrize=["A"],
 )
+
+
+def test_extraction_cache_context_tracks_role_schema_model_and_prompt():
+    image = ImageRef(token="图1", b64="YQ==", mime="image/png", sha256="a" * 64)
+    base = extraction_cache_context(
+        image, user_input="这是漏窗", model="vision-a",
+    )
+    other_model = extraction_cache_context(
+        image, user_input="这是漏窗", model="vision-b",
+    )
+    other_request = extraction_cache_context(
+        image, user_input="这是柜体", model="vision-a",
+    )
+    assert base["schema_name"] == "lattice_window"
+    assert base["role"] == "outline"
+    assert base["prompt_version"] != other_request["prompt_version"]
+    assert base != other_model
+    image.role = "pattern"
+    assert extraction_cache_context(image, user_input="这是漏窗", model="vision-a") != base
 
 
 @dataclass
@@ -537,7 +554,7 @@ class TestCriticPass(unittest.TestCase):
         plan = self._run(llm)
         # critic_checks 之外的字段：值不动、不记 corrections、置信度不被 critic 改动
         self.assertEqual(plan.fields["opening_shape"], "rect")
-        self.assertEqual(plan.fields["gdl_strategy"], "PRISM_ 棱条 + FOR 网格平铺")
+        self.assertNotIn("gdl_strategy", plan.fields)  # 命令选型留给 Plan 阶段
         self.assertEqual(plan.fields["bar_width_ratio"], 0.08)
         self.assertEqual(plan.corrections, [])
         # 范围内的字段正常处理
