@@ -9,6 +9,7 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from openbrep.runtime.turn_policy import TurnPolicy, decide_turn
@@ -265,6 +266,103 @@ class WorkbenchConversationService:
                 'working_intent': self.intent_summary(),
                 **({'repair_context': copy.deepcopy(turn.repair_context)} if turn and turn.repair_context else {}),
                 **payload}
+
+    def _checkpoint_visual_repair(self, turn: PreparedTurn) -> dict | None:
+        """Save the exact source/spec state immediately before an approved repair."""
+        context = turn.repair_context
+        if not isinstance(context, dict) or context.get('state') != 'awaiting_approval':
+            return None
+        if self.session.project is None:
+            return {'code': 'PROJECT_UNAVAILABLE', 'error': '修复执行前项目已关闭。'}
+        from openbrep.project_write_lock import project_write_lock
+        from openbrep.revisions import create_revision
+        from openbrep.source_fingerprint import compute_source_fingerprint
+
+        root = self.session.project.root
+        if context.get('project_root') and Path(root).resolve() != Path(str(context['project_root'])).resolve():
+            return {'code': 'PROJECT_CHANGED', 'error': '项目已切换，修复计划已失效。'}
+        expected = str(context.get('before_source_fingerprint') or '')
+        with project_write_lock(root):
+            current = compute_source_fingerprint(root)
+            if not expected or current != expected:
+                return {'code': 'REPAIR_SOURCE_STALE', 'error': '准备修复后源码已变化，请重新对照后再试。'}
+            try:
+                revision = create_revision(
+                    root,
+                    message='visual repair before snapshot',
+                    gsm_name=self.session.project.name,
+                    metadata={'repair': {
+                        'review_id': context.get('review_id'),
+                        'finding_id': context.get('finding_id'),
+                        'run_id': context.get('run_id'),
+                    }},
+                    trigger='visual_repair',
+                    intent='REPAIR',
+                    user_instruction=str(turn.body.get('message') or ''),
+                )
+            except Exception as exc:
+                return {'code': 'REPAIR_CHECKPOINT_FAILED', 'error': f'无法保存修复前版本：{exc}'}
+        context['before_revision_id'] = revision.revision_id
+        context['state'] = 'executing'
+        return None
+
+    def _finish_visual_repair(self, turn: PreparedTurn, response: dict) -> None:
+        """Restore a failed repair that regressed a required check; otherwise require recheck."""
+        context = turn.repair_context
+        if not isinstance(context, dict) or context.get('state') != 'executing':
+            return
+        from openbrep.source_fingerprint import compute_source_fingerprint
+
+        root = self.session.project.root if self.session.project is not None else None
+        if root is not None and context.get('project_root') and Path(root).resolve() != Path(str(context['project_root'])).resolve():
+            context['state'] = 'restore_conflict'
+            context['reason'] = 'project_changed_after_repair'
+            return
+        after = compute_source_fingerprint(root) if root is not None else None
+        assistant = response.get('assistant') if isinstance(response.get('assistant'), dict) else {}
+        verification = assistant.get('verification') if isinstance(assistant.get('verification'), dict) else {}
+        required_failed = verification.get('requirements_passed') is False
+        execution_failed = response.get('ok') is not True
+        context['repair_run_id'] = assistant.get('run_id')
+        context['after_source_fingerprint'] = after
+        if required_failed or (execution_failed and after != context.get('before_source_fingerprint')):
+            if after == context.get('before_source_fingerprint'):
+                context['state'] = 'repair_failed' if execution_failed else 'requirements_failed_without_change'
+                context['reason'] = 'required_check_failed' if required_failed else 'execution_failed'
+                return
+            from openbrep.project_write_lock import project_write_lock
+            from openbrep.revisions import restore_revision
+
+            before_revision_id = str(context.get('before_revision_id') or '')
+            if not before_revision_id or root is None:
+                context['state'] = 'restore_unavailable'
+                context['reason'] = 'missing_before_revision'
+                return
+            try:
+                with project_write_lock(root):
+                    current = compute_source_fingerprint(root)
+                    if current != after:
+                        context['state'] = 'restore_conflict'
+                        context['reason'] = 'source_changed_after_repair'
+                        return
+                    restored = restore_revision(
+                        root,
+                        before_revision_id,
+                        message='restore rejected visual repair',
+                    )
+                    context['restore_revision_id'] = restored.revision_id
+                    context['after_source_fingerprint'] = compute_source_fingerprint(root)
+                    context['state'] = 'restored_after_requirement_failure' if required_failed else 'restored_after_execution_failure'
+                    context['reason'] = 'required_check_failed' if required_failed else 'execution_failed'
+                    refresh = getattr(self.session, 'refresh_same_project', None)
+                    if callable(refresh):
+                        from openbrep.hsf_project import HSFProject
+                        refresh(HSFProject.load_from_disk(str(root)))
+            except Exception as exc:
+                context['state'] = 'restore_failed'
+                context['reason'] = f'{type(exc).__name__}: {exc}'
+            return
+        context['state'] = 'recheck_required' if response.get('ok') is True else 'repair_failed'
 
     def _failure(self, turn, code, error=None):
         return self._response(turn, 'failed', code=code, error=error or code)
@@ -767,6 +865,16 @@ class WorkbenchConversationService:
             protected = [c['value'] for c in self.working_intent['constraints'] if c['status'] == 'active']
             if any(re.search(r'不改|不要改|保持|do not|don.t|unchanged', c, re.I) and any(token and token.lower() in c.lower() for token in tokens) for c in protected):
                 return self._failure(turn, 'CONSTRAINT_CONFLICT', '参数修改与仍有效的用户约束冲突；请明确撤回该约束。')
+        repair_checkpoint_error = self._checkpoint_visual_repair(turn)
+        if repair_checkpoint_error:
+            turn.state = 'failed'
+            turn.result = self._response(turn, 'failed', **repair_checkpoint_error)
+            self._record_task_terminal(
+                turn,
+                kind='failed',
+                error_code=str(repair_checkpoint_error.get('code') or 'REPAIR_CHECKPOINT_FAILED'),
+            )
+            return _with_recording(copy.deepcopy(turn.result))
         if not any(t['id'] == turn.turn_id for t in self.working_intent['tasks']):
             self._reduce_working_intent({'kind': 'start_task', 'task_id': turn.turn_id, 'goal': turn.body['message'], 'task_intent': turn.policy.task_intent})
         self.active_turn_id = turn.turn_id
@@ -861,11 +969,7 @@ class WorkbenchConversationService:
             self._reduce_working_intent({'kind': 'result', 'task_id': turn.turn_id, 'result': response})
             turn.result = self._response(turn, kind, **{k: v for k, v in response.items() if k not in {'turn_id', 'project_epoch', 'result_kind'}})
             if turn.repair_context:
-                from openbrep.source_fingerprint import compute_source_fingerprint
-                turn.repair_context['after_source_fingerprint'] = (
-                    compute_source_fingerprint(self.session.project.root) if self.session.project else None
-                )
-                turn.repair_context['state'] = 'recheck_required' if response.get('ok') else 'repair_failed'
+                self._finish_visual_repair(turn, response)
                 turn.result['repair_context'] = copy.deepcopy(turn.repair_context)
             if should_cancel and should_cancel():
                 # Keep real delivery evidence if changes already happened.

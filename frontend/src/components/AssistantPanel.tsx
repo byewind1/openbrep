@@ -27,6 +27,7 @@ interface AssistantPanelProps {
   onAdoptCode: (index: number) => void
   onReviewVisualTurn?: (turnId: string, force?: boolean) => void
   onRepairVisualFinding?: (reviewId: string, findingId: string) => void
+  onResolveVisualRepair?: (turnId: string, reviewId: string, resolution: 'accept' | 'restore') => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => Promise<boolean> | boolean
   onRevealLine?: (scriptName: string, lineNumber: number) => void
@@ -91,6 +92,7 @@ export function AssistantPanel({
   onAdoptCode,
   onReviewVisualTurn,
   onRepairVisualFinding,
+  onResolveVisualRepair,
   onOpenScript,
   onSaveRevision,
   onRevealLine,
@@ -592,6 +594,13 @@ export function AssistantPanel({
                     {message.visualReviewBusy ? '正在对照参考图…' : message.visualReviewRestored ? '重新对照参考图' : message.visualReview ? '重新对照参考图' : '对照参考图'}
                   </button>
                   {message.visualReviewError ? <p role="alert">{message.visualReviewError}</p> : null}
+                  {message.repairContext ? <p>修复状态：{message.repairContext.state}</p> : null}
+                  {message.repairContext?.state === 'recheck_required' && message.visualReview ? (
+                    <div>
+                      <button type="button" disabled={busy || !onResolveVisualRepair} onClick={() => onResolveVisualRepair?.(message.turnTaskRef!.turn_id, message.visualReview!.review_id, 'accept')}>接受修复</button>
+                      <button type="button" disabled={busy || !onResolveVisualRepair} onClick={() => onResolveVisualRepair?.(message.turnTaskRef!.turn_id, message.visualReview!.review_id, 'restore')}>恢复修复前版本</button>
+                    </div>
+                  ) : null}
                   {message.visualReview ? (
                     <div className="assistant-visual-review-report">
                       <strong>视觉对照候选 · {message.visualReview.status === 'partial' ? '覆盖不完整' : '完成'}</strong>

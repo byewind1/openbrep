@@ -243,3 +243,89 @@ def test_repair_rejects_stale_source_without_preparing_turn(tmp_path):
     assert response["ok"] is False
     assert response["decision"]["reason"] == "review_source_stale"
     assert calls == []
+
+
+def _repair_turn(session, project_root, *, before_revision_id=None):
+    repair_id = "repair-turn"
+    turn = SimpleNamespace(
+        turn_id=repair_id,
+        state="completed",
+        body={"message": "bounded visual repair"},
+        result={"ok": True, "assistant": {"run_id": "repair-run"}},
+        repair_context={
+            "state": "recheck_required",
+            "repair_run_id": "repair-run",
+            "before_revision_id": before_revision_id,
+            "project_root": str(project_root.resolve()),
+            "target_ids": ["overall-object"],
+            "before_source_fingerprint": "sha256:before",
+        },
+    )
+    session.conversation_service.turns[repair_id] = turn
+    return turn
+
+
+def _save_repair_review(project_root, *, review_id, outcome="pass", fingerprint=None):
+    review_root = project_root / ".openbrep" / "visual-reviews"
+    review_root.mkdir(parents=True, exist_ok=True)
+    report = {
+        "review_id": review_id,
+        "run_id": "repair-run",
+        "source_fingerprint": fingerprint or compute_source_fingerprint(project_root),
+        "coverage": [{"target_id": "overall-object", "status": "covered"}],
+        "findings": [{"finding_id": "rechecked-target", "target_id": "overall-object", "outcome": outcome}],
+    }
+    (review_root / f"{review_id}.json").write_text(json.dumps(report), encoding="utf-8")
+
+
+def test_repair_accept_requires_current_passing_target_evidence(tmp_path):
+    service, session, _, project_root = _service(tmp_path)
+    turn = _repair_turn(session, project_root)
+    review_id = f"review-{'a' * 32}"
+    _save_repair_review(project_root, review_id=review_id, outcome="fail")
+
+    rejected = service.resolve_repair({
+        "turn_id": turn.turn_id, "review_id": review_id,
+        "resolution": "accept", "project_epoch": 4,
+    })
+
+    assert rejected["ok"] is False
+    assert rejected["code"] == "REPAIR_RECHECK_NOT_PASSED"
+    assert turn.repair_context["state"] == "recheck_required"
+
+    _save_repair_review(project_root, review_id=review_id, outcome="pass")
+    accepted = service.resolve_repair({
+        "turn_id": turn.turn_id, "review_id": review_id,
+        "resolution": "accept", "project_epoch": 4,
+    })
+    assert accepted["ok"] is True
+    assert accepted["repair_context"]["state"] == "accepted"
+
+
+def test_repair_restore_uses_before_revision_and_current_review_binding(tmp_path):
+    from openbrep.revisions import create_revision
+
+    service, session, _, project_root = _service(tmp_path)
+    before = create_revision(project_root, message="before visual repair")
+    turn = _repair_turn(session, project_root, before_revision_id=before.revision_id)
+    script = project_root / "scripts" / "3d.gdl"
+    script.write_text("BLOCK 2, 2, 2\n", encoding="utf-8")
+    review_id = f"review-{'b' * 32}"
+    _save_repair_review(project_root, review_id=review_id, outcome="fail")
+    script.write_text("BLOCK 3, 3, 3\n", encoding="utf-8")
+
+    stale = service.resolve_repair({
+        "turn_id": turn.turn_id, "review_id": review_id,
+        "resolution": "restore", "project_epoch": 4,
+    })
+    assert stale["ok"] is False
+    assert stale["code"] == "REPAIR_REVIEW_STALE"
+
+    _save_repair_review(project_root, review_id=review_id, outcome="fail", fingerprint=compute_source_fingerprint(project_root))
+    restored = service.resolve_repair({
+        "turn_id": turn.turn_id, "review_id": review_id,
+        "resolution": "restore", "project_epoch": 4,
+    })
+    assert restored["ok"] is True
+    assert restored["repair_context"]["state"] == "restored"
+    assert script.read_text(encoding="utf-8") == "BLOCK 1, 1, 1\n"

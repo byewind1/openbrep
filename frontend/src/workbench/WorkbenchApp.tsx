@@ -229,6 +229,7 @@ export function WorkbenchApp() {
   const confirmPendingSkillProposal = useWorkbenchStore((state) => state.confirmPendingSkillProposal)
   const reviewVisualTurn = useWorkbenchStore((state) => state.reviewVisualTurn)
   const repairVisualFinding = useWorkbenchStore((state) => state.repairVisualFinding)
+  const resolveVisualRepair = useWorkbenchStore((state) => state.resolveVisualRepair)
   const stopChat = useWorkbenchStore((state) => state.stopChat)
   const interruptedContext = useWorkbenchStore((state) => state.interruptedContext)
   const openScript = useWorkbenchStore((state) => state.openScript)
@@ -547,6 +548,7 @@ export function WorkbenchApp() {
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
             onReviewVisualTurn={(turnId, force) => void reviewVisualTurn(turnId, force)}
             onRepairVisualFinding={(reviewId, findingId) => void repairVisualFinding(reviewId, findingId)}
+            onResolveVisualRepair={(turnId, reviewId, resolution) => void resolveVisualRepair(turnId, reviewId, resolution)}
             onOpenScript={openScriptInEditor}
             onSaveRevision={(message) => saveRevision(message)}
             onRevealLine={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine ?? null)}

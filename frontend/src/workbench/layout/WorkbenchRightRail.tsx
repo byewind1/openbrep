@@ -55,6 +55,7 @@ interface WorkbenchRightRailProps {
   onAdoptAssistantCode: (index: number) => void
   onReviewVisualTurn: (turnId: string, force?: boolean) => void
   onRepairVisualFinding?: (reviewId: string, findingId: string) => void
+  onResolveVisualRepair?: (turnId: string, reviewId: string, resolution: 'accept' | 'restore') => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => Promise<boolean> | boolean
   onRevealLine?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
@@ -115,6 +116,7 @@ export function WorkbenchRightRail({
   onAdoptAssistantCode,
   onReviewVisualTurn,
   onRepairVisualFinding,
+  onResolveVisualRepair,
   onOpenScript,
   onSaveRevision,
   onRevealLine,
@@ -259,6 +261,7 @@ export function WorkbenchRightRail({
             onAdoptCode={onAdoptAssistantCode}
             onReviewVisualTurn={onReviewVisualTurn}
             onRepairVisualFinding={onRepairVisualFinding}
+            onResolveVisualRepair={onResolveVisualRepair}
             onOpenScript={onOpenScript}
             onSaveRevision={onSaveRevision}
             onRevealLine={onRevealLine}

@@ -43,6 +43,8 @@ class WorkbenchVisualReviewService:
             return self.review_turn(body)
         if method.upper() == "POST" and path == "/api/vision/repair":
             return self.prepare_repair(body)
+        if method.upper() == "POST" and path == "/api/vision/repair/resolve":
+            return self.resolve_repair(body)
         prefix = "/api/vision/reviews/"
         if method.upper() == "GET" and path.startswith(prefix):
             return self.saved_reviews(path[len(prefix):])
@@ -117,6 +119,9 @@ class WorkbenchVisualReviewService:
                 "finding_id": finding_id, "run_id": decision.run_id,
                 "plan_id": decision.plan_id,
                 "before_source_fingerprint": fingerprint,
+                "project_root": str(root),
+                "target_ids": [target_id],
+                "target_summary": summary,
                 "decision": decision.to_dict(),
             }
             if prepared_turn is not None:
@@ -131,6 +136,87 @@ class WorkbenchVisualReviewService:
                 "review_id": review_id, "finding_id": finding_id,
             }
         return prepared
+
+    def resolve_repair(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Accept a freshly rechecked repair or restore its exact before snapshot."""
+        turn_id = str(body.get("turn_id") or "")
+        review_id = str(body.get("review_id") or "")
+        resolution = str(body.get("resolution") or "")
+        if resolution not in {"accept", "restore"}:
+            return {"ok": False, "code": "INVALID_REPAIR_RESOLUTION", "error": "修复决定必须是 accept 或 restore。"}
+        if body.get("project_epoch") != self.session.project_epoch:
+            return {"ok": False, "code": "PROJECT_CHANGED", "error": "项目已切换，请从当前任务重新处理。"}
+        if self.session.project is None:
+            return {"ok": False, "code": "PROJECT_UNAVAILABLE", "error": "当前没有可处理的项目。"}
+        turn = getattr(self.session.conversation_service, "turns", {}).get(turn_id)
+        context = getattr(turn, "repair_context", None) if turn is not None else None
+        if not isinstance(context, dict) or context.get("state") != "recheck_required":
+            return {"ok": False, "code": "REPAIR_NOT_READY", "error": "本轮修复尚未完成，或已处理。"}
+        if not re.fullmatch(r"review-[a-f0-9]{32}", review_id):
+            return {"ok": False, "code": "INVALID_REPAIR_REFERENCE", "error": "复查记录编号无效。"}
+        root = Path(self.session.project.root).resolve()
+        path = root / ".openbrep" / "visual-reviews" / f"{review_id}.json"
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"ok": False, "code": "REVIEW_NOT_FOUND", "error": "找不到修复后的视觉复查记录。"}
+        assistant = (getattr(turn, "result", None) or {}).get("assistant") or {}
+        repair_run_id = str(context.get("repair_run_id") or assistant.get("run_id") or "")
+        if not repair_run_id or report.get("run_id") != repair_run_id:
+            return {"ok": False, "code": "REPAIR_REVIEW_MISMATCH", "error": "这份视觉复查不属于当前修复任务。"}
+        current_fingerprint = compute_source_fingerprint(root)
+        if report.get("source_fingerprint") != current_fingerprint:
+            return {"ok": False, "code": "REPAIR_REVIEW_STALE", "error": "复查后源码又发生变化，请重新检查当前版本。"}
+        target_ids = {str(item) for item in context.get("target_ids") or [] if item}
+        coverage = {
+            str(item.get("target_id") or ""): str(item.get("status") or "")
+            for item in report.get("coverage", []) if isinstance(item, dict)
+        }
+        findings = [item for item in report.get("findings", []) if isinstance(item, dict)]
+        if not target_ids or not target_ids.issubset(coverage):
+            return {"ok": False, "code": "REPAIR_TARGET_UNCOVERED", "error": "复查没有覆盖本次修复目标。"}
+        if resolution == "accept":
+            passing = {
+                str(item.get("target_id") or "")
+                for item in findings if item.get("outcome") == "pass"
+            }
+            non_passing = [
+                item for item in findings
+                if str(item.get("target_id") or "") in target_ids and item.get("outcome") != "pass"
+            ]
+            if any(coverage.get(target_id) != "covered" for target_id in target_ids) or not target_ids.issubset(passing) or non_passing:
+                return {"ok": False, "code": "REPAIR_RECHECK_NOT_PASSED", "error": "目标未获得完整 pass 证据，不能接受修复；可以恢复修复前版本。"}
+            context["state"] = "accepted"
+            context["resolved_review_id"] = review_id
+            context["resolution"] = "accept"
+            context["resolution_source_fingerprint"] = current_fingerprint
+            turn.result["repair_context"] = dict(context)
+            return {"ok": True, "repair_context": dict(context)}
+
+        before_revision_id = str(context.get("before_revision_id") or "")
+        if not before_revision_id:
+            return {"ok": False, "code": "REPAIR_RESTORE_UNAVAILABLE", "error": "缺少修复前版本，无法安全恢复。"}
+        from openbrep.project_write_lock import project_write_lock
+        from openbrep.revisions import restore_revision
+
+        try:
+            with project_write_lock(root):
+                if compute_source_fingerprint(root) != current_fingerprint:
+                    return {"ok": False, "code": "REPAIR_REVIEW_STALE", "error": "恢复前源码又发生变化，请重新加载并核对。"}
+                restored = restore_revision(root, before_revision_id, message="restore rejected visual repair")
+                context["state"] = "restored"
+                context["resolved_review_id"] = review_id
+                context["resolution"] = "restore"
+                context["restore_revision_id"] = restored.revision_id
+                context["resolution_source_fingerprint"] = compute_source_fingerprint(root)
+                refresh = getattr(self.session, "refresh_same_project", None)
+                if callable(refresh):
+                    from openbrep.hsf_project import HSFProject
+                    refresh(HSFProject.load_from_disk(str(root)))
+                turn.result["repair_context"] = dict(context)
+        except Exception as exc:
+            return {"ok": False, "code": "REPAIR_RESTORE_FAILED", "error": f"恢复修复前版本失败：{exc}"}
+        return {"ok": True, "repair_context": dict(context)}
 
     def saved_reviews(self, run_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", run_id):
@@ -184,7 +270,8 @@ class WorkbenchVisualReviewService:
             return {"ok": False, "code": "SOURCE_STALE", "error": "生成后源码已变化；请先重新预览并基于当前任务重新对照。"}
 
         planning_artifact, object_plan, plan_id = self._plan_context(turn)
-        targets = self._targets(planning_artifact, object_plan, turn.body)
+        target_context = {**turn.body, "_repair_context": getattr(turn, "repair_context", None)}
+        targets = self._targets(planning_artifact, object_plan, target_context)
         reference_frames, error = self._reference_frames(turn)
         if error:
             return {"ok": False, "code": "REFERENCE_UNAVAILABLE", "error": error}
@@ -292,6 +379,14 @@ class WorkbenchVisualReviewService:
 
     @staticmethod
     def _targets(artifact: dict[str, Any], object_plan: dict[str, Any], turn_body: dict[str, Any]) -> list[ReviewTarget]:
+        repair_context = turn_body.get("_repair_context") if isinstance(turn_body, dict) else None
+        if isinstance(repair_context, dict) and repair_context.get("target_ids"):
+            summary = str(repair_context.get("target_summary") or "修复目标")
+            return [
+                ReviewTarget(str(target_id), f"复查本轮是否修复：{summary}")
+                for target_id in repair_context["target_ids"]
+                if isinstance(target_id, str) and target_id
+            ]
         execution = artifact.get("execution_plan") if isinstance(artifact, dict) else {}
         requirements = execution.get("requirements") if isinstance(execution, dict) else []
         targets: list[ReviewTarget] = []

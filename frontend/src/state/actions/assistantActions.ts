@@ -1,4 +1,4 @@
-import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, DeliveryContinueFrom, DeliveryPresentation, DeliverySource, GenerateResult, PendingExtraction, PendingPlan, SkillProposal, VisionExtraction } from '../../api/types'
+import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, DeliveryContinueFrom, DeliveryPresentation, DeliverySource, GenerateResult, PendingExtraction, PendingPlan, SkillProposal, VisionExtraction, VisualRepairContext } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
@@ -489,6 +489,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     originalInstruction?: string,
     taskRef?: import('../../api/types').TurnTaskRef,
     workingIntent?: import('../../api/types').WorkingIntentSnapshot,
+    repairContext?: VisualRepairContext,
   ) {
     if (projectSwitchedSince(epoch)) {
       discardStaleResult('Generation result discarded: project switched during the request.')
@@ -522,6 +523,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           turnTaskRef: taskRef,
           pendingPlan: null,
           workingIntent,
+          repairContext,
           knowledgeSources: result.assistant?.knowledge_sources ?? [],
           knowledgeOmissions: result.assistant?.knowledge_omissions ?? [],
         })
@@ -535,6 +537,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           turnTaskRef: taskRef,
           pendingPlan: null,
           workingIntent,
+          repairContext,
           knowledgeSources: result.assistant?.knowledge_sources ?? [],
           knowledgeOmissions: result.assistant?.knowledge_omissions ?? [],
         })
@@ -555,7 +558,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         : state.compileLog,
     }))
     await persistAssistantHistory()
-    if (result.ok) {
+    const sourceWasRestored = repairContext?.state.startsWith('restored') ?? false
+    if (result.ok || sourceWasRestored) {
       await get().refreshProjectWorkspace({
         preferredScriptName: changedFiles[0] ?? '',
         refreshAllScripts: true,
@@ -606,7 +610,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       return
     }
     if (result.result_kind === 'execution' || (result.assistant?.delivery && result.result_kind !== 'advice')) {
-      await finishModifyStream(result, epoch, ASSISTANT_PENDING_PREFIX, steps, message, taskRef, result.working_intent)
+      await finishModifyStream(result, epoch, ASSISTANT_PENDING_PREFIX, steps, message, taskRef, result.working_intent, result.repair_context)
       if (result.events_recording?.status === 'degraded') markRecordingFailed(result.turn_id)
       return
     }
@@ -1039,12 +1043,14 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         }
         const repairTurnId = result.turn_id
         const plan = { ...result.pending_plan, turn_id: repairTurnId, original_has_images: true }
+        const repairContext = result.repair
         set((state) => ({
           pendingPlan: plan,
           assistantMessages: [...state.assistantMessages, {
             role: 'assistant', content: '已根据当前视觉证据准备一轮限定范围的修复计划，请审核后决定是否执行。',
             createdAt: Date.now(), pendingPlan: plan,
             turnTaskRef: { turn_id: repairTurnId, run_id: null, reference_available: true, schema_version: 1 },
+            repairContext,
           }],
         }))
       } catch (error) {
@@ -1052,6 +1058,27 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       } finally {
         if (!projectSwitchedSince(epoch)) set({ assistantBusy: false })
       }
+    },
+
+    async resolveVisualRepair(turnId: string, reviewId: string, resolution: 'accept' | 'restore') {
+      const epoch = get().projectEpoch
+      const result = await api.resolveVisualRepair(turnId, reviewId, resolution, epoch)
+      if (projectSwitchedSince(epoch)) return
+      if (!result.ok || !result.repair_context) {
+        set({ lastError: result.error ?? '无法处理视觉修复结果。' })
+        return
+      }
+      set((state) => ({
+        assistantMessages: state.assistantMessages.map((item) => item.turnTaskRef?.turn_id === turnId
+          ? { ...item, repairContext: result.repair_context }
+          : item),
+        lastError: undefined,
+      }))
+      if (resolution === 'restore') {
+        await get().refreshProjectWorkspace({ refreshAllScripts: true, refreshPreview: true, refreshParameters: true, runDiagnostics: true })
+        await get().loadRevisions()
+      }
+      await persistAssistantHistory()
     },
 
     async adoptAssistantMessageCode(index: number) {

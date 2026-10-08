@@ -1048,6 +1048,7 @@ export interface AssistantMessage {
   visualReviewError?: string
   visualReviewBusy?: boolean
   visualReviewRestored?: boolean
+  repairContext?: VisualRepairContext
 }
 
 export interface WorkingIntentSnapshot {
@@ -1070,6 +1071,26 @@ export interface VisualReviewReport {
   coverage: Array<{ target_id: string; status: 'covered' | 'partial' | 'unknown' | 'not_observable' }>
   findings: Array<{ finding_id: string; target_id: string; outcome: 'pass' | 'fail' | 'unknown'; severity: string; summary: string; failure_layer: string; uncertainty: string; evidence: Array<{ frame_id: string; view_id?: string; note: string; region?: number[] }> }>
   missing_target_ids: string[]
+}
+
+export interface VisualRepairContext {
+  state: string
+  review_id: string
+  finding_id: string
+  run_id: string
+  repair_run_id?: string | null
+  plan_id: string
+  project_root?: string
+  before_source_fingerprint: string
+  after_source_fingerprint?: string | null
+  before_revision_id?: string | null
+  restore_revision_id?: string | null
+  target_ids: string[]
+  target_summary?: string
+  resolved_review_id?: string
+  resolution?: 'accept' | 'restore'
+  reason?: string
+  decision: Record<string, unknown>
 }
 
 /** RF04：任务索引条目（GET /api/assistant/turn/events） */
@@ -1827,4 +1848,5 @@ export type ConversationTurnResult = GenerateResult & Partial<Omit<WorkbenchSnap
   awaiting_extraction_confirmation?: boolean
   extractions?: VisionExtraction[]
   working_intent?: WorkingIntentSnapshot
+  repair_context?: VisualRepairContext
 }

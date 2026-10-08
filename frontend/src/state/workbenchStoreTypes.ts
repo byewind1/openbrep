@@ -92,6 +92,7 @@ export interface WorkbenchApi {
   conversationTurn: typeof import('../api/client').conversationTurn
   requestVisualReview: typeof import('../api/client').requestVisualReview
   requestVisualRepair: typeof import('../api/client').requestVisualRepair
+  resolveVisualRepair: typeof import('../api/client').resolveVisualRepair
   fetchSavedVisualReviews: typeof import('../api/client').fetchSavedVisualReviews
   fetchTurnEvents: typeof import('../api/client').fetchTurnEvents
   listTurnEvents: typeof import('../api/client').listTurnEvents
@@ -472,6 +473,7 @@ export interface WorkbenchState {
   adoptAssistantMessageCode: (index: number) => Promise<void>
   reviewVisualTurn: (turnId: string, force?: boolean) => Promise<void>
   repairVisualFinding: (reviewId: string, findingId: string) => Promise<void>
+  resolveVisualRepair: (turnId: string, reviewId: string, resolution: 'accept' | 'restore') => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
   createProjectFromPrompt: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
   generateAssistantChanges: (message: string, images?: AssistantImageAttachment[]) => Promise<void>

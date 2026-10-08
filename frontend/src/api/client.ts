@@ -1741,7 +1741,7 @@ export async function requestVisualRepair(reviewId: string, findingId: string, p
   ok: boolean
   turn_id?: string
   pending_plan?: import('./types').PendingPlan
-  repair?: { state: string; decision: Record<string, unknown>; review_id: string; finding_id: string }
+  repair?: import('./types').VisualRepairContext
   error?: string
   code?: string
 }> {
@@ -1749,6 +1749,19 @@ export async function requestVisualRepair(reviewId: string, findingId: string, p
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ review_id: reviewId, finding_id: findingId, project_epoch: projectEpoch }),
+  }, { ok: false, error: 'OpenBrep local API is not available.' })
+}
+
+export async function resolveVisualRepair(turnId: string, reviewId: string, resolution: 'accept' | 'restore', projectEpoch: number): Promise<{
+  ok: boolean
+  repair_context?: import('./types').VisualRepairContext
+  error?: string
+  code?: string
+}> {
+  return requestJson('/api/vision/repair/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ turn_id: turnId, review_id: reviewId, resolution, project_epoch: projectEpoch }),
   }, { ok: false, error: 'OpenBrep local API is not available.' })
 }
 

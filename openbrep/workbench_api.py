@@ -797,7 +797,7 @@ class WorkbenchSession:
         if route == "/api/references" or route.startswith("/api/references/"):
             return self._reference_route(normalized_method, route, body)
 
-        if route == "/api/vision/review" or route.startswith("/api/vision/reviews/"):
+        if route in {"/api/vision/review", "/api/vision/repair", "/api/vision/repair/resolve"} or route.startswith("/api/vision/reviews/"):
             return self.visual_review_service.route(normalized_method, route, body)
 
         if normalized_method == "POST" and route == "/api/assistant":

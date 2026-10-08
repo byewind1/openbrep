@@ -53,11 +53,31 @@ test('visual repair action opens a scoped approval plan and anchors the repair t
   })
 })
 
+test('visual repair resolution is saved on its task message', async () => {
+  const repairContext = {
+    state: 'accepted', review_id: 'review-1', finding_id: 'finding-1', run_id: 'run-1',
+    plan_id: 'plan-1', before_source_fingerprint: 'before', target_ids: ['target-1'], decision: {},
+    resolved_review_id: 'review-2', resolution: 'accept' as const,
+  }
+  const store = createWorkbenchStore(makeApi({
+    resolveVisualRepair: async () => ({ ok: true, repair_context: repairContext }),
+  }))
+  store.setState({ assistantMessages: [{
+    role: 'assistant', content: '修复已完成', createdAt: Date.now(),
+    turnTaskRef: { turn_id: 'repair-turn', run_id: 'run-1', reference_available: true, schema_version: 1 },
+  }] })
+
+  await store.getState().resolveVisualRepair('repair-turn', 'review-2', 'accept')
+
+  expect(store.getState().assistantMessages[0].repairContext).toEqual(repairContext)
+})
+
 function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
   return {
     conversationTurn: async () => ({ ok: false, error: 'Unified entry is not mocked in this legacy test.' }),
     requestVisualReview: async () => ({ ok: false, error: '视觉对照未在该测试中模拟。' }),
     requestVisualRepair: async () => ({ ok: false, error: '视觉修复未在该测试中模拟。' }),
+    resolveVisualRepair: async () => ({ ok: false, error: '视觉修复处理未在该测试中模拟。' }),
     fetchSavedVisualReviews: async () => ({ ok: true, reports: [] }),
     fetchTurnEvents: async () => ({ ok: false, events: [] }),
     listTurnEvents: async () => ({ ok: false, turns: [] }),
