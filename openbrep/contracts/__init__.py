@@ -17,6 +17,11 @@ from openbrep.contracts.object_spec import (
     parse_observation,
     register_check_executor,
 )
+from openbrep.contracts.requirement_execution import (
+    RequirementEvaluation,
+    execute_requirements,
+    register_requirement_executor,
+)
 from openbrep.contracts.stair import (
     StairContractCheck,
     StairContractReport,
@@ -27,6 +32,9 @@ __all__ = [
     "StairContractCheck",
     "StairContractReport",
     "evaluate_stair_contract",
+    "RequirementEvaluation",
+    "execute_requirements",
+    "register_requirement_executor",
     # U03-A 对象合同（Observation / ObjectSpec / ExecutionPlan）
     "ContractError",
     "ExecutionPlan",

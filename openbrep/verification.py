@@ -84,6 +84,7 @@ class VerificationReport:
     graph_powered: bool = False  # 本次任务使用了图谱约束或诊断
     parameter_sweep: dict | None = None
     project_contract: dict | None = None
+    requirement_evaluation: dict | None = None
 
     # ── derived views ───────────────────────────────────────
 
@@ -116,11 +117,21 @@ class VerificationReport:
                 return c.status.value
         return "not_run"
 
+    @property
+    def requirements_passed(self) -> bool | None:
+        """Requirement gate is separate from legacy `passed`; None means no requirements."""
+        if self.requirement_evaluation is None:
+            return None
+        return self.requirement_evaluation.get("status") in {
+            "passed", "not_applicable", "advisory_only"
+        }
+
     def to_dict(self) -> dict:
         return {
             "intent": self.intent,
             "goal": self.goal,
             "passed": self.passed,
+            "requirements_passed": self.requirements_passed,
             "confidence": self.confidence,
             "graph_powered": self.graph_powered,
             "counts": self.counts(),
@@ -146,6 +157,10 @@ class VerificationReport:
             **(
                 {"project_contract": self.project_contract}
                 if self.project_contract is not None else {}
+            ),
+            **(
+                {"requirement_evaluation": self.requirement_evaluation}
+                if self.requirement_evaluation is not None else {}
             ),
         }
 
@@ -284,9 +299,12 @@ class CheckResult:
     coverage: str = ""
     evidence_refs: list = field(default_factory=list)
     stale: bool = False
+    requirement_id: str = ""
+    executor_id: str = ""
+    source_fingerprint: str = ""
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "check_id": self.check_id,
             "status": self.status,
             "reason": self.reason,
@@ -294,6 +312,13 @@ class CheckResult:
             "evidence_refs": list(self.evidence_refs),
             "stale": self.stale,
         }
+        if self.requirement_id:
+            payload["requirement_id"] = self.requirement_id
+        if self.executor_id:
+            payload["executor_id"] = self.executor_id
+        if self.source_fingerprint:
+            payload["source_fingerprint"] = self.source_fingerprint
+        return payload
 
 
 def check_result_from_verification_check(
@@ -493,6 +518,8 @@ def build_verification_report(
     reserved_conflicts: list | None = None,
     enable_delivery_integrity: Optional[bool] = None,
     effect_result: Optional[dict] = None,
+    requirements: list | None = None,
+    requirement_context: dict | None = None,
 ) -> VerificationReport:
     """Aggregate scattered checks into one :class:`VerificationReport`.
 
@@ -749,6 +776,15 @@ def build_verification_report(
     report.confidence = _compute_confidence(checks, compile_result)
 
     report.checks = checks
+    if requirements is not None:
+        from openbrep.contracts.requirement_execution import execute_requirements
+
+        evaluation = execute_requirements(requirements, requirement_context or {})
+        report.requirement_evaluation = evaluation.to_dict()
+        if evaluation.status not in {"passed", "not_applicable", "advisory_only"}:
+            report.remaining_risks.append(
+                f"要求检查状态：{evaluation.status}（{evaluation.required_passed}/{evaluation.required_total} 个 required 已通过）"
+            )
     return report
 
 
