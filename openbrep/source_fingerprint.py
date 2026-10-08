@@ -42,6 +42,23 @@ def compute_source_fingerprint(project_root: str | Path) -> str:
     return f"{FINGERPRINT_PREFIX}{digest.hexdigest()}"
 
 
+def remember_project_source(project: object) -> str:
+    """Record the source revision represented by a loaded or committed HSF model."""
+    root = getattr(project, "root", project)
+    fingerprint = compute_source_fingerprint(root)
+    try:
+        setattr(project, "_managed_source_fingerprint", fingerprint)
+    except Exception:
+        pass
+    return fingerprint
+
+
+def expected_project_source_fingerprint(project: object) -> str:
+    """Return the model's last loaded/committed revision, initializing legacy objects."""
+    fingerprint = str(getattr(project, "_managed_source_fingerprint", "") or "")
+    return fingerprint or remember_project_source(project)
+
+
 def compute_files_fingerprint(
     project_root: str | Path,
     files: Iterable[str],

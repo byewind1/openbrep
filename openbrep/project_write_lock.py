@@ -48,7 +48,9 @@ def _process_lock(root: Path) -> Iterator[None]:
             / f"openbrep-project-locks-{getattr(os, 'getuid', lambda: getpass.getuser())()}"
         )
     )
-    lock_root.mkdir(parents=True, exist_ok=True)
+    lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        lock_root.chmod(0o700)
     lock_name = hashlib.sha256(os.fsencode(str(root))).hexdigest() + ".lock"
     lock_path = lock_root / lock_name
     with lock_path.open("a+b") as stream:

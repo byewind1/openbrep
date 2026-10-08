@@ -571,7 +571,9 @@ def _apply_edit_apply(
                 _apply_spec(project, spec)
                 from openbrep.contracts.project_store import commit_project_source_state
 
-                committed = commit_project_source_state(project)
+                committed = commit_project_source_state(
+                    project, expected_source_fingerprint=expected_source_fingerprint
+                )
                 if not committed.ok:
                     raise _McpEditRejected(
                         "source_commit_failed", committed.error or "源码事务提交失败"

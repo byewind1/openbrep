@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from openbrep.hsf_project import HSFProject, ScriptType
-from openbrep.source_fingerprint import compute_source_fingerprint
+from openbrep.source_fingerprint import (
+    compute_source_fingerprint,
+    expected_project_source_fingerprint,
+)
 
 SCRIPT_FILE_ORDER = [
     "3d.gdl",
@@ -115,7 +118,11 @@ class WorkbenchProjectScriptService:
                         pass
                     raise
 
-            commit = commit_project_source_state(old_project, source_writer=write_source_file)
+            commit = commit_project_source_state(
+                old_project,
+                source_writer=write_source_file,
+                expected_source_fingerprint=expected_project_source_fingerprint(old_project),
+            )
         if not commit.ok:
             return {"ok": False, "success": False, "error": f"Could not save source: {commit.error}"}
         # Source edit leaves any adopted contract bound to its prior source hash;

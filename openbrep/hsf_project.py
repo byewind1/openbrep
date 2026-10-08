@@ -177,8 +177,10 @@ class HSFProject:
         # U05-A: restore an interrupted source/spec transaction before any HSF
         # bytes are read. Legacy projects without a journal are unchanged.
         from openbrep.contracts.project_store import recover_project_state
+        from openbrep.source_fingerprint import compute_source_fingerprint
 
         recover_project_state(root)
+        loaded_fingerprint = compute_source_fingerprint(root)
 
         name = root.name
         proj = cls(name, str(root.parent))
@@ -223,6 +225,10 @@ class HSFProject:
         libpartdocs_path = root / "libpartdocs.xml"
         if libpartdocs_path.exists():
             proj._libpartdocs_raw = libpartdocs_path.read_text(encoding="utf-8-sig")
+
+        if compute_source_fingerprint(root) != loaded_fingerprint:
+            raise RuntimeError("HSF source changed while it was being loaded; reload the project")
+        proj._managed_source_fingerprint = loaded_fingerprint
 
         return proj
 
@@ -293,6 +299,10 @@ class HSFProject:
         # Write scripts
         for script_type, content in self.scripts.items():
             self._write_file(scripts_dir / script_type.value, content)
+
+        from openbrep.source_fingerprint import remember_project_source
+
+        remember_project_source(self)
 
         return self.root
 

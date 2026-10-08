@@ -453,6 +453,7 @@ def mutate_parameters(
     project._paramlist_raw = working_text
     project._paramlist_had_bom = had_bom
     new_fingerprint = compute_source_fingerprint(project.root)
+    project._managed_source_fingerprint = new_fingerprint
     return ParameterMutationResult(
         ok=True,
         changed_parameters=changed,

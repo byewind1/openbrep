@@ -258,6 +258,7 @@ def _commit_project_source_state_unlocked(
     *,
     source_writer: Callable[[], Any] | None = None,
     before_commit: Callable[[], None] | None = None,
+    expected_source_fingerprint: str = "",
 ) -> CommitResult:
     """Commit changed HSF source while preserving the existing contract bytes.
 
@@ -280,6 +281,8 @@ def _commit_project_source_state_unlocked(
             return CommitResult(True, source_fingerprint=compute_source_fingerprint(root))
         except Exception as exc:
             return CommitResult(False, error=str(exc))
+    if expected_source_fingerprint and compute_source_fingerprint(root) != expected_source_fingerprint:
+        return CommitResult(False, error="SOURCE_CHANGED: Project source changed before commit")
     recover_project_state(root)
     txn_id = f"source-spec-{uuid.uuid4().hex}"
     txn_dir = root / TRANSACTIONS_RELATIVE_PATH / txn_id
@@ -344,9 +347,14 @@ def commit_project_state(
 
     root = project if isinstance(project, (str, Path)) else getattr(project, "root", project)
     with project_write_lock(root):
-        return _commit_project_state_unlocked(
+        result = _commit_project_state_unlocked(
             project, object_spec, source_writer=source_writer, observation=observation
         )
+        if result.ok and not isinstance(project, (str, Path)):
+            from openbrep.source_fingerprint import remember_project_source
+
+            remember_project_source(project)
+        return result
 
 
 def commit_project_source_state(
@@ -354,14 +362,23 @@ def commit_project_source_state(
     *,
     source_writer: Callable[[], Any] | None = None,
     before_commit: Callable[[], None] | None = None,
+    expected_source_fingerprint: str = "",
 ) -> CommitResult:
     from openbrep.project_write_lock import project_write_lock
 
     root = project if isinstance(project, (str, Path)) else getattr(project, "root", project)
     with project_write_lock(root):
-        return _commit_project_source_state_unlocked(
-            project, source_writer=source_writer, before_commit=before_commit
+        result = _commit_project_source_state_unlocked(
+            project,
+            source_writer=source_writer,
+            before_commit=before_commit,
+            expected_source_fingerprint=expected_source_fingerprint,
         )
+        if result.ok and not isinstance(project, (str, Path)):
+            from openbrep.source_fingerprint import remember_project_source
+
+            remember_project_source(project)
+        return result
 
 
 def load_project_contract(project_root: str | Path) -> ProjectContract:

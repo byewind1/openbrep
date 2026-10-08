@@ -642,6 +642,34 @@ def test_project_parameter_service_applies_values_and_snapshots(tmp_path):
     assert project.get_parameter("A").value == "2.5"
 
 
+def test_workbench_stale_session_cannot_overwrite_mcp_parameter_edit(tmp_path):
+    from openbrep.mcp_tools import apply_edit
+
+    project = HSFProject.create_new("SharedEdit", str(tmp_path))
+    project.save_to_disk()
+    session = SimpleNamespace(
+        project=project,
+        source_path=project.root,
+        snapshot=lambda: {"project": {"name": "SharedEdit"}},
+    )
+    service = WorkbenchProjectParameterService(session)
+    assert service.apply({"A": 2.5})["ok"] is True
+
+    mcp_result = apply_edit(
+        str(project.root),
+        {"type": "set_parameters", "values": {"B": 0.25}},
+        mode="apply",
+    )
+    assert mcp_result["ok"] is True
+
+    stale_result = service.apply({"A": 3.5})
+    assert stale_result["ok"] is False
+    assert stale_result["error_code"] == "SOURCE_CHANGED"
+    disk_project = HSFProject.load_from_disk(str(project.root))
+    assert disk_project.get_parameter("A").value == "2.5"
+    assert disk_project.get_parameter("B").value == "0.25"
+
+
 def test_preview_service_returns_3d_payload_for_project(tmp_path):
     project = HSFProject.create_new("PreviewShelf", str(tmp_path))
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")

@@ -8,7 +8,10 @@ from openbrep.hsf_project import VALID_PARAM_TYPES, GDLParameter, HSFProject
 from openbrep.parameter_mutations import mutate_project_parameters
 from openbrep.parameter_units import UnitValueError, normalize_typed_value
 from openbrep.paramlist_builder import validate_paramlist
-from openbrep.source_fingerprint import compute_source_fingerprint
+from openbrep.source_fingerprint import (
+    compute_source_fingerprint,
+    expected_project_source_fingerprint,
+)
 from openbrep.values_declarations import parse_values_declarations  # compatibility export
 
 logger = logging.getLogger(__name__)
@@ -160,7 +163,7 @@ class WorkbenchProjectParameterService:
         if operations and self.session.source_path is not None:
             result = mutate_project_parameters(
                 self.session.project,
-                expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
+                expected_source_fingerprint=expected_project_source_fingerprint(self.session.project),
                 operations=operations,
                 before_commit=lambda: self._snapshot_before_parameter_write(operations),
             )
@@ -177,7 +180,7 @@ class WorkbenchProjectParameterService:
         if self.session.source_path is not None:
             result = mutate_project_parameters(
                 self.session.project,
-                expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
+                expected_source_fingerprint=expected_project_source_fingerprint(self.session.project),
                 operations=[{
                     "op": "add",
                     "name": body.get("name"),
@@ -259,7 +262,7 @@ class WorkbenchProjectParameterService:
                 if operations:
                     result = mutate_project_parameters(
                         self.session.project,
-                        expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
+                        expected_source_fingerprint=expected_project_source_fingerprint(self.session.project),
                         operations=operations,
                         before_commit=lambda: self._snapshot_before_parameter_write(operations),
                     )
@@ -308,7 +311,7 @@ class WorkbenchProjectParameterService:
         if self.session.source_path is not None:
             result = mutate_project_parameters(
                 self.session.project,
-                expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
+                expected_source_fingerprint=expected_project_source_fingerprint(self.session.project),
                 operations=[{"op": "delete", "name": name}],
                 before_commit=lambda: self._snapshot_before_parameter_write([{"op": "delete", "name": name}]),
             )
