@@ -253,6 +253,13 @@ class VerificationReport:
                 elif c.status in (CheckStatus.UNKNOWN, CheckStatus.NOT_RUN):
                     lines.append(f"  - ❓ {c.name}：{c.detail or '暂无自动化检查'}")
 
+        if self.requirement_evaluation is not None:
+            evaluation = self.requirement_evaluation
+            lines.append(
+                f"- 作者要求：{evaluation.get('status', 'unknown')} "
+                f"（{evaluation.get('required_passed', 0)}/{evaluation.get('required_total', 0)} 项 required 已验证）"
+            )
+
         lines.append(f"置信度：{_confidence_zh(self.confidence)}")
         if self.graph_powered:
             lines.append("🔷 Graph-Powered：图谱约束/诊断已介入本次任务")

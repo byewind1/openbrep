@@ -2521,6 +2521,39 @@ class TaskPipeline:
         # ── Verification report ──────────────────────────────────────────────
         from openbrep.naming_alignment import detect_reserved_param_misuse
         from openbrep.verification import build_verification_report
+        typed_requirements = []
+        requirement_context: dict[str, Any] = {"checks": {}}
+        if planning_artifact and isinstance(planning_artifact.get("candidate_spec"), dict):
+            from openbrep.contracts.object_spec import parse_object_spec
+
+            parsed_spec = parse_object_spec(planning_artifact["candidate_spec"])
+            if parsed_spec.ok:
+                typed_requirements = parsed_spec.value.requirements
+                from openbrep.source_fingerprint import compute_source_fingerprint
+
+                requirement_context["source_fingerprint"] = compute_source_fingerprint(project.root)
+                for check_id, passed, reason in (
+                    ("compile", compile_result.success if compile_result is not None else None,
+                     "编译成功" if compile_result is not None and compile_result.success else "编译未通过"),
+                    ("static", static_result.passed if static_result is not None else None,
+                     "静态检查完成" if static_result is not None and static_result.passed else "静态检查未通过"),
+                    ("semantic", semantic_result.passed if semantic_result is not None else None,
+                     "语义验证完成" if semantic_result is not None and semantic_result.passed else "语义验证未通过"),
+                ):
+                    requirement_context["checks"][check_id] = {
+                        "status": "not_run" if passed is None else ("pass" if passed else "fail"),
+                        "reason": reason if passed is not None else "本轮未执行",
+                    }
+                contract = getattr(semantic_result, "project_contract", None)
+                if contract is not None:
+                    statuses = [getattr(item.status, "value", item.status) for item in contract.checks]
+                    contract_status = (
+                        "fail" if "fail" in statuses else "unverified" if "unknown" in statuses else "pass"
+                    )
+                    requirement_context["checks"]["project_contract"] = {
+                        "status": contract_status,
+                        "reason": "项目合同检查完成" if contract_status == "pass" else "项目合同存在失败或未知项",
+                    }
         verification_report = build_verification_report(
             intent=request.intent or "CREATE",
             user_input=request.user_input,
@@ -2537,6 +2570,8 @@ class TaskPipeline:
             reserved_conflicts=detect_reserved_param_misuse(project),
             # P8 交付完整性（CREATE/IMAGE 专属；MODIFY 路径不传 → 不启用）
             enable_delivery_integrity=(request.intent in ("CREATE", "IMAGE")),
+            requirements=typed_requirements,
+            requirement_context=requirement_context,
         )
         # Save material intent only for a deliverable project.  It is inferred
         # from existing generated Material parameters, so no extra LLM call or
