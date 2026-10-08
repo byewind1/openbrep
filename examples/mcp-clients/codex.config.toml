@@ -1,0 +1,8 @@
+# Copy the [mcp_servers.openbrep] table into a trusted project's
+# .codex/config.toml, or merge it into ~/.codex/config.toml.
+# Codex, its desktop app, CLI, and IDE extension share this MCP configuration.
+[mcp_servers.openbrep]
+command = "obr"
+args = ["mcp-server"]
+startup_timeout_sec = 20
+tool_timeout_sec = 120
