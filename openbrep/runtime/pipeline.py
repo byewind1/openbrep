@@ -3611,6 +3611,35 @@ class TaskPipeline:
         # (and any compile auto-repair) into a proof-oriented report. ────────
         from openbrep.naming_alignment import detect_reserved_param_misuse
         from openbrep.verification import build_verification_report
+        typed_requirements = []
+        requirement_context: dict[str, Any] = {"checks": {}}
+        try:
+            from openbrep.contracts.object_spec import parse_object_spec
+            from openbrep.contracts.project_store import load_project_contract
+
+            stored_contract = load_project_contract(project.root)
+            if stored_contract.object_spec is not None:
+                parsed_spec = parse_object_spec(stored_contract.object_spec)
+                if parsed_spec.ok:
+                    typed_requirements = parsed_spec.value.requirements
+                    from openbrep.source_fingerprint import compute_source_fingerprint
+
+                    current_fingerprint = compute_source_fingerprint(project.root)
+                    requirement_context.update({
+                        "source_fingerprint": current_fingerprint,
+                        "source_stale": stored_contract.status != "fresh",
+                    })
+                    for check_id, passed in (
+                        ("compile", compile_result.success if compile_result is not None else None),
+                        ("static", static_result.passed if static_result is not None else None),
+                        ("semantic", semantic_result.passed if semantic_result is not None else None),
+                    ):
+                        requirement_context["checks"][check_id] = {
+                            "status": "not_run" if passed is None else ("pass" if passed else "fail"),
+                            "reason": "本轮未执行" if passed is None else ("检查通过" if passed else "检查未通过"),
+                        }
+        except Exception as exc:
+            logger.warning("Adopted requirement projection unavailable: %s", exc)
         verification_report = build_verification_report(
             intent=request.intent or "MODIFY",
             user_input=request.user_input,
@@ -3623,6 +3652,8 @@ class TaskPipeline:
             auto_repair_info=auto_repair_info,
             graph_powered=graph_powered_repair,
             reserved_conflicts=detect_reserved_param_misuse(project),
+            requirements=typed_requirements,
+            requirement_context=requirement_context,
         )
         output_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
