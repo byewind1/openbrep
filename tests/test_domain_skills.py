@@ -1,5 +1,10 @@
 import json
 
+from openbrep.domain_skill_selection import (
+    load_project_skill_selections,
+    select_project_skill,
+    set_project_skill_enabled,
+)
 from openbrep.domain_skills import DomainSkillRegistry
 
 
@@ -157,3 +162,69 @@ def test_development_fixtures_cannot_be_promoted_to_verified_or_use_wrong_units(
 
     assert not result.ok
     assert {issue.code for issue in result.issues} >= {"INVALID_UNIT", "VERIFICATION_EVIDENCE_MISSING"}
+
+
+def _write_skill(root, *, alias="cabinet"):
+    package = root / "cabinet"
+    package.mkdir(parents=True)
+    manifest = _manifest()
+    manifest["aliases"] = [alias]
+    manifest["observation"]["fields"]["overall.width"]["unit"] = "m"
+    manifest["plan_policy"].update({"conflict_policy": "ask_user", "requirement_mapping": "retain_source_and_field_path"})
+    (package / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return package
+
+
+def test_project_selection_pins_version_hash_and_survives_reload(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    skill_root = project / ".openbrep" / "domain_skills"
+    _write_skill(skill_root)
+    registry = DomainSkillRegistry.for_project(project, user_root=tmp_path / "user", include_builtin=False)
+    skill = registry.load("cabinet").skill
+    assert skill is not None
+
+    record = select_project_skill(project, skill)
+    reloaded = load_project_skill_selections(project, registry)
+    assert record.version == "0.1.0"
+    assert reloaded.issues == ()
+    assert reloaded.skills[0].content_hash == record.content_hash
+    assert reloaded.records[0].status == "development"
+
+    set_project_skill_enabled(project, "cabinet", False)
+    disabled = load_project_skill_selections(project, registry)
+    assert disabled.skills == ()
+    assert disabled.records[0].enabled is False
+
+
+def test_project_skill_hash_change_requires_explicit_reselection(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    skill_root = project / ".openbrep" / "domain_skills"
+    package = _write_skill(skill_root)
+    registry = DomainSkillRegistry.for_project(project, user_root=tmp_path / "user", include_builtin=False)
+    select_project_skill(project, registry.load("cabinet").skill)
+
+    manifest = _manifest()
+    manifest["aliases"] = ["changed"]
+    manifest["observation"]["fields"]["overall.width"]["unit"] = "m"
+    manifest["plan_policy"].update({"conflict_policy": "ask_user", "requirement_mapping": "retain_source_and_field_path"})
+    (package / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    reloaded = load_project_skill_selections(project, registry)
+
+    assert reloaded.skills == ()
+    assert [issue.code for issue in reloaded.issues] == ["SKILL_VERSION_CHANGED"]
+
+
+def test_same_skill_id_with_different_project_and_user_content_is_conflict(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    project_root = project / ".openbrep" / "domain_skills"
+    user_root = tmp_path / "user"
+    _write_skill(project_root, alias="project version")
+    _write_skill(user_root, alias="user version")
+    registry = DomainSkillRegistry.for_project(project, user_root=user_root, include_builtin=False)
+
+    result = registry.load("cabinet")
+    assert not result.ok
+    assert result.issues[0].code == "SKILL_ID_CONFLICT"

@@ -40,6 +40,8 @@ class DomainSkill:
     manifest: dict[str, Any]
     package_path: Path
     prompt_text: str = ""
+    content_hash: str = ""
+    source_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -87,30 +89,66 @@ class DomainSkillSelection:
 class DomainSkillRegistry:
     """Load and select signed-off data packages without importing their code."""
 
-    def __init__(self, root: str | Path):
-        self.root = Path(root).expanduser().resolve()
+    def __init__(self, root: str | Path | list[str | Path] | tuple[str | Path, ...]):
+        roots = root if isinstance(root, (list, tuple)) else [root]
+        self.roots = tuple(dict.fromkeys(Path(item).expanduser().resolve() for item in roots))
+        self.root = self.roots[0] if self.roots else Path(".").resolve()
 
     @classmethod
     def builtin(cls) -> "DomainSkillRegistry":
         return cls(Path(__file__).parent / "data" / "domain_skills")
 
+    @classmethod
+    def for_project(
+        cls,
+        project_root: str | Path,
+        *,
+        user_root: str | Path | None = None,
+        include_builtin: bool = True,
+    ) -> "DomainSkillRegistry":
+        roots = [Path(project_root) / ".openbrep" / "domain_skills"]
+        roots.append(Path(user_root) if user_root is not None else Path.home() / ".openbrep" / "domain_skills")
+        if include_builtin:
+            roots.append(Path(__file__).parent / "data" / "domain_skills")
+        return cls(roots)
+
     @property
     def skill_ids(self) -> tuple[str, ...]:
-        if not self.root.is_dir():
-            return ()
-        return tuple(sorted(
-            path.name for path in self.root.iterdir()
-            if path.is_dir() and _SKILL_ID.fullmatch(path.name)
-            and (path / "manifest.json").is_file()
-        ))
+        found: set[str] = set()
+        for root in self.roots:
+            if root.is_dir():
+                found.update(
+                    path.name for path in root.iterdir()
+                    if path.is_dir() and _SKILL_ID.fullmatch(path.name)
+                    and (path / "manifest.json").is_file()
+                )
+        return tuple(sorted(found))
 
     def load(self, skill_id: str) -> SkillLoadResult:
         skill_id = str(skill_id or "").strip()
         if not _SKILL_ID.fullmatch(skill_id):
             return SkillLoadResult(issues=(SkillIssue("INVALID_SKILL_ID", "skill_id", "invalid skill identifier"),))
-        package = (self.root / skill_id).resolve()
-        if not package.is_relative_to(self.root) or not package.is_dir():
+        packages = [
+            (root / skill_id).resolve()
+            for root in self.roots
+            if (root / skill_id).resolve().is_relative_to(root) and (root / skill_id).is_dir()
+        ]
+        if not packages:
             return SkillLoadResult(issues=(SkillIssue("SKILL_NOT_FOUND", "skill_id", "domain Skill is not installed"),))
+        loaded = [self._load_package(skill_id, root, package) for root in self.roots
+                  for package in packages if package.parent == root]
+        invalid = next((item for item in loaded if not item.ok), None)
+        if invalid is not None:
+            return invalid
+        hashes = {item.skill.content_hash for item in loaded if item.skill is not None}
+        if len(hashes) != 1:
+            return SkillLoadResult(issues=(SkillIssue(
+                "SKILL_ID_CONFLICT", "skill_id",
+                "different package contents use this Skill ID across project/user/builtin roots",
+            ),))
+        return loaded[0]
+
+    def _load_package(self, skill_id: str, source_root: Path, package: Path) -> SkillLoadResult:
         manifest_path = package / "manifest.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -129,6 +167,13 @@ class DomainSkillRegistry:
                 prompt_text = target.read_text(encoding="utf-8")
             except OSError as exc:
                 return SkillLoadResult(issues=(SkillIssue("METHODOLOGY_UNAVAILABLE", "methodology_path", str(exc)),))
+        digest = hashlib.sha256()
+        for target in sorted(path for path in package.rglob("*") if path.is_file()):
+            try:
+                relative = target.resolve().relative_to(package)
+            except ValueError:
+                return SkillLoadResult(issues=(SkillIssue("UNSAFE_PATH", str(target), "package file escapes Skill directory"),))
+            digest.update(relative.as_posix().encode("utf-8") + b"\0" + target.read_bytes())
         return SkillLoadResult(DomainSkill(
             skill_id=skill_id,
             version=str(manifest["version"]),
@@ -136,6 +181,8 @@ class DomainSkillRegistry:
             manifest=manifest,
             package_path=package,
             prompt_text=prompt_text,
+            content_hash=digest.hexdigest(),
+            source_root=source_root,
         ))
 
     def select(self, instruction: str, *, intent: str) -> tuple[DomainSkill, ...]:
