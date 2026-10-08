@@ -369,22 +369,9 @@ def test_synthetic_contract_matches_pipeline_report(tmp_path):
     )
     result = pipeline.execute(request)
     assert result.success
-    contract = result.metadata.get("object_contract")
-    assert contract and contract["parse_ok"] is True
-
-    fixture = load_synthetic_minimal_contract()
-    assert fixture.ok
-    assert contract["object_spec"] == fixture.value["object_spec"].to_dict()
-    assert contract["execution_plan"] == fixture.value["execution_plan"].to_dict()
-    # plan hash 在报告里可独立复核
-    from openbrep.contracts.object_spec import execution_plan_hash_dict
-
-    assert (
-        execution_plan_hash_dict(
-            {k: v for k, v in contract["execution_plan"].items() if k != "plan_hash"}
-        )
-        == contract["execution_plan"]["plan_hash"]
-    )
+    # Read-only planning must not attach the synthetic minimal_shelf contract
+    # to an arbitrary real object proposal.
+    assert "object_contract" not in result.metadata
 
 
 class MagicMockPlanLLM:

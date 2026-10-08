@@ -105,10 +105,28 @@ def test_explicit_review_turn_uses_bound_reference_and_material_views(tmp_path):
     assert all((project_root / frame["artifact_path"]).is_file() for frame in response["review"]["frame_manifest"])
     restored = service.route("GET", "/api/vision/reviews/run-1", {})
     assert restored["ok"] is True
-    assert restored["reports"] == [response["review"]]
+    assert restored["reports"][0]["review_id"] == response["review"]["review_id"]
+    assert restored["reports"][0]["validity"]["status"] == "current"
     assert llm.calls[0]["codex_intent"] == "IMAGE"
     assert (project_root / "scripts" / "3d.gdl").read_bytes() == source_before
     assert session.project_epoch == 4
+
+
+def test_source_change_during_model_review_discards_result(tmp_path):
+    service, _, _llm, project_root = _service(tmp_path)
+
+    class MutatingLLM(_FakeLLM):
+        def generate_with_images(self, **kwargs):
+            response = super().generate_with_images(**kwargs)
+            (project_root / "scripts" / "3d.gdl").write_text("BLOCK 2, 2, 2\n", encoding="utf-8")
+            return response
+
+    service._llm_factory = MutatingLLM
+    response = service.review_turn({"turn_id": "turn-1", "project_epoch": 4})
+
+    assert response["ok"] is False
+    assert response["code"] == "SOURCE_STALE"
+    assert not list((project_root / ".openbrep" / "visual-reviews").glob("review-*.json"))
 
 
 def test_stale_source_is_rejected_before_preview_capture_or_model_call(tmp_path):
@@ -126,6 +144,20 @@ def test_stale_source_is_rejected_before_preview_capture_or_model_call(tmp_path)
     assert response["code"] == "SOURCE_STALE"
     assert called == []
     assert llm.calls == []
+
+
+def test_saved_visual_review_is_projected_stale_after_source_changes(tmp_path):
+    service, _, _, project_root = _service(tmp_path)
+    created = service.review_turn({"turn_id": "turn-1", "project_epoch": 4})
+    assert created["ok"] is True
+    (project_root / "scripts" / "3d.gdl").write_text("BLOCK 2, 2, 2\n", encoding="utf-8")
+
+    restored = service.saved_reviews("run-1")
+
+    assert restored["ok"] is True
+    assert restored["reports"][0]["status"] == "complete"
+    assert restored["reports"][0]["validity"]["status"] == "stale"
+    assert "source_changed" in restored["reports"][0]["validity"]["stale_reasons"]
 
 
 def test_unfinished_or_cross_project_turn_is_rejected(tmp_path):

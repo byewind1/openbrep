@@ -51,6 +51,7 @@ class WorkbenchVisualReviewService:
         if self.session.project is None:
             return {"ok": False, "code": "PROJECT_UNAVAILABLE", "error": "当前没有可读取视觉记录的项目。"}
         root = Path(self.session.project.root).resolve() / ".openbrep" / "visual-reviews"
+        current_fingerprint = compute_source_fingerprint(self.session.project.root)
         reports = []
         for path in sorted(root.glob("review-*.json"), key=lambda item: item.stat().st_mtime_ns, reverse=True):
             try:
@@ -58,7 +59,14 @@ class WorkbenchVisualReviewService:
             except (OSError, json.JSONDecodeError):
                 continue
             if isinstance(report, dict) and report.get("run_id") == run_id:
-                reports.append(report)
+                projected = dict(report)
+                bound = str(report.get("source_fingerprint") or "")
+                projected["validity"] = {
+                    "status": "current" if bound and bound == current_fingerprint else "stale",
+                    "stale_reasons": [] if bound and bound == current_fingerprint else ["source_changed"],
+                    "current_source_fingerprint": current_fingerprint,
+                }
+                reports.append(projected)
         return {"ok": True, "reports": reports}
 
     def review_turn(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -129,6 +137,17 @@ class WorkbenchVisualReviewService:
             try:
                 llm = self._llm()
                 review = review_visual_result(llm, request, codex_intent="IMAGE")
+                if (
+                    self.session.project is None
+                    or self.session.project_epoch != body.get("project_epoch")
+                    or Path(self.session.project.root).resolve() != project_root.resolve()
+                    or compute_source_fingerprint(project_root) != source_fingerprint
+                ):
+                    return {
+                        "ok": False,
+                        "code": "SOURCE_STALE",
+                        "error": "审查期间项目或源码发生变化；本次结果未保存，请基于当前版本重新对照。",
+                    }
                 report_path = save_visual_review(project_root, review, frames=request.frames)
                 saved_review = json.loads(report_path.read_text(encoding="utf-8"))
             except Exception as exc:  # provider and storage failures must be visible

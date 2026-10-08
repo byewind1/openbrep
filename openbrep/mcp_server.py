@@ -35,6 +35,7 @@ from openbrep import __version__
 logger = logging.getLogger(__name__)
 
 _MCP_TOOL_NAMES = (
+    "capabilities",
     "load_project",
     "compile_hsf",
     "semantic_verify",
@@ -72,6 +73,12 @@ def _schema(
 # description 从 mcp_tools 各函数 docstring 提炼：一句话 + 参数说明。
 
 _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
+    (
+        "capabilities",
+        mcp_tools.capabilities,
+        "返回版本化 OpenBrep MCP 能力、编译模式、参数类型和结果语义；不需要模型凭据。",
+        _schema(required=()),
+    ),
     (
         "load_project",
         mcp_tools.load_project,
@@ -113,7 +120,7 @@ _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
     (
         "apply_edit",
         mcp_tools.apply_edit,
-        "应用编辑：set_parameters（改参数值）或 set_script（整脚本替换）。"
+        "应用编辑：set_parameters 支持 HSF 类型对应的 Length/Angle/RealNum/Integer/Boolean/String 等标量值，或 set_script（整脚本替换）。"
         "mode=draft 试跑零持久化（返回 diff/compile/verify）；mode=apply 落盘并可回滚。"
         "参数 path: HSF 项目目录绝对路径（string）；"
         "spec: {'type':'set_parameters','values':{...}} 或 "

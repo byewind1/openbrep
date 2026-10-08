@@ -134,7 +134,7 @@ def _restore_transaction(root: Path, txn_dir: Path, manifest: dict[str, Any]) ->
         contract.unlink(missing_ok=True)
 
 
-def recover_project_state(project_root: str | Path) -> bool:
+def _recover_project_state_unlocked(project_root: str | Path) -> bool:
     """Recover interrupted source/spec commits; return whether anything changed."""
     root = _root(project_root)
     transactions = root / TRANSACTIONS_RELATIVE_PATH
@@ -162,7 +162,7 @@ def recover_project_state(project_root: str | Path) -> bool:
     return recovered
 
 
-def commit_project_state(
+def _commit_project_state_unlocked(
     project: Any,
     object_spec: dict[str, Any] | Any | None,
     *,
@@ -253,7 +253,7 @@ def commit_project_state(
         return CommitResult(False, error=str(exc))
 
 
-def commit_project_source_state(
+def _commit_project_source_state_unlocked(
     project: Any,
     *,
     source_writer: Callable[[], Any] | None = None,
@@ -324,6 +324,44 @@ def commit_project_source_state(
         except Exception as recovery_exc:
             return CommitResult(False, error=f"{exc}; rollback needs recovery: {recovery_exc}")
         return CommitResult(False, error=str(exc))
+
+
+def recover_project_state(project_root: str | Path) -> bool:
+    from openbrep.project_write_lock import project_write_lock
+
+    with project_write_lock(project_root):
+        return _recover_project_state_unlocked(project_root)
+
+
+def commit_project_state(
+    project: Any,
+    object_spec: dict[str, Any] | Any | None,
+    *,
+    source_writer: Callable[[], Any] | None = None,
+    observation: dict[str, Any] | Any | None = None,
+) -> CommitResult:
+    from openbrep.project_write_lock import project_write_lock
+
+    root = project if isinstance(project, (str, Path)) else getattr(project, "root", project)
+    with project_write_lock(root):
+        return _commit_project_state_unlocked(
+            project, object_spec, source_writer=source_writer, observation=observation
+        )
+
+
+def commit_project_source_state(
+    project: Any,
+    *,
+    source_writer: Callable[[], Any] | None = None,
+    before_commit: Callable[[], None] | None = None,
+) -> CommitResult:
+    from openbrep.project_write_lock import project_write_lock
+
+    root = project if isinstance(project, (str, Path)) else getattr(project, "root", project)
+    with project_write_lock(root):
+        return _commit_project_source_state_unlocked(
+            project, source_writer=source_writer, before_commit=before_commit
+        )
 
 
 def load_project_contract(project_root: str | Path) -> ProjectContract:

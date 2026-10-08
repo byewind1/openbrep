@@ -696,7 +696,7 @@ def _mutate_project_definition(
     )
 
 
-def mutate_project_parameters(
+def _mutate_project_parameters_locked(
     project: HSFProject,
     *,
     expected_source_fingerprint: str,
@@ -835,6 +835,31 @@ def mutate_project_parameters(
         return _fail("SOURCE_SPEC_COMMIT_FAILED", "参数写入未执行", fingerprint=current)
     mutation.source_fingerprint = committed.source_fingerprint
     return mutation
+
+
+def mutate_project_parameters(
+    project: HSFProject,
+    *,
+    expected_source_fingerprint: str,
+    operations: Any,
+    before_commit: Callable[[], None] | None = None,
+    replace_fn: Callable[[str, str], None] = os.replace,
+    commit_executor: Callable[[Callable[[], Any]], Any] | None = None,
+    mutation_fn: Callable[..., ParameterMutationResult] = mutate_parameters,
+) -> ParameterMutationResult:
+    """Serialize managed parameter edits across workbench, MCP and CLI processes."""
+    from openbrep.project_write_lock import project_write_lock
+
+    with project_write_lock(project.root):
+        return _mutate_project_parameters_locked(
+            project,
+            expected_source_fingerprint=expected_source_fingerprint,
+            operations=operations,
+            before_commit=before_commit,
+            replace_fn=replace_fn,
+            commit_executor=commit_executor,
+            mutation_fn=mutation_fn,
+        )
 
 
 def compact_result_json(result: ParameterMutationResult) -> str:

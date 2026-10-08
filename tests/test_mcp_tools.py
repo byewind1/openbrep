@@ -13,9 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.mcp_tools import (
     apply_edit,
+    capabilities,
     compile_hsf,
     deprecate_skill,
     import_source,
@@ -31,11 +32,22 @@ from openbrep.mcp_tools import (
     workspace_scan,
     workspace_search,
 )
-from openbrep.revisions import archive_artifact, get_latest_revision_id
-from openbrep.workbench.project_session_service import write_project_origin
+from openbrep.revisions import archive_artifact, get_latest_revision_id, list_revisions
 from openbrep.skills_loader import SkillsLoader
+from openbrep.workbench.project_session_service import write_project_origin
 
 TRACE_RE = re.compile(r"^mcp-\d{8}-\d{4}$")
+
+
+def test_capabilities_report_versioned_model_independent_contract():
+    result = capabilities()
+
+    assert result["ok"] is True
+    assert result["contract_version"] == "1.1"
+    assert "Boolean" in result["parameter_types"]
+    assert "mock" in result["compile_modes"]
+    assert "not a real compile" in result["compile_modes"]["mock"]
+    assert "model credentials" not in str(result).lower()
 
 
 def _make_project(tmp_path, name="Shelf"):
@@ -441,9 +453,51 @@ def _make_editable_project(tmp_path, name="Shelf"):
     project = HSFProject.create_new(name, str(tmp_path))
     project.get_parameter("A").value = "1.5"
     project.get_parameter("B").value = "0.6"
+    project.add_parameter(GDLParameter(name="hasBack", type_tag="Boolean", value="0"))
+    project.add_parameter(GDLParameter(name="pattern", type_tag="String", value='"plain"'))
     project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
     root = project.save_to_disk()
     return root, project
+
+
+def test_apply_edit_supports_typed_string_and_boolean_parameters(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+
+    result = apply_edit(
+        str(root),
+        {"type": "set_parameters", "values": {"hasBack": True, "pattern": "回纹"}},
+        mode="apply",
+    )
+
+    assert result["ok"] is True
+    loaded = HSFProject.load_from_disk(str(root))
+    assert loaded.get_parameter("hasBack").value == "1"
+    assert loaded.get_parameter("pattern").value == "回纹"
+
+
+def test_apply_edit_rejects_invalid_typed_values_without_revision(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+
+    result = apply_edit(
+        str(root),
+        {"type": "set_parameters", "values": {"hasBack": "sometimes"}},
+        mode="apply",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_spec"
+    assert list_revisions(root) == []
+
+
+def test_apply_edit_noop_does_not_create_revision(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+
+    result = apply_edit(str(root), {"type": "set_parameters", "values": {"A": 1.5}}, mode="apply")
+
+    assert result["ok"] is True
+    assert result["revision_id"] is None
+    assert result["diff"] == ""
+    assert list_revisions(root) == []
 
 
 def _tree_bytes(root: Path) -> dict[str, bytes]:

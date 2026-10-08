@@ -56,7 +56,10 @@ from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.naming import safe_project_name, unique_project_name
+from openbrep.parameter_mutations import mutate_project_parameters
+from openbrep.parameter_units import UnitValueError, normalize_typed_value
 from openbrep.project_context import load_project_origin
+from openbrep.project_write_lock import project_write_lock
 from openbrep.revisions import (
     archive_artifact,
     create_revision,
@@ -68,6 +71,7 @@ from openbrep.revisions import (
 )
 from openbrep.skill_proposals import is_valid_skill_name
 from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
+from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.workbench.project_service import WorkbenchProjectService
 from openbrep.workbench.workspace_service import init_workspace as _ws_init
 from openbrep.workbench.workspace_service import scan_workspace as _ws_scan
@@ -78,6 +82,12 @@ from openbrep.workbench.workspace_service import search_workspace as _ws_search
 _LOCK = threading.RLock()  # 预留给 mutation 工具（P1-c）；只读工具 v1 也走它
 _trace_date = ""
 _trace_seq = 0
+
+
+class _McpEditRejected(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 def _next_trace_id() -> str:
@@ -135,6 +145,37 @@ def _load_project(path: str, trace_id: str) -> tuple[Path, HSFProject] | dict:
             details={"path": path},
         )
     return root, project
+
+
+def capabilities() -> dict[str, Any]:
+    """Return the versioned, model-independent capability and result contract."""
+    from openbrep import __version__
+
+    return {
+        "ok": True,
+        "contract_version": "1.1",
+        "openbrep_version": __version__,
+        "source_format": "HSF project directory",
+        "compile_modes": {
+            "auto": "real LP_XMLConverter when available; otherwise mock",
+            "mock": "deterministic structural simulation; not a real compile",
+            "real": "LP_XMLConverter required",
+        },
+        "parameter_types": ["Length", "Angle", "RealNum", "Integer", "Boolean", "String", "Material", "PenColor", "FillPattern", "LineType"],
+        "edit_modes": {
+            "draft": "temporary project copy; returns diff, mock compile and semantic review",
+            "apply": "writes HSF, records a revision before change, then compiles",
+        },
+        "result_semantics": {
+            "ok": "tool operation completed; inspect compile.success and verify.passed separately",
+            "error": "structured operation failure with code, message and optional details",
+            "compile_mode": "returned per compile result; mock success is not a real compile",
+        },
+        "error_codes": ["project_not_found", "invalid_mode", "invalid_spec", "source_changed", "source_commit_failed", "invalid_revision", "converter_unavailable", "mcp_internal_error"],
+        "evidence": ["source fingerprint", "revision id", "compile result", "semantic issues"],
+        "cancellation": "MCP transport cancellation is client-owned; synchronous source commits complete or roll back before returning",
+        "timeouts": "The client/transport owns request deadlines; a started atomic source commit is not interrupted mid-transaction",
+    }
 
 
 # ── 只读工具 v1 ───────────────────────────────────────────
@@ -275,7 +316,7 @@ def apply_edit(path: str, spec: dict, mode: str = "draft") -> dict:
     """应用编辑：set_parameters（改参数值）或 set_script（整脚本替换）。
 
     spec 只支持两种（不做通用补丁语言）：
-    - {"type": "set_parameters", "values": {param_name: number}}
+    - {"type": "set_parameters", "values": {param_name: typed scalar}}
     - {"type": "set_script", "script_type": "1d"|"2d"|"3d"|"vl"|"ui"|"master",
        "content": str}
 
@@ -302,10 +343,13 @@ def apply_edit(path: str, spec: dict, mode: str = "draft") -> dict:
                 trace_id,
                 details={"mode": mode},
             )
+        source_before_load = compute_source_fingerprint(Path(path))
         loaded = _load_project(path, trace_id)
         if isinstance(loaded, dict):
             return loaded
         root, project = loaded
+        if compute_source_fingerprint(root) != source_before_load:
+            return _make_error("source_changed", "项目在读取期间发生变化，请重新读取后再编辑。", trace_id)
 
         spec_error = _validate_spec(spec, project)
         if spec_error:
@@ -313,8 +357,17 @@ def apply_edit(path: str, spec: dict, mode: str = "draft") -> dict:
 
         try:
             if mode == "draft":
-                return _apply_edit_draft(root, spec, trace_id)
-            return _apply_edit_apply(root, project, spec, trace_id)
+                return _apply_edit_draft(
+                    root, spec, trace_id,
+                    expected_source_fingerprint=source_before_load,
+                )
+            with project_write_lock(root):
+                return _apply_edit_apply(
+                    root, project, spec, trace_id,
+                    expected_source_fingerprint=source_before_load,
+                )
+        except _McpEditRejected as exc:
+            return _make_error(exc.code, str(exc), trace_id, details={"mode": mode})
         except Exception as exc:
             return _make_error(
                 "mcp_internal_error",
@@ -340,23 +393,24 @@ def rollback(path: str, revision_id: str = "previous") -> dict:
         root, _project = loaded
 
         try:
-            revisions = list_revisions(root)
-            if not revisions:
-                return _make_error(
-                    "invalid_revision",
-                    "项目没有可回滚的 revision",
-                    trace_id,
-                    details={"revision_id": revision_id},
-                )
-            target_id = _resolve_rollback_target(root, revision_id, revisions)
-            if target_id is None:
-                return _make_error(
-                    "invalid_revision",
-                    f"找不到可回滚的版本: {revision_id}",
-                    trace_id,
-                    details={"revision_id": revision_id},
-                )
-            restored = restore_revision(root, target_id)
+            with project_write_lock(root):
+                revisions = list_revisions(root)
+                if not revisions:
+                    return _make_error(
+                        "invalid_revision",
+                        "项目没有可回滚的 revision",
+                        trace_id,
+                        details={"revision_id": revision_id},
+                    )
+                target_id = _resolve_rollback_target(root, revision_id, revisions)
+                if target_id is None:
+                    return _make_error(
+                        "invalid_revision",
+                        f"找不到可回滚的版本: {revision_id}",
+                        trace_id,
+                        details={"revision_id": revision_id},
+                    )
+                restored = restore_revision(root, target_id)
             return {
                 "ok": True,
                 "restored_revision": target_id,
@@ -375,7 +429,7 @@ def _validate_spec(spec: Any, project: HSFProject) -> str | None:
     """校验 apply_edit 的 spec；合法返回 None，否则返回错误消息。
 
     非法判定：非对象 / 未知 type / set_parameters 的 values 非对象或参数不存在
-    或值非数值 / set_script 的 script_type 非法或 content 非字符串。
+    或值不符合 HSF 参数类型 / set_script 的 script_type 非法或 content 非字符串。
     """
     if not isinstance(spec, dict):
         return f"spec 必须是对象，收到: {type(spec).__name__}"
@@ -389,8 +443,12 @@ def _validate_spec(spec: Any, project: HSFProject) -> str | None:
         for name, value in values.items():
             if project.get_parameter(str(name)) is None:
                 return f"参数不存在: {name}"
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                return f"参数 {name} 的值必须是数值: {value!r}"
+            parameter = project.get_parameter(str(name))
+            normalized = normalize_typed_value(
+                parameter.type_tag, value, field_path=f"values.{name}"
+            )
+            if isinstance(normalized, UnitValueError):
+                return normalized.message
         return None
     script_type = spec.get("script_type")
     if script_type not in _SCRIPT_TYPE_MAP:
@@ -400,14 +458,37 @@ def _validate_spec(spec: Any, project: HSFProject) -> str | None:
     return None
 
 
-def _apply_spec(project: HSFProject, spec: dict) -> None:
-    """把已校验的 spec 应用到内存项目（不落盘；落盘由调用方负责）。"""
+def _apply_spec(
+    project: HSFProject,
+    spec: dict,
+    *,
+    before_commit: Any = None,
+    expected_source_fingerprint: str | None = None,
+) -> str | None:
+    """把已校验的 spec 应用到 HSF 项目；参数通过类型化协调器提交。"""
     if spec["type"] == "set_parameters":
+        operations = []
         for name, value in spec["values"].items():
-            project.get_parameter(str(name)).value = _format_number(value)
-        return
+            parameter = project.get_parameter(str(name))
+            normalized = normalize_typed_value(parameter.type_tag, value, field_path=f"values.{name}")
+            if isinstance(normalized, UnitValueError):
+                raise _McpEditRejected("invalid_spec", normalized.message)
+            operations.append({"op": "set_value", "name": str(name), "value": normalized.canonical})
+        result = mutate_project_parameters(
+            project,
+            expected_source_fingerprint=expected_source_fingerprint or compute_source_fingerprint(project.root),
+            operations=operations,
+            before_commit=before_commit,
+        )
+        if not result.ok:
+            raise _McpEditRejected(
+                str(result.error_code or "edit_rejected"),
+                result.error or "Parameter edit rejected",
+            )
+        return result.source_fingerprint
     script_type = _SCRIPT_TYPE_MAP[spec["script_type"]]
     project.set_script(script_type, spec["content"])
+    return None
 
 
 def _spec_changed_files(spec: dict) -> list[str]:
@@ -418,26 +499,27 @@ def _spec_changed_files(spec: dict) -> list[str]:
     return [f"scripts/{script_type.value}"]
 
 
-def _format_number(value: int | float) -> str:
-    """数值 → GDL 参数值字符串（整数不带小数点；Boolean 按 0/1）。"""
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
-
-
-def _apply_edit_draft(root: Path, spec: dict, trace_id: str) -> dict:
+def _apply_edit_draft(
+    root: Path,
+    spec: dict,
+    trace_id: str,
+    *,
+    expected_source_fingerprint: str,
+) -> dict:
     """draft 模式：副本试跑，原项目目录字节级零改动。"""
     tmp = Path(tempfile.mkdtemp(prefix="mcp_draft_"))
     copy_dir = tmp / root.name
-    shutil.copytree(root, copy_dir)
+    with project_write_lock(root):
+        if compute_source_fingerprint(root) != expected_source_fingerprint:
+            raise _McpEditRejected(
+                "source_changed", "项目在草稿复制前发生变化，请重新读取后再编辑。"
+            )
+        shutil.copytree(root, copy_dir)
 
     copy_project = HSFProject.load_from_disk(str(copy_dir))
     _apply_spec(copy_project, spec)
-    copy_project.save_to_disk()
+    if spec["type"] == "set_script":
+        copy_project.save_to_disk()
 
     return {
         "ok": True,
@@ -449,26 +531,58 @@ def _apply_edit_draft(root: Path, spec: dict, trace_id: str) -> dict:
     }
 
 
-def _apply_edit_apply(root: Path, project: HSFProject, spec: dict, trace_id: str) -> dict:
+def _apply_edit_apply(
+    root: Path,
+    project: HSFProject,
+    spec: dict,
+    trace_id: str,
+    *,
+    expected_source_fingerprint: str,
+) -> dict:
     """apply 模式：快照"修改前"状态（metadata 记 {trace_id, tool_spec}）→
     应用 spec → 落盘 → 编译。与 pipeline micro_modify 同一落盘语义。"""
-    revision = create_revision(
-        root,
-        message="mcp apply_edit",
-        gsm_name=project.name,
-        metadata={"trace_id": trace_id, "tool_spec": spec},
-        trigger="mcp",
-        intent="MCP",
-        user_instruction="",
-        changed_files=_spec_changed_files(spec),
-    )
-    _apply_spec(project, spec)
-    project.save_to_disk()
+    revision_holder: dict[str, Any] = {}
+
+    def take_revision() -> None:
+        revision_holder["revision"] = create_revision(
+            root,
+            message="mcp apply_edit",
+            gsm_name=project.name,
+            metadata={"trace_id": trace_id, "tool_spec": spec},
+            trigger="mcp",
+            intent="MCP",
+            user_instruction="",
+            changed_files=_spec_changed_files(spec),
+        )
+
+    if spec["type"] == "set_parameters":
+        _apply_spec(
+            project, spec, before_commit=take_revision,
+            expected_source_fingerprint=expected_source_fingerprint,
+        )
+        revision = revision_holder.get("revision")
+    else:
+        with project_write_lock(root):
+            if compute_source_fingerprint(root) != expected_source_fingerprint:
+                raise _McpEditRejected("source_changed", "项目源码已变化，请重新读取后再编辑。")
+            target = _SCRIPT_TYPE_MAP[spec["script_type"]]
+            if project.get_script(target) != spec["content"]:
+                take_revision()
+                _apply_spec(project, spec)
+                from openbrep.contracts.project_store import commit_project_source_state
+
+                committed = commit_project_source_state(project)
+                if not committed.ok:
+                    raise _McpEditRejected(
+                        "source_commit_failed", committed.error or "源码事务提交失败"
+                    )
+        revision = revision_holder.get("revision")
+    diff = _diff_dirs(revision.path, root) if revision is not None else ""
     return {
         "ok": True,
         "mode": "apply",
-        "diff": _diff_dirs(revision.path, root),
-        "revision_id": revision.revision_id,
+        "diff": diff,
+        "revision_id": revision.revision_id if revision else None,
         "compile": _compile_project_result(root, "auto"),
         "recent_revisions": _recent_revisions(root),
         "trace_id": trace_id,
