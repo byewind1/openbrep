@@ -50,7 +50,7 @@
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
-当前 macOS 包兼容性按 v0.11.0 完整安装包内全部 Mach-O 依赖实测：Apple Silicon（`arm64`，M1/M2/M3/M4）需要 macOS 13.5 或更高版本；Intel（`x86_64`）需要 macOS 15.0 或更高版本。Intel 构建基于 GitHub `macos-15-intel` runner（官方支持到 2027-08）；每次发布前会重新核验本版产物。
+v0.13.0 macOS 包兼容性按应用和冻结后端捆绑的 Mach-O 文件核验：Apple Silicon（`arm64`）需要 macOS 11.0 或更高版本；Intel（`x86_64`）需要 macOS 15.0 或更高版本，原因是包内 OpenSSL 库要求 15.0。Intel 构建基于 GitHub `macos-15-intel` runner（支持到 2027-08）。这两个最低版本均按 v0.13.0 实际产物检查。
 
 On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer.
 
