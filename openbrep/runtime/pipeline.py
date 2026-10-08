@@ -1524,12 +1524,51 @@ class TaskPipeline:
         object_plan = None
         planning_artifact = None
         if request.intent in ("CREATE", "IMAGE"):
+            selected_domain_skills: list[dict[str, str]] = []
+            domain_skill_sections: list[str] = []
+            if request.project is not None:
+                try:
+                    from openbrep.domain_skill_selection import load_project_skill_selections
+
+                    selection = load_project_skill_selections(request.project.root)
+                    if selection.issues:
+                        on_event("status", {
+                            "message": "部分已选 Domain Skill 无法加载，未静默替换版本。",
+                            "domain_skill_issues": [issue.__dict__ for issue in selection.issues],
+                        })
+                    for skill in selection.skills:
+                        selected_domain_skills.append({
+                            "skill_id": skill.skill_id,
+                            "version": skill.version,
+                            "content_hash": skill.content_hash,
+                            "status": skill.status,
+                        })
+                        section = [
+                            f"已选 Domain Skill：{skill.skill_id} v{skill.version} "
+                            f"({skill.status}; sha256={skill.content_hash})",
+                            "该包为数据合同；development/proposed 状态不代表专业验证。",
+                            "要求与规划策略：" + json.dumps(
+                                {"plan_policy": skill.manifest.get("plan_policy"),
+                                 "requirements": skill.manifest.get("requirements"),
+                                 "allowed_variations": skill.manifest.get("allowed_variations")},
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                        ]
+                        if skill.prompt_text.strip():
+                            section.append("选用方法：\n" + skill.prompt_text.strip())
+                        domain_skill_sections.append("\n".join(section))
+                except Exception as exc:
+                    logger.warning("Selected domain Skills unavailable: %s", exc)
+            planner_skills = skills_text
+            if domain_skill_sections:
+                planner_skills = "\n\n".join(part for part in (skills_text, *domain_skill_sections) if part)
             on_event("status", {"message": "正在规划 GDL 对象结构…"})
             object_plan = plan_gdl_object(
                 llm,
                 instruction=enriched_instruction,
                 knowledge=assembled_context.planner_context,
-                skills=skills_text,
+                skills=planner_skills,
                 llm_kwargs=codex_kwargs or None,
             )
             object_plan = replace(
@@ -1551,6 +1590,8 @@ class TaskPipeline:
                 project=request.project,
                 user_input=request.user_input,
             ).to_dict()
+            if selected_domain_skills:
+                planning_artifact["domain_skills"] = selected_domain_skills
             candidate_params = (planning_artifact.get("candidate_spec") or {}).get("params") or []
             parameter_sources = planning_artifact.get("parameter_sources") or {}
             if candidate_params:

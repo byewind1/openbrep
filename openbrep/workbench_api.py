@@ -130,6 +130,9 @@ class WorkbenchSession:
 
         self.task_event_service = WorkbenchTaskEventService(self)
         self.skill_proposal_service = SkillProposalService(self)
+        from openbrep.workbench.domain_skill_service import WorkbenchDomainSkillService
+
+        self.domain_skill_service = WorkbenchDomainSkillService(self)
         self.copilot_service = WorkbenchCopilotService(self)
         self.memory_service = WorkbenchMemoryService(self)
         from openbrep.workbench.reference_service import WorkbenchReferenceService
@@ -559,6 +562,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/project/load":
             return self.load_hsf_directory(str(body.get("path") or ""))
+
+        if route.startswith("/api/project/domain-skills"):
+            return self.domain_skill_service.route(normalized_method, route, body)
 
         if normalized_method == "POST" and route == "/api/project/object-contract/adopt-import-candidate":
             return self.adopt_import_candidate(body)

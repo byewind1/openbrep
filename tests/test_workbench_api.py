@@ -45,6 +45,30 @@ def test_visual_review_routes_dispatch_to_review_service(monkeypatch):
     ]
 
 
+def test_project_domain_skill_routes_require_explicit_selection_and_support_disable(tmp_path):
+    session = WorkbenchSession(tapir_import_ok=False)
+    project = HSFProject.create_new("DomainSkillProject", work_dir=str(tmp_path))
+    project.save_to_disk()
+    session.project = project
+
+    listed = session.route("GET", "/api/project/domain-skills", {})
+    cabinet = next(item for item in listed["skills"] if item["skill_id"] == "cabinet")
+    assert listed["ok"] is True
+    assert cabinet["selected"] is False
+    assert cabinet["status"] == "development"
+
+    selected = session.route("POST", "/api/project/domain-skills/select", {"skill_id": "cabinet"})
+    assert selected["ok"] is True
+    assert selected["selection"]["content_hash"]
+
+    disabled = session.route(
+        "POST", "/api/project/domain-skills/enabled", {"skill_id": "cabinet", "enabled": False}
+    )
+    assert disabled == {"ok": True, "skill_id": "cabinet", "enabled": False}
+    assert next(item for item in session.route("GET", "/api/project/domain-skills", {})["skills"]
+                if item["skill_id"] == "cabinet")["enabled"] is False
+
+
 def test_build_demo_snapshot_contains_project_parameters_and_preview():
     snapshot = build_demo_snapshot()
 
