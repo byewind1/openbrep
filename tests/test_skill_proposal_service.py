@@ -421,6 +421,43 @@ class TestConfirm(_ServiceCase):
         loader.load()
         self.assertEqual(loader.skill_meta("spiral_stair_stack").get("status"), "verified")
 
+    def test_approval_can_store_and_verify_a_project_scoped_skill(self):
+        proposal = self._proposal()
+
+        result = SkillProposalService(self.session).confirm({
+            "proposal_id": proposal["proposal_id"], "approve": True, "scope": "project",
+        })
+
+        expected_dir = self.project.root / ".openbrep" / "skills"
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["scope"], "project")
+        self.assertEqual(Path(result["path"]).parent.resolve(), expected_dir.resolve())
+        loader = SkillsLoader(str(expected_dir))
+        loader.load()
+        self.assertEqual(loader.skill_meta("spiral_stair_stack").get("status"), "verified")
+        rejected = SkillProposalService(self.session).confirm({
+            "proposal_id": proposal["proposal_id"], "approve": False,
+        })
+        self.assertTrue(rejected["ok"], rejected)
+        self.assertTrue((expected_dir / "spiral_stair_stack.md").is_file())
+        loader.load()
+        self.assertIsNone(loader.get_by_name("spiral_stair_stack"))
+
+    def test_approval_can_store_a_personal_skill_for_cross_project_reuse(self):
+        proposal = self._proposal()
+        personal_dir = self.tmp / "personal-skills"
+        with patch("openbrep.skill_scope.personal_skills_dir", return_value=personal_dir):
+            result = SkillProposalService(self.session).confirm({
+                "proposal_id": proposal["proposal_id"], "approve": True, "scope": "personal",
+            })
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["scope"], "personal")
+        self.assertEqual(Path(result["path"]).parent.resolve(), personal_dir.resolve())
+        loader = SkillsLoader(str(personal_dir))
+        loader.load()
+        self.assertEqual(loader.skill_meta("spiral_stair_stack").get("status"), "verified")
+
     def test_k04_verify_failure_keeps_inactive_artifact_and_reason(self):
         proposal = self._proposal()
         with patch(

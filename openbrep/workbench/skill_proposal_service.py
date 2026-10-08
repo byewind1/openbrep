@@ -299,7 +299,13 @@ class SkillProposalService:
             # draft / approving / approved 都可拒绝：approved 的拒绝是"撤销"，
             # 只回收所有权属于本候选的产物（已 verified 也拉回 deprecated）。
             return self._reject(root, candidate)
-        return self._approve(root, candidate)
+        requested_scope = str(body.get("scope") or candidate.get("scope") or "legacy")
+        if requested_scope not in {"project", "personal", "legacy"}:
+            return _error("SKILL_PROPOSAL_INVALID_SCOPE", "技能范围必须是 project 或 personal。", proposal_id=proposal_id)
+        stored_scope = candidate.get("scope")
+        if stored_scope and stored_scope != requested_scope:
+            return _error("SKILL_PROPOSAL_SCOPE_CONFLICT", "该候选已按另一范围开始处理；请重试原范围。", proposal_id=proposal_id)
+        return self._approve(root, candidate, scope=requested_scope)
 
     def _set_draft_error(self, root: Path, candidate: dict[str, Any], message: str) -> None:
         """失败回退到 draft 并尽力落盘（磁盘可能是 approving；重试仍可收敛）。"""
@@ -329,7 +335,7 @@ class SkillProposalService:
                     proposal_id=str(candidate.get("proposal_id") or ""),
                 )
 
-        reclaim = self._reclaim_artifact(candidate)
+        reclaim = self._reclaim_artifact(root, candidate)
         if reclaim.get("required") and not reclaim.get("reclaimed"):
             candidate["verification"] = {
                 "state": VERIFY_UNVERIFIED,
@@ -385,9 +391,17 @@ class SkillProposalService:
             "message": "已丢弃 skill 候选。",
         }
 
-    def _reclaim_artifact(self, candidate: dict[str, Any]) -> dict[str, Any]:
+    def _reclaim_artifact(self, root: Path, candidate: dict[str, Any]) -> dict[str, Any]:
         """只回收所有权属于本 proposal 的产物：status → deprecated（不删除文件）。"""
-        skills_dir = Path(skill_harvest.resolve_skills_dir())
+        scope = str(candidate.get("scope") or "legacy")
+        if scope == "legacy":
+            skills_dir = Path(skill_harvest.resolve_skills_dir())
+        elif scope in {"project", "personal"}:
+            from openbrep.skill_scope import skills_dir_for_scope
+
+            skills_dir = skills_dir_for_scope(scope, root)
+        else:
+            return {"reclaimed": False, "required": True, "reason": "invalid_skill_scope"}
         name = str(candidate.get("name") or "")
         proposal_id = str(candidate.get("proposal_id") or "")
         ownership = artifact_ownership(
@@ -423,18 +437,25 @@ class SkillProposalService:
             "path": ownership.get("path"),
         }
 
-    def _approve(self, root: Path, candidate: dict[str, Any]) -> dict[str, Any]:
+    def _approve(self, root: Path, candidate: dict[str, Any], *, scope: str) -> dict[str, Any]:
         from openbrep.mcp_tools import propose_skill, verify_skill
 
         proposal_id = str(candidate.get("proposal_id") or "")
         name = str(candidate.get("name") or "")
         content = str(candidate.get("content") or "")
-        skills_dir = Path(skill_harvest.resolve_skills_dir())
+        from openbrep.skill_scope import skills_dir_for_scope
+
+        skills_dir = (
+            Path(skill_harvest.resolve_skills_dir())
+            if scope == "legacy"
+            else skills_dir_for_scope(scope, root)
+        )
 
         # 1) 外部副作用之前先持久化审批意图（draft/approving → approving）。
         if str(candidate.get("status") or STATUS_DRAFT) != STATUS_APPROVING:
             candidate = {
                 **candidate,
+                "scope": scope,
                 "status": STATUS_APPROVING,
                 "attempt": {"started_at": utc_now(), "kind": "approve"},
                 "updated_at": utc_now(),
@@ -503,6 +524,7 @@ class SkillProposalService:
         artifact_path = proposal.get("path") or str(skills_dir / f"{name}.md")
         candidate = {
             **candidate,
+            "scope": scope,
             "artifact": {
                 "name": name,
                 "path": str(artifact_path),
@@ -558,6 +580,7 @@ class SkillProposalService:
                 "gate": "structural_capped",
                 "status": "proposed",
                 "path": candidate.get("approved_path"),
+                "scope": scope,
                 "verification": verification,
                 "claims": candidate.get("claims"),
                 "message": (
@@ -633,6 +656,7 @@ class SkillProposalService:
             "gate": verify.get("gate"),
             "status": verify.get("status"),
             "path": candidate.get("approved_path"),
+            "scope": scope,
             "verification": verification,
             "claims": candidate.get("claims"),
             "message": (
@@ -648,6 +672,7 @@ class SkillProposalService:
         return {
             "ok": True,
             "proposal_id": str(candidate.get("proposal_id") or ""),
+            "scope": candidate.get("scope"),
             "skill": candidate.get("name"),
             "verified": passed,
             "gate": verification.get("gate"),
@@ -719,6 +744,7 @@ class SkillProposalService:
             "verification": verification,
             "claims": claims,
             "artifact": candidate.get("artifact"),
+            "scope": candidate.get("scope"),
             "protection": candidate.get("protection"),
             "error": candidate.get("error"),
             "created_at": candidate.get("created_at"),

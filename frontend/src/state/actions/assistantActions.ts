@@ -1666,7 +1666,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       await _createProject(pending.message, pending.images, undefined, extractions)
     },
 
-    async confirmPendingSkillProposal(approve: boolean) {
+    async confirmPendingSkillProposal(approve: boolean, scope?: 'project' | 'personal') {
       // 模式级 skill 提案（P2-d）/ 显式候选（ST04）：approve → propose+verify；
       // false → 丢弃。失败必须保留卡片与重试入口，且绝不显示成功文案。
       const proposal = get().pendingSkillProposal
@@ -1676,7 +1676,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       }
       const epoch = get().projectEpoch
       const effectiveApprove = proposal.status === 'rejecting' ? false : approve
-      const result = await api.confirmSkillProposal(effectiveApprove, proposal.proposal_id)
+      const result = await api.confirmSkillProposal(effectiveApprove, proposal.proposal_id, undefined, effectiveApprove ? scope : undefined)
       if (projectSwitchedSince(epoch)) {
         discardStaleResult('Skill proposal result discarded: project switched during the request.')
         return
@@ -1706,8 +1706,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           state.assistantMessages,
           effectiveApprove
             ? result.verified
-              ? `✅ skill「${proposal.name}」已沉淀并通过验证（${result.gate} 门禁）`
-              : `📝 skill「${proposal.name}」已落盘为未激活产物（验证未过/含未核验断言），暂不可用`
+              ? `✅ skill「${proposal.name}」已沉淀并通过验证（${result.gate} 门禁；范围：${result.scope === 'project' ? '当前项目' : result.scope === 'personal' ? '个人技能库' : '旧版技能目录'}）`
+              : `📝 skill「${proposal.name}」已保存到${result.scope === 'project' ? '当前项目' : result.scope === 'personal' ? '个人技能库' : '旧版技能目录'}，但验证未过或含未核验断言，暂不可用`
             : `🗑 已丢弃 skill 提案「${proposal.name}」。`,
         ),
         lastError: null,

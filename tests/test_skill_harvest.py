@@ -19,8 +19,6 @@ import unittest
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-
-from tests.fake_workbench_session import attach_refresh_same_project
 from unittest.mock import patch
 
 from openbrep.compiler import CompileResult
@@ -28,7 +26,9 @@ from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse
 from openbrep.runtime import skill_harvest
 from openbrep.runtime.pipeline import TaskResult
+from openbrep.skill_scope import personal_skills_dir
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
+from tests.fake_workbench_session import attach_refresh_same_project
 
 # ── 公共构造 ──────────────────────────────────────────────
 
@@ -407,6 +407,24 @@ class TestProposalLifecycle(unittest.TestCase):
         self.assertEqual(len(so), 1)
         self.assertEqual(so[0]["detail"]["name"], "shelf_loop_pattern")
         self.assertTrue(so[0]["detail"]["verified"])
+
+    def test_pending_approval_routes_personal_scope_to_user_skill_directory(self):
+        session = _make_session(self.project)
+        session.project = self.project
+        with patch.object(skill_harvest, "_confirm_skill_proposal_impl", return_value={"ok": True}) as confirm:
+            response = skill_harvest.confirm_skill_proposal(session, {"approve": True, "scope": "personal"})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(Path(confirm.call_args.args[2]), personal_skills_dir())
+
+    def test_pending_approval_routes_project_scope_into_hsf(self):
+        session = _make_session(self.project)
+        session.project = self.project
+        with patch.object(skill_harvest, "_confirm_skill_proposal_impl", return_value={"ok": True}) as confirm:
+            response = skill_harvest.confirm_skill_proposal(session, {"approve": True, "scope": "project"})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(Path(confirm.call_args.args[2]), self.project.root / ".openbrep" / "skills")
 
     def test_approve_with_simple_slice_verifies(self):
         session = _make_session(self.project)

@@ -59,7 +59,7 @@ interface AssistantPanelProps {
   onConfirmExtraction?: (extractions: VisionExtraction[], approve: boolean) => void
   // 模式级 skill 提案（P2-d）：待确认提案 + 沉淀/忽略回调
   pendingSkillProposal?: SkillProposal | null
-  onConfirmSkillProposal?: (approve: boolean) => void
+  onConfirmSkillProposal?: (approve: boolean, scope?: 'project' | 'personal') => void
   // P6a：跨项目聊天记录导入（历史抽屉入口）
   workspace?: WorkspaceInfo | null
   currentProjectPath?: string | null
@@ -1154,9 +1154,15 @@ function SkillProposalCard({
 }: {
   proposal: SkillProposal
   busy: boolean
-  onConfirm?: (approve: boolean) => void
+  onConfirm?: (approve: boolean, scope?: 'project' | 'personal') => void
 }) {
   const t = useT()
+  const [scope, setScope] = useState<'project' | 'personal' | null>(
+    proposal.scope === 'project' || proposal.scope === 'personal' ? proposal.scope : null,
+  )
+  useEffect(() => {
+    setScope(proposal.scope === 'project' || proposal.scope === 'personal' ? proposal.scope : null)
+  }, [proposal.proposal_id, proposal.scope])
   const evidence = proposal.evidence ?? null
   const revisions = evidence?.revisions ?? []
   const evidenceNote = evidence
@@ -1202,6 +1208,13 @@ function SkillProposalCard({
         </p>
       ) : null}
       <pre className="skill-proposal-content">{proposal.content}</pre>
+      {proposal.status !== 'rejecting' ? (
+        <fieldset className="skill-proposal-scope">
+          <legend>保存范围</legend>
+          <label><input type="radio" name={`skill-scope-${proposal.proposal_id ?? proposal.name}`} checked={scope === 'project'} disabled={busy} onChange={() => setScope('project')} />仅当前项目</label>
+          <label><input type="radio" name={`skill-scope-${proposal.proposal_id ?? proposal.name}`} checked={scope === 'personal'} disabled={busy} onChange={() => setScope('personal')} />个人技能库（跨项目）</label>
+        </fieldset>
+      ) : null}
       {evidence && (evidence.changed_files?.length || evidence.project || evidence.source_run_ids?.length) ? (
         <div className="skill-proposal-section">
           <strong>{t('assistant.skillProposal.evidence')}</strong>
@@ -1221,8 +1234,8 @@ function SkillProposalCard({
           <button
             type="button"
             className="plan-confirm-approve"
-            disabled={busy}
-            onClick={() => onConfirm?.(true)}
+            disabled={busy || !scope}
+            onClick={() => scope && onConfirm?.(true, scope)}
           >
             {t('assistant.skillProposal.approve')}
           </button>

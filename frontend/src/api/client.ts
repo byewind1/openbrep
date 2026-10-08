@@ -1484,6 +1484,7 @@ export async function confirmSkillProposal(
   approve: boolean,
   proposalId?: string,
   signal?: AbortSignal,
+  scope?: 'project' | 'personal',
 ): Promise<SkillProposalConfirmResult> {
   return requestJson<SkillProposalConfirmResult>(
     '/api/skill/confirm',
@@ -1491,7 +1492,7 @@ export async function confirmSkillProposal(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // ST04：带 proposal_id 时审批持久候选 store；不带则保留旧 pending 行为
-      body: JSON.stringify(proposalId ? { approve, proposal_id: proposalId } : { approve }),
+      body: JSON.stringify({ ...(proposalId ? { proposal_id: proposalId } : {}), approve, ...(approve && scope ? { scope } : {}) }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
     signal,

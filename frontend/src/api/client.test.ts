@@ -398,6 +398,14 @@ describe('skill proposal routes (ST04)', () => {
     expect(body).toEqual({ approve: true, proposal_id: 'sp_1' })
   })
 
+  test('confirmSkillProposal sends the selected scope', async () => {
+    const fetchMock = stubJson({ ok: true, verified: true, scope: 'project' })
+    const { confirmSkillProposal } = await import('./client')
+    await confirmSkillProposal(true, 'sp_1', undefined, 'project')
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ approve: true, proposal_id: 'sp_1', scope: 'project' })
+  })
+
   test('confirmSkillProposal keeps legacy body without proposal_id', async () => {
     const fetchMock = stubJson({ ok: true, discarded: true })
     const { confirmSkillProposal } = await import('./client')

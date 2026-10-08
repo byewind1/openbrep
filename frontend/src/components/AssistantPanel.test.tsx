@@ -696,8 +696,11 @@ describe('AssistantPanel skill proposal card (P2-d)', () => {
   test('approve and ignore buttons call onConfirmSkillProposal with the right flag', () => {
     const onConfirm = vi.fn()
     render(<AssistantPanel {...baseProps} hasProject pendingSkillProposal={proposal} onConfirmSkillProposal={onConfirm} />)
+    const approve = screen.getByRole('button', { name: '批准沉淀' }) as HTMLButtonElement
+    expect(approve.disabled).toBe(true)
+    fireEvent.click(screen.getByLabelText('个人技能库（跨项目）'))
     fireEvent.click(screen.getByRole('button', { name: '批准沉淀' }))
-    expect(onConfirm).toHaveBeenCalledWith(true)
+    expect(onConfirm).toHaveBeenCalledWith(true, 'personal')
     fireEvent.click(screen.getByRole('button', { name: '忽略' }))
     expect(onConfirm).toHaveBeenCalledWith(false)
   })

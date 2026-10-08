@@ -526,7 +526,7 @@ export function WorkbenchApp() {
             pendingExtraction={pendingExtraction}
             onConfirmExtraction={(extractions, approve) => void confirmPendingExtraction(extractions, approve)}
             pendingSkillProposal={pendingSkillProposal}
-            onConfirmSkillProposal={(approve) => void confirmPendingSkillProposal(approve)}
+            onConfirmSkillProposal={(approve, scope) => void confirmPendingSkillProposal(approve, scope)}
             onSetActiveRailPanel={setActiveRailPanel}
             onLoadPreview3D={() => void loadPreview3D()}
             onLoadPreview2D={() => void loadPreview2D()}

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 
 def test_codex_mcp_example_declares_the_openbrep_stdio_entrypoint():

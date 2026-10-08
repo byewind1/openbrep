@@ -5058,6 +5058,23 @@ button:focus-visible {
   margin-top: 4px;
 }
 
+.skill-proposal-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.skill-proposal-scope label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .skill-proposal-actions button {
   padding: 5px 14px;
   border-radius: 6px;

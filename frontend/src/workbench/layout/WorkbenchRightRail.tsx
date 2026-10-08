@@ -33,7 +33,7 @@ interface WorkbenchRightRailProps {
   pendingExtraction: import('../../api/types').PendingExtraction | null
   onConfirmExtraction: (extractions: import('../../api/types').VisionExtraction[], approve: boolean) => void
   pendingSkillProposal: import('../../api/types').SkillProposal | null
-  onConfirmSkillProposal: (approve: boolean) => void
+  onConfirmSkillProposal: (approve: boolean, scope?: 'project' | 'personal') => void
   onSetActiveRailPanel: (panel: ActiveRailPanel) => void
   onLoadPreview3D: () => void
   onLoadPreview2D: () => void

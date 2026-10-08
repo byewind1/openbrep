@@ -1527,6 +1527,7 @@ export interface SkillProposal {
   } | null
   /** ST04：draft（待审）/ approving/rejecting（副作用中或可重试）/ approved / rejected */
   status?: 'draft' | 'approving' | 'rejecting' | 'approved' | 'rejected'
+  scope?: 'project' | 'personal' | 'legacy'
   /** ST04：验证态与用户决策分离；claims_unverified = 含未核验技术断言，未晋升 */
   verification?: {
     state?: 'unverified' | 'verified' | 'failed' | 'claims_unverified'
@@ -1593,6 +1594,7 @@ export interface SkillProposalConfirmResult {
   gate?: string
   status?: string
   path?: string
+  scope?: 'project' | 'personal' | 'legacy'
   discarded?: boolean
   already_decided?: boolean
   released_protections?: number

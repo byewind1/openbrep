@@ -83,6 +83,7 @@ from openbrep.runtime.router import IntentRouter
 from openbrep.runtime.run_control import RunControl
 from openbrep.runtime.tracer import Tracer
 from openbrep.skill_creator import SkillCreator
+from openbrep.skill_scope import personal_skills_dir
 from openbrep.skills_loader import SkillsLoader
 from openbrep.user_knowledge import load_user_knowledge
 from openbrep.wiki_knowledge import WikiKnowledge
@@ -3970,16 +3971,22 @@ class TaskPipeline:
         *,
         context: ProjectContext | None = None,
     ) -> str:
-        """Load global skills plus optional project-scoped skills."""
+        """Load bundled, project-scoped, and explicitly approved personal skills."""
         context = context if context is not None else resolve_project_context(request.project)
-        return "\n\n---\n\n".join(
-            part
-            for part in [
-                self._load_skills(instruction),
-                load_project_skills(context, instruction),
-            ]
-            if part
-        )
+        parts = [self._load_skills(instruction), load_project_skills(context, instruction)]
+        # Benchmark/replay pipelines set include_learned_skills=False; personal
+        # skill libraries are user state and must never enter sealed replay prompts.
+        if self.include_learned_skills:
+            personal_loader = SkillsLoader(str(personal_skills_dir()))
+            personal_loader.load()
+            shadowed = {
+                name for part in parts if part
+                for name in re.findall(r"^## Skill: ([^\n]+)$", part, flags=re.MULTILINE)
+            }
+            for name in shadowed:
+                personal_loader._skills.pop(name, None)
+            parts.append(personal_loader.get_for_task(instruction))
+        return "\n\n---\n\n".join(part for part in parts if part)
 
     def _build_learned_error_skill_prompt(self, *, work_dir: str = "", project: HSFProject | None = None) -> str:
         project_name = getattr(project, "name", "") if project is not None else ""

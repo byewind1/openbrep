@@ -637,6 +637,7 @@ def _confirm_skill_proposal_impl(session, body: dict[str, Any], skills_dir: Any)
     return {
         "ok": True,
         "skill": name,
+        "scope": body.get("scope") or "legacy",
         "verified": verify.get("passed") is True,
         "gate": verify.get("gate"),
         "status": verify.get("status"),
@@ -695,8 +696,20 @@ def harvest_for_session(session, result, instruction: str) -> Optional[dict]:
 
 
 def confirm_skill_proposal(session, body: dict[str, Any]) -> dict[str, Any]:
-    """session 级入口：审批待确认 skill 提案（skills_dir 自动解析）。"""
-    return _confirm_skill_proposal_impl(session, body, resolve_skills_dir())
+    """Approve a pending proposal into the explicitly selected skill scope."""
+    scope = str(body.get("scope") or "legacy")
+    if scope == "legacy":
+        skills_dir = resolve_skills_dir()
+    elif scope in {"project", "personal"}:
+        from openbrep.skill_scope import skills_dir_for_scope
+
+        project = getattr(session, "project", None)
+        if scope == "project" and project is None:
+            return {"ok": False, "code": "NO_PROJECT", "error": "项目范围技能需要先打开项目。"}
+        skills_dir = str(skills_dir_for_scope(scope, project.root if project is not None else "."))
+    else:
+        return {"ok": False, "code": "SKILL_PROPOSAL_INVALID_SCOPE", "error": "技能范围必须是 project 或 personal。"}
+    return _confirm_skill_proposal_impl(session, body, skills_dir)
 
 
 # ── fail_count 效果回写（GUI 侧通道，不进 pipeline 默认路径） ──

@@ -24,6 +24,7 @@ if _real_config.is_file():
     shutil.copy(_real_config, _tmp_config)
 
 os.environ.setdefault("GDL_AGENT_CONFIG", str(_tmp_config))
+os.environ.setdefault("OPENBREP_PERSONAL_SKILLS_DIR", str(_tmp_dir / "personal-skills"))
 
 # 双入口（2026-09-17）：Codex app-server 互斥锁默认落在 ``~/.openbrep/run``，
 # 按 home 摘要命名。测试全部用临时 home，绝不能把锁文件写进开发机的

@@ -3988,11 +3988,13 @@ test('successful generate without proposal clears stale skill proposal (P2-d)', 
 test('confirmPendingSkillProposal(true) approves and clears the proposal (P2-d)', async () => {
   let approveArg: boolean | null = null
   let proposalIdArg: string | undefined
+  let scopeArg: 'project' | 'personal' | undefined
   const store = createWorkbenchStore(
     makeApi({
-      confirmSkillProposal: async (approve: boolean, proposalId?: string) => {
+      confirmSkillProposal: async (approve: boolean, proposalId?: string, _signal?: AbortSignal, scope?: 'project' | 'personal') => {
         approveArg = approve
         proposalIdArg = proposalId
+        scopeArg = scope
         return { ok: true, skill: 'shelf_loop_pattern', verified: true, gate: 'structural', status: 'verified' }
       },
     }),
@@ -4000,12 +4002,13 @@ test('confirmPendingSkillProposal(true) approves and clears the proposal (P2-d)'
   await store.getState().load()
   store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
 
-  await store.getState().confirmPendingSkillProposal(true)
+  await store.getState().confirmPendingSkillProposal(true, 'personal')
 
   const state = store.getState()
   expect(approveArg).toBe(true)
   // ST04：审批必须带上持久候选 ID，让后端走 store 路径
   expect(proposalIdArg).toBe('sp_20260918_abc123')
+  expect(scopeArg).toBe('personal')
   expect(state.pendingSkillProposal).toBeNull()
   expect(state.assistantMessages.at(-1)?.content).toContain('已沉淀并通过验证')
 })
