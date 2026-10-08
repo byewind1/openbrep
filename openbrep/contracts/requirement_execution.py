@@ -4,11 +4,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from openbrep.contracts.bindings import get_executor_spec
+from openbrep.contracts.bindings import canonical_hash, get_executor_spec
 from openbrep.contracts.object_spec import Requirement
 from openbrep.verification import CheckResult
 
 Executor = Callable[[dict[str, Any], dict[str, Any]], CheckResult]
+
+
+def check_evidence_key(check_id: str, params: dict[str, Any] | None = None) -> str:
+    """Evidence key includes executor arguments so unlike scopes cannot alias."""
+    return f"{check_id}#{canonical_hash(params or {})}"
 
 
 @dataclass
@@ -29,7 +34,10 @@ class RequirementEvaluation:
 
 def _result_from_context(check_id: str, context: dict[str, Any], params: dict[str, Any]) -> CheckResult:
     """Exact-ID adapter: params may select a named result but never fall back to another check."""
-    supplied = context.get("checks", {}).get(check_id)
+    checks = context.get("checks", {})
+    supplied = checks.get(check_evidence_key(check_id, params))
+    if supplied is None and not params:
+        supplied = checks.get(check_id)
     if isinstance(supplied, CheckResult):
         return supplied
     if isinstance(supplied, dict):

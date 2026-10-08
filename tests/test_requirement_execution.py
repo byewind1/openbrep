@@ -1,5 +1,5 @@
 from openbrep.contracts.object_spec import Requirement
-from openbrep.contracts.requirement_execution import execute_requirements
+from openbrep.contracts.requirement_execution import check_evidence_key, execute_requirements
 
 
 def test_requirements_execute_independently_and_keep_requirement_identity():
@@ -13,7 +13,9 @@ def test_requirements_execute_independently_and_keep_requirement_identity():
             "source_fingerprint": "src-a",
             "checks": {
                 "compile": {"status": "pass", "reason": "compiled"},
-                "semantic": {"status": "fail", "reason": "bbox mismatch"},
+                check_evidence_key("semantic", {"tolerance": 0.1}): {
+                    "status": "fail", "reason": "bbox mismatch"
+                },
             },
         },
     )
@@ -39,6 +41,20 @@ def test_unknown_missing_and_stale_required_evidence_never_pass():
     assert stale.status == "stale"
     assert stale.required_passed == 0
     assert stale.results[0].status == "unverified"
+
+
+def test_same_check_with_different_params_does_not_reuse_evidence():
+    requirements = [
+        Requirement("r.tight", "tight", check_id="semantic", params={"tolerance": 0.1}, strength="required"),
+        Requirement("r.loose", "loose", check_id="semantic", params={"tolerance": 0.5}, strength="required"),
+    ]
+    evaluation = execute_requirements(
+        requirements,
+        {"checks": {check_evidence_key("semantic", {"tolerance": 0.1}): {"status": "pass"}}},
+    )
+    assert evaluation.required_passed == 1
+    assert evaluation.results[0].status == "pass"
+    assert evaluation.results[1].status == "not_run"
 
 
 def test_empty_requirements_do_not_claim_all_standards_passed():
