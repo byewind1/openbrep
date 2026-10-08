@@ -1,0 +1,10 @@
+# Optional DSH overlay: install this at ~/.dsh/cordis.patch.yml, or copy the
+# insert row into a project-scoped .dsh/cordis.patch.yml.
+- insert:
+    - id: mcp-openbrep
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: openbrep
+        transport: stdio
+        command: obr
+        args: [mcp-server]
