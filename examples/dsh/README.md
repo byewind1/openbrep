@@ -14,9 +14,10 @@ verification tools. No OpenBrep model credentials are needed for this route.
 
 ## Connect
 
-Copy `cordis.patch.yml` to `~/.dsh/cordis.patch.yml`, or copy its single
-`insert` row to the project's `.dsh/cordis.patch.yml` for project-scoped use.
-Start a new DSH session and wait for MCP discovery. The tools use names such as
+Copy `cordis.patch.yml` to `~/.dsh/cordis.patch.yml` for home-wide use. For a
+project-scoped overlay, place the row at `<project>/.dsh/cordis.patch.yml` and
+start DSH with `--patch <project>/.dsh/cordis.patch.yml`. Start a new DSH
+session and wait for MCP discovery. The tools use names such as
 `mcp__openbrep__capabilities` and `mcp__openbrep__load_project`.
 
 If DSH cannot find `obr`, replace `command` with the absolute path to the
