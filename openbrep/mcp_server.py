@@ -1,7 +1,7 @@
 """MCP stdio server（Phase 1 / P1-e）。
 
 本文件是全仓库唯一允许 import mcp 库的模块：它只是 openbrep.mcp_tools 的
-协议皮（protocol skin），不含任何业务逻辑。mcp_tools.py 一行都不许动。
+协议适配层，不含任何业务逻辑。
 
 职责：
 - 把 mcp_tools 的工具注册为 MCP 工具（工具名与函数名一致）。
@@ -122,11 +122,15 @@ _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
         mcp_tools.apply_edit,
         "应用编辑：set_parameters 支持 HSF 类型对应的 Length/Angle/RealNum/Integer/Boolean/String 等标量值，或 set_script（整脚本替换）。"
         "mode=draft 试跑零持久化（返回 diff/compile/verify）；mode=apply 落盘并可回滚。"
+        "apply 可传 operation_id 保证相同请求重试幂等。"
         "参数 path: HSF 项目目录绝对路径（string）；"
         "spec: {'type':'set_parameters','values':{...}} 或 "
         "{'type':'set_script','script_type':'1d'|'2d'|'3d'|'vl'|'ui'|'master','content':str}"
         "（object）；mode: draft/apply，默认 draft（string，选填）。",
-        _schema(required=(("path", "string"), ("spec", "object")), optional=(("mode", "string"),)),
+        _schema(
+            required=(("path", "string"), ("spec", "object")),
+            optional=(("mode", "string"), ("operation_id", "string")),
+        ),
     ),
     (
         "rollback",
@@ -276,7 +280,7 @@ _TOOLS_BY_NAME: dict[str, dict[str, Any]] = {
 def _list_tools_result() -> ListToolsResult:
     """由 _TOOL_SPECS 构建 ListToolsResult（工具名与 mcp_tools 函数名一致）。"""
     tools = [
-        Tool(name=name, description=spec["description"], input_schema=spec["schema"])
+        Tool(name=name, description=spec["description"], inputSchema=spec["schema"])
         for name, spec in _TOOLS_BY_NAME.items()
     ]
     return ListToolsResult(tools=tools)
@@ -303,6 +307,10 @@ def _call_tool_result(name: str, arguments: dict[str, Any] | None) -> CallToolRe
                     ),
                 )
             ],
+            structuredContent={
+                "ok": False,
+                "error": {"code": "method_not_found", "message": f"未知工具: {name}"},
+            },
             is_error=True,
         )
     try:
@@ -319,6 +327,7 @@ def _call_tool_result(name: str, arguments: dict[str, Any] | None) -> CallToolRe
         }
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False))],
+            structuredContent=result,
             is_error=True,
         )
     if not isinstance(result, dict):
@@ -332,6 +341,7 @@ def _call_tool_result(name: str, arguments: dict[str, Any] | None) -> CallToolRe
         }
     return CallToolResult(
         content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False))],
+        structuredContent=result,
         is_error=False,
     )
 

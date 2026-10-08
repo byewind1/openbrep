@@ -43,7 +43,7 @@ def test_capabilities_report_versioned_model_independent_contract():
     result = capabilities()
 
     assert result["ok"] is True
-    assert result["contract_version"] == "1.2"
+    assert result["contract_version"] == "1.4"
     assert "Boolean" in result["parameter_types"]
     assert "mock" in result["compile_modes"]
     assert "not a real compile" in result["compile_modes"]["mock"]
@@ -498,6 +498,30 @@ def test_apply_edit_noop_does_not_create_revision(tmp_path):
     assert result["revision_id"] is None
     assert result["diff"] == ""
     assert list_revisions(root) == []
+
+
+def test_apply_edit_operation_id_replay_is_idempotent_and_detects_conflicts(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+    request = {"type": "set_parameters", "values": {"A": 2.5}}
+
+    first = apply_edit(str(root), request, mode="apply", operation_id="edit-001")
+    replay = apply_edit(str(root), request, mode="apply", operation_id="edit-001")
+
+    assert first["ok"] is True
+    assert first["operation_replayed"] is False
+    assert replay["operation_replayed"] is True
+    assert replay["revision_id"] == first["revision_id"]
+    assert len(list_revisions(root)) == 1
+
+    conflict = apply_edit(
+        str(root),
+        {"type": "set_parameters", "values": {"A": 3.5}},
+        mode="apply",
+        operation_id="edit-001",
+    )
+    assert conflict["ok"] is False
+    assert conflict["error"]["code"] == "operation_id_conflict"
+    assert HSFProject.load_from_disk(str(root)).get_parameter("A").value == "2.5"
 
 
 def _tree_bytes(root: Path) -> dict[str, bytes]:

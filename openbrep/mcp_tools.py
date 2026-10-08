@@ -40,6 +40,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import re
 import shutil
@@ -116,6 +117,20 @@ def _make_error(code: str, message: str, trace_id: str, details: Any = None) -> 
     return {"ok": False, "error": error, "trace_id": trace_id}
 
 
+def _identify_evidence(payload: dict, kind: str, source_fingerprint: str) -> dict:
+    """Attach a stable evidence identity to a result tied to one source snapshot."""
+    identity = {
+        key: value for key, value in payload.items()
+        if key not in {"trace_id", "output_path", "artifact_path", "evidence_id"}
+    }
+    canonical = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return {
+        "evidence_id": "ev_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24],
+        "evidence_kind": kind,
+        "source_fingerprint": source_fingerprint,
+    }
+
+
 def _require_hsf_dir(path: str) -> Path:
     """校验 path 指向合法 HSF 项目根目录，否则抛 FileNotFoundError。
 
@@ -153,7 +168,7 @@ def capabilities() -> dict[str, Any]:
 
     return {
         "ok": True,
-        "contract_version": "1.2",
+        "contract_version": "1.4",
         "openbrep_version": __version__,
         "source_format": "HSF project directory",
         "compile_modes": {
@@ -164,7 +179,7 @@ def capabilities() -> dict[str, Any]:
         "parameter_types": ["Length", "Angle", "RealNum", "Integer", "Boolean", "String", "Material", "PenColor", "FillPattern", "LineType"],
         "edit_modes": {
             "draft": "temporary project copy; returns diff, mock compile and semantic review",
-            "apply": "writes HSF, records a revision before change, then compiles",
+            "apply": "writes HSF, records a revision before change, then compiles; optional operation_id makes retries idempotent",
         },
         "result_semantics": {
             "ok": "tool operation completed; inspect compile.success and verify.passed separately",
@@ -172,7 +187,7 @@ def capabilities() -> dict[str, Any]:
             "compile_mode": "returned per compile result; mock success is not a real compile",
         },
         "error_codes": ["project_not_found", "invalid_mode", "invalid_spec", "source_changed", "source_commit_failed", "invalid_revision", "converter_unavailable", "mcp_internal_error"],
-        "evidence": ["source fingerprint", "revision id", "compile result", "semantic issues"],
+        "evidence": ["evidence_id", "evidence_kind", "source_fingerprint", "revision_id", "compile result", "semantic issues"],
         "cancellation": "MCP transport cancellation is client-owned; synchronous source commits complete or roll back before returning",
         "timeouts": "The client/transport owns request deadlines; a started atomic source commit is not interrupted mid-transaction",
     }
@@ -191,12 +206,13 @@ def load_project(path: str) -> dict:
         root, project = loaded
         try:
             scripts_present = [st.name for st, content in project.scripts.items() if content.strip()]
-            return {
+            payload = {
                 "ok": True,
                 "name": project.name,
                 "parameter_count": len(project.parameters),
                 "scripts_present": scripts_present,
                 "ac_version": project.version,
+                "source_fingerprint": compute_source_fingerprint(root),
                 "latest_revision_id": get_latest_revision_id(root),
                 "origin": load_project_origin(root),
                 "artifacts": list_archived_artifacts(root, limit=5),
@@ -204,6 +220,7 @@ def load_project(path: str) -> dict:
             }
         except Exception as exc:
             return _make_error("mcp_internal_error", f"load_project 失败: {exc}", trace_id)
+        return payload
 
 
 def _resolve_compiler(mode: str) -> tuple[MockHSFCompiler | HSFCompiler, str]:
@@ -242,7 +259,9 @@ def compile_hsf(path: str, mode: str = "auto") -> dict:
         try:
             out_dir = tempfile.mkdtemp(prefix="mcp_compile_")
             output_gsm = str(Path(out_dir) / f"{root.name}.gsm")
+            source_fingerprint_before = compute_source_fingerprint(root)
             result = compiler.hsf2libpart(str(root), output_gsm)
+            source_fingerprint_after = compute_source_fingerprint(root)
             # 成品归档：编译成功才归档（unversioned/），失败不归档且不阻断编译结果。
             # 临时目录产物保留，归档是副本。
             artifact_path: str | None = None
@@ -252,7 +271,7 @@ def compile_hsf(path: str, mode: str = "auto") -> dict:
                     artifact_path = str(archive_artifact(root, raw_output))
                 except Exception:
                     artifact_path = None
-            return {
+            payload = {
                 "ok": True,
                 "mode": result.mode or effective_mode,
                 "success": result.success,
@@ -261,8 +280,12 @@ def compile_hsf(path: str, mode: str = "auto") -> dict:
                 "exit_code": result.exit_code,
                 "output_path": result.output_path,
                 "artifact_path": artifact_path,
+                "source_fingerprint": source_fingerprint_before,
+                "source_current": source_fingerprint_before == source_fingerprint_after,
                 "trace_id": trace_id,
             }
+            payload.update(_identify_evidence(payload, "compile", source_fingerprint_before))
+            return payload
         except Exception as exc:
             return _make_error("mcp_internal_error", f"compile_hsf 失败: {exc}", trace_id)
 
@@ -274,7 +297,8 @@ def semantic_verify(path: str, sweep: bool = True) -> dict:
         loaded = _load_project(path, trace_id)
         if isinstance(loaded, dict):
             return loaded
-        _root, project = loaded
+        root, project = loaded
+        source_fingerprint = compute_source_fingerprint(root)
         from openbrep.semantic_verifier import verify_semantics
 
         try:
@@ -287,6 +311,8 @@ def semantic_verify(path: str, sweep: bool = True) -> dict:
                 "ok": True,
                 "passed": result.passed,
                 "issues": issues,
+                "source_fingerprint": source_fingerprint,
+                "source_current": compute_source_fingerprint(root) == source_fingerprint,
                 "trace_id": trace_id,
             }
             if (
@@ -294,7 +320,7 @@ def semantic_verify(path: str, sweep: bool = True) -> dict:
                 and result.project_contract.applicability != "not_applicable"
             ):
                 payload["project_contract"] = result.project_contract.to_dict()
-            return payload
+            return payload | _identify_evidence(payload, "semantic", source_fingerprint)
         except Exception as exc:
             return _make_error("mcp_internal_error", f"semantic_verify 失败: {exc}", trace_id)
 
@@ -312,7 +338,12 @@ _SCRIPT_TYPE_MAP = {
 }
 
 
-def apply_edit(path: str, spec: dict, mode: str = "draft") -> dict:
+def apply_edit(
+    path: str,
+    spec: dict,
+    mode: str = "draft",
+    operation_id: str | None = None,
+) -> dict:
     """应用编辑：set_parameters（改参数值）或 set_script（整脚本替换）。
 
     spec 只支持两种（不做通用补丁语言）：
@@ -333,6 +364,7 @@ def apply_edit(path: str, spec: dict, mode: str = "draft") -> dict:
     2. 应用 spec + save_to_disk。
     3. 编译（auto：真实可用走真实，否则 mock）。
     返回 revision_id 与最近 5 条 revision。
+    operation_id 可选且仅用于 apply；相同 ID 与请求重试返回原结果，不重复提交。
     """
     with _locked():
         trace_id = _next_trace_id()
@@ -343,6 +375,13 @@ def apply_edit(path: str, spec: dict, mode: str = "draft") -> dict:
                 trace_id,
                 details={"mode": mode},
             )
+        if operation_id is not None:
+            from openbrep.operation_store import valid_operation_id
+
+            if mode != "apply":
+                return _make_error("invalid_mode", "operation_id 仅适用于 mode=apply", trace_id)
+            if not valid_operation_id(operation_id):
+                return _make_error("invalid_spec", "operation_id 格式无效", trace_id)
         source_before_load = compute_source_fingerprint(Path(path))
         loaded = _load_project(path, trace_id)
         if isinstance(loaded, dict):
@@ -362,10 +401,36 @@ def apply_edit(path: str, spec: dict, mode: str = "draft") -> dict:
                     expected_source_fingerprint=source_before_load,
                 )
             with project_write_lock(root):
-                return _apply_edit_apply(
+                request_hash = None
+                if operation_id is not None:
+                    from openbrep.operation_store import (
+                        operation_request_hash,
+                        read_operation_receipt,
+                        write_operation_receipt,
+                    )
+
+                    request_hash = operation_request_hash({"mode": mode, "spec": spec})
+                    receipt = read_operation_receipt(root, operation_id)
+                    if receipt is not None:
+                        if receipt["request_hash"] != request_hash:
+                            return _make_error(
+                                "operation_id_conflict",
+                                "operation_id 已用于不同请求；请使用新的 ID。",
+                                trace_id,
+                                details={"operation_id": operation_id},
+                            )
+                        replayed = dict(receipt["result"])
+                        replayed["operation_replayed"] = True
+                        return replayed
+                result = _apply_edit_apply(
                     root, project, spec, trace_id,
                     expected_source_fingerprint=source_before_load,
                 )
+                if operation_id is not None and request_hash is not None:
+                    result["operation_id"] = operation_id
+                    result["operation_replayed"] = False
+                    write_operation_receipt(root, operation_id, request_hash, result)
+                return result
         except _McpEditRejected as exc:
             return _make_error(exc.code, str(exc), trace_id, details={"mode": mode})
         except Exception as exc:
@@ -598,17 +663,23 @@ def _compile_project_result(root: Path, mode: str) -> dict:
     try:
         out_dir = tempfile.mkdtemp(prefix="mcp_compile_")
         output_gsm = str(Path(out_dir) / f"{root.name}.gsm")
+        source_fingerprint = compute_source_fingerprint(root)
         result = compiler.hsf2libpart(str(root), output_gsm)
-        return {
+        source_current = compute_source_fingerprint(root) == source_fingerprint
+        evidence = {
             "mode": result.mode or effective_mode,
             "success": result.success,
             "errors": list(result.errors or []),
             "warnings": list(result.warnings or []),
             "exit_code": result.exit_code,
             "output_path": result.output_path,
+            "source_current": source_current,
         }
+        evidence.update(_identify_evidence(evidence, "compile", source_fingerprint))
+        return evidence
     except Exception as exc:
-        return {
+        source_fingerprint = compute_source_fingerprint(root)
+        evidence = {
             "mode": effective_mode,
             "success": False,
             "errors": [f"编译异常: {exc}"],
@@ -616,6 +687,8 @@ def _compile_project_result(root: Path, mode: str) -> dict:
             "exit_code": None,
             "output_path": None,
         }
+        evidence.update(_identify_evidence(evidence, "compile", source_fingerprint))
+        return evidence
 
 
 def _verify_project(root: Path, sweep: bool = True) -> dict:
@@ -629,20 +702,30 @@ def _verify_project(root: Path, sweep: bool = True) -> dict:
             {"check_type": i.check_type, "detail": i.detail, "blocking": i.blocking}
             for i in result.issues
         ]
-        payload = {"passed": result.passed, "issues": issues}
+        source_fingerprint = compute_source_fingerprint(root)
+        payload = {
+            "passed": result.passed,
+            "issues": issues,
+            "source_fingerprint": source_fingerprint,
+            "source_current": compute_source_fingerprint(root) == source_fingerprint,
+        }
         if (
             result.project_contract is not None
             and result.project_contract.applicability != "not_applicable"
         ):
             payload["project_contract"] = result.project_contract.to_dict()
-        return payload
+        return payload | _identify_evidence(payload, "semantic", source_fingerprint)
     except Exception as exc:
-        return {
+        source_fingerprint = compute_source_fingerprint(root)
+        payload = {
             "passed": False,
             "issues": [
                 {"check_type": "verify_error", "detail": f"语义验证异常: {exc}", "blocking": True}
             ],
+            "source_fingerprint": source_fingerprint,
+            "source_current": True,
         }
+        return payload | _identify_evidence(payload, "semantic", source_fingerprint)
 
 
 def _recent_revisions(root: Path, limit: int = 5) -> list[dict]:
@@ -737,7 +820,8 @@ def render_evidence(
         loaded = _load_project(path, trace_id)
         if isinstance(loaded, dict):
             return loaded
-        _root, project = loaded
+        root, project = loaded
+        source_fingerprint = compute_source_fingerprint(root)
 
         from openbrep.semantic_verifier import _scene_bbox
         from openbrep.static_checker import RESERVED_PARAMS
@@ -750,7 +834,7 @@ def render_evidence(
         try:
             payload = preview_payload(project, overrides={}, script_overrides={})
         except Exception as exc:
-            return {
+            evidence = {
                 "ok": True,
                 "bbox": None,
                 "mesh_stats": {
@@ -762,8 +846,12 @@ def render_evidence(
                 "sweep": [],
                 "declared_dims": declared_dims,
                 "bbox_vs_declared": None,
+                "source_fingerprint": source_fingerprint,
+                "source_current": compute_source_fingerprint(root) == source_fingerprint,
                 "trace_id": trace_id,
             }
+            evidence.update(_identify_evidence(evidence, "visual", source_fingerprint))
+            return evidence
 
         payload_meshes = payload.get("meshes", [])
         warnings = list(payload.get("warnings") or [])
@@ -783,7 +871,7 @@ def render_evidence(
                 bbox_info["size"], declared_dims, tolerance=tolerance
             )
 
-        return {
+        evidence = {
             "ok": True,
             "bbox": bbox_info,
             "mesh_stats": {
@@ -795,8 +883,11 @@ def render_evidence(
             "sweep": sweep,
             "declared_dims": declared_dims,
             "bbox_vs_declared": bbox_vs_declared,
+            "source_fingerprint": source_fingerprint,
+            "source_current": compute_source_fingerprint(root) == source_fingerprint,
             "trace_id": trace_id,
         }
+        return evidence | _identify_evidence(evidence, "visual", source_fingerprint)
 
 
 def _payload_mesh_xyz_views(payload_meshes: list[dict]) -> list[Any]:
