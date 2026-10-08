@@ -43,7 +43,7 @@ def test_capabilities_report_versioned_model_independent_contract():
     result = capabilities()
 
     assert result["ok"] is True
-    assert result["contract_version"] == "1.1"
+    assert result["contract_version"] == "1.2"
     assert "Boolean" in result["parameter_types"]
     assert "mock" in result["compile_modes"]
     assert "not a real compile" in result["compile_modes"]["mock"]

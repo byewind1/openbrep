@@ -82,6 +82,7 @@ def test_valid_spec_and_plan_round_trip():
     spec = parse_object_spec(_spec_data())
     assert spec.ok
     assert isinstance(spec.value, ObjectSpec)
+    assert spec.value.schema_version == 2  # schema v1 input is read and upgraded on serialization
     assert spec.value.params[0].unit == "m"  # Length 规范单位自动补全
     again = parse_object_spec(spec.value.to_dict())
     assert again.ok
@@ -90,6 +91,54 @@ def test_valid_spec_and_plan_round_trip():
     plan = parse_execution_plan(_plan_data())
     assert plan.ok
     assert isinstance(plan.value, ExecutionPlan)
+    assert plan.value.schema_version == 2
+
+
+def test_requirement_strength_is_explicit_and_legacy_data_stays_legacy():
+    legacy = parse_object_spec(_spec_data())
+    assert legacy.ok
+    assert legacy.value.requirements[0].strength == "legacy"
+    assert legacy.value.to_dict()["requirements"][0]["strength"] == "legacy"
+
+    required = parse_object_spec(_spec_data(requirements=[{
+        "requirement_id": "req-compile",
+        "text": "编译通过",
+        "kind": "check",
+        "check_id": "compile",
+        "strength": "required",
+    }]))
+    assert required.ok
+    assert required.value.requirements[0].strength == "required"
+    assert parse_object_spec(required.value.to_dict()).ok
+
+    missing_v2_strength = _spec_data(schema_version=2)
+    assert any(
+        error.field_path == "requirements[0].strength"
+        for error in parse_object_spec(missing_v2_strength).errors
+    )
+
+    invalid = parse_object_spec(_spec_data(requirements=[{
+        "requirement_id": "req-compile", "text": "编译通过", "kind": "check",
+        "check_id": "compile", "strength": "maybe",
+    }]))
+    assert any(error.field_path == "requirements[0].strength" for error in invalid.errors)
+
+
+def test_execution_plan_preserves_requirement_strength():
+    plan_data = _plan_data(requirements=[{
+        "requirement_id": "req-compile", "text": "编译通过", "kind": "check",
+        "check_id": "compile", "strength": "advisory",
+    }])
+    parsed = parse_execution_plan(plan_data)
+    assert parsed.ok
+    assert parsed.value.requirements[0].strength == "advisory"
+    assert parse_execution_plan(parsed.value.to_dict()).ok
+    missing_v2_strength = _plan_data(schema_version=2)
+    missing_v2_strength["plan_hash"] = ""
+    assert any(
+        error.field_path == "requirements[0].strength"
+        for error in parse_execution_plan(missing_v2_strength).errors
+    )
 
 
 def test_duplicate_param_id_rejected_with_field_path():

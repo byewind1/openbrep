@@ -1,6 +1,6 @@
 """U03-A 可执行领域对象合同：Observation / ObjectSpec / ExecutionPlan。
 
-总则 §2/§3 的三个合同（本卡是唯一责任卡，schema 版本 1）：
+总则 §2/§3 的三个合同（schema v2 兼容读取 v1）：
 
 - **Observation** 记录观察/推断/未知：来自视觉提取、用户 typed 需求或手工
   输入；不承载写授权。
@@ -35,7 +35,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = frozenset({1, SCHEMA_VERSION})
+REQUIREMENT_STRENGTHS = frozenset({"required", "advisory", "legacy"})
 
 # ── 框架注册执行器（U03-A 平面入口；U03-B 起唯一权威在 contracts.bindings）──
 
@@ -177,6 +179,7 @@ class Requirement:
     check_id: Optional[str] = None   # 必须是框架注册执行器；None=advisory（unknown）
     params: dict = field(default_factory=dict)       # 执行器的 typed 参数
     status: str = "defined"          # defined | unknown（语法不支持时显式 unknown）
+    strength: str = "legacy"         # required | advisory | legacy
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -186,6 +189,7 @@ class Requirement:
             "check_id": self.check_id,
             "params": dict(self.params),
             "status": self.status,
+            "strength": self.strength,
         }
 
 
@@ -353,8 +357,8 @@ def _validate_typed_spec_value(
 
 def parse_observation(data: dict[str, Any]) -> ParseResult:
     errors: list[ContractError] = []
-    if int(data.get("schema_version") or 0) != SCHEMA_VERSION:
-        errors.append(_err("SCHEMA_VERSION", "schema_version", f"仅支持 {SCHEMA_VERSION}"))
+    if int(data.get("schema_version") or 0) not in SUPPORTED_SCHEMA_VERSIONS:
+        errors.append(_err("SCHEMA_VERSION", "schema_version", "仅支持 1/2"))
     observation_id = str(data.get("observation_id") or "").strip()
     if not observation_id:
         errors.append(_err("MISSING_FIELD", "observation_id", "缺 observation_id"))
@@ -404,8 +408,9 @@ def parse_observation(data: dict[str, Any]) -> ParseResult:
 def parse_object_spec(data: dict[str, Any]) -> ParseResult:
     """ObjectSpec 解析 + 全量校验（重复 ID / 未知 executor / 量纲 / enum）。"""
     errors: list[ContractError] = []
-    if int(data.get("schema_version") or 0) != SCHEMA_VERSION:
-        errors.append(_err("SCHEMA_VERSION", "schema_version", f"仅支持 {SCHEMA_VERSION}"))
+    if int(data.get("schema_version") or 0) not in SUPPORTED_SCHEMA_VERSIONS:
+        errors.append(_err("SCHEMA_VERSION", "schema_version", "仅支持 1/2"))
+    input_schema_version = int(data.get("schema_version") or 0)
     spec_id = str(data.get("spec_id") or "").strip()
     if not spec_id:
         errors.append(_err("MISSING_FIELD", "spec_id", "缺 spec_id"))
@@ -493,6 +498,17 @@ def parse_object_spec(data: dict[str, Any]) -> ParseResult:
         ))
         if requirement_status not in {"defined", "unknown"}:
             errors.append(_err("INVALID_VALUE", f"{path}.status", "status 必须是 defined/unknown"))
+        strength = str(raw.get("strength") or "legacy")
+        if input_schema_version >= 2 and "strength" not in raw:
+            errors.append(_err(
+                "MISSING_FIELD", f"{path}.strength",
+                "schema v2 要求显式声明 required/advisory/legacy",
+            ))
+        if strength not in REQUIREMENT_STRENGTHS:
+            errors.append(_err(
+                "INVALID_VALUE", f"{path}.strength",
+                "strength 必须是 required/advisory/legacy",
+            ))
         check_id = raw.get("check_id")
         if check_id is not None:
             check_id = str(check_id).strip()
@@ -504,7 +520,7 @@ def parse_object_spec(data: dict[str, Any]) -> ParseResult:
         requirements.append(Requirement(
             requirement_id=requirement_id, text=text, kind=kind,
             check_id=check_id or None, params=dict(raw.get("params") or {}),
-            status=requirement_status,
+            status=requirement_status, strength=strength,
         ))
 
     relations: list[Relation] = []
@@ -559,8 +575,9 @@ def parse_object_spec(data: dict[str, Any]) -> ParseResult:
 
 def parse_execution_plan(data: dict[str, Any]) -> ParseResult:
     errors: list[ContractError] = []
-    if int(data.get("schema_version") or 0) != SCHEMA_VERSION:
-        errors.append(_err("SCHEMA_VERSION", "schema_version", f"仅支持 {SCHEMA_VERSION}"))
+    if int(data.get("schema_version") or 0) not in SUPPORTED_SCHEMA_VERSIONS:
+        errors.append(_err("SCHEMA_VERSION", "schema_version", "仅支持 1/2"))
+    input_schema_version = int(data.get("schema_version") or 0)
     plan_id = str(data.get("plan_id") or "").strip()
     if not plan_id:
         errors.append(_err("MISSING_FIELD", "plan_id", "缺 plan_id"))
@@ -609,6 +626,17 @@ def parse_execution_plan(data: dict[str, Any]) -> ParseResult:
         requirement_status = str(raw.get("status") or (
             "unknown" if requirement_kind == "check" and not check_id else "defined"
         )) if isinstance(raw, dict) else "unknown"
+        strength = str(raw.get("strength") or "legacy") if isinstance(raw, dict) else "legacy"
+        if input_schema_version >= 2 and isinstance(raw, dict) and "strength" not in raw:
+            errors.append(_err(
+                "MISSING_FIELD", f"{path}.strength",
+                "schema v2 要求显式声明 required/advisory/legacy",
+            ))
+        if strength not in REQUIREMENT_STRENGTHS:
+            errors.append(_err(
+                "INVALID_VALUE", f"{path}.strength",
+                "strength 必须是 required/advisory/legacy",
+            ))
         requirements.append(Requirement(
             requirement_id=requirement_id,
             text=str(raw.get("text") or "") if isinstance(raw, dict) else "",
@@ -616,6 +644,7 @@ def parse_execution_plan(data: dict[str, Any]) -> ParseResult:
             check_id=str(check_id).strip() if check_id else None,
             params=dict(raw.get("params") or {}) if isinstance(raw, dict) else {},
             status=requirement_status,
+            strength=strength,
         ))
 
     requirement_ids = {item.requirement_id for item in requirements}

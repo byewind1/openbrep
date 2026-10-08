@@ -153,7 +153,7 @@ def capabilities() -> dict[str, Any]:
 
     return {
         "ok": True,
-        "contract_version": "1.1",
+        "contract_version": "1.2",
         "openbrep_version": __version__,
         "source_format": "HSF project directory",
         "compile_modes": {

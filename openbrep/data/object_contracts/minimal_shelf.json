@@ -1,6 +1,6 @@
 {
   "observation": {
-    "schema_version": 1,
+    "schema_version": 2,
     "observation_id": "obs-minimal-shelf-synthetic",
     "source": "synthetic",
     "source_refs": [
@@ -33,7 +33,7 @@
     ]
   },
   "object_spec": {
-    "schema_version": 1,
+    "schema_version": 2,
     "spec_id": "spec-minimal-shelf",
     "object_type": "minimal_shelf",
     "source_observation_id": "obs-minimal-shelf-synthetic",
@@ -85,18 +85,21 @@
         "requirement_id": "req-compile",
         "text": "源码编译通过",
         "kind": "check",
-        "check_id": "compile"
+        "check_id": "compile",
+        "strength": "legacy"
       },
       {
         "requirement_id": "req-2d-visible",
         "text": "2D 脚本有可见输出",
         "kind": "check",
-        "check_id": "plan_check"
+        "check_id": "plan_check",
+        "strength": "legacy"
       },
       {
         "requirement_id": "req-shelf-count-min",
         "text": "层板数量不小于 1",
-        "kind": "constraint"
+        "kind": "constraint",
+        "strength": "legacy"
       }
     ],
     "relations": [
@@ -119,7 +122,7 @@
     ]
   },
   "execution_plan": {
-    "schema_version": 1,
+    "schema_version": 2,
     "plan_id": "plan-minimal-shelf-v1",
     "spec_ref": "spec-minimal-shelf",
     "observation_ref": "obs-minimal-shelf-synthetic",
@@ -154,20 +157,29 @@
         "requirement_id": "req-compile",
         "text": "源码编译通过",
         "kind": "check",
-        "check_id": "compile"
+        "check_id": "compile",
+        "params": {},
+        "status": "defined",
+        "strength": "legacy"
       },
       {
         "requirement_id": "req-2d-visible",
         "text": "2D 脚本有可见输出",
         "kind": "check",
-        "check_id": "plan_check"
+        "check_id": "plan_check",
+        "params": {},
+        "status": "defined",
+        "strength": "legacy"
       },
       {
         "requirement_id": "req-shelf-count-min",
         "text": "层板数量不小于 1",
-        "kind": "constraint"
+        "kind": "constraint",
+        "params": {},
+        "status": "defined",
+        "strength": "legacy"
       }
     ],
-    "plan_hash": "c1c9c1a122e9db5b16c9c5dd3ebc79bb1b5c191a28985291a7866827be3d9481"
+    "plan_hash": "40b50bba8b6fc0e39f9847a850584c66ee1dc088f911ce445cf9e7204c122664"
   }
 }
