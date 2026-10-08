@@ -34,9 +34,9 @@ from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 def _make_project(tmp_path: Path, name: str = "Shelf") -> HSFProject:
     proj = HSFProject.create_new(name, work_dir=str(tmp_path))
     proj.parameters = [
-        GDLParameter(name="A", type_tag="Length", description="宽度", value="0.9"),
-        GDLParameter(name="B", type_tag="Length", description="深度", value="0.4"),
-        GDLParameter(name="ZZYZX", type_tag="Length", description="高度", value="1.8"),
+        GDLParameter(name="A", type_tag="Length", description="宽度", value="0.9", is_fixed=True),
+        GDLParameter(name="B", type_tag="Length", description="深度", value="0.4", is_fixed=True),
+        GDLParameter(name="ZZYZX", type_tag="Length", description="高度", value="1.8", is_fixed=True),
         GDLParameter(name="shelf_count", type_tag="Integer", description="层板数量", value="4"),
         GDLParameter(name="shelf_thk", type_tag="Length", description="层板厚度", value="0.018"),
     ]
@@ -413,15 +413,9 @@ class TestCodexBridgePath:
             _upd,
             _write_script,
         )
-        from test_codex_modify_bridge import (
-            _make_project as _bridge_project,
-        )
-        from test_codex_modify_bridge import (
-            _pipeline as _bridge_pipeline,
-        )
-        from test_codex_modify_bridge import (
-            _request as _bridge_request,
-        )
+        from test_codex_modify_bridge import _make_project as _bridge_project
+        from test_codex_modify_bridge import _pipeline as _bridge_pipeline
+        from test_codex_modify_bridge import _request as _bridge_request
 
         harness = _FakeServerHarness(tmp_path)
         _write_script(tmp_path, [[
@@ -441,6 +435,8 @@ class TestCodexBridgePath:
             execution = result.metadata["execution"]
             assert execution["llm_calls"] == 1   # turn 次数 = 模型调用次数
             assert execution["tool_calls"] == 2
+            assert execution["run_control"]["tool_calls"] == 2
+            assert execution["run_control"]["terminal_reason"] == "completed"
             assert execution["timeout"] is False
 
             records = _read_records(project)

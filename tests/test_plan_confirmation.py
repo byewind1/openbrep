@@ -16,9 +16,6 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from tests.fake_workbench_session import attach_refresh_same_project
-from unittest.mock import MagicMock
-
 from openbrep.compiler import MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
@@ -26,6 +23,7 @@ from openbrep.llm import MockLLM
 from openbrep.runtime.modify_agent_loop import _parse_confirm_plan
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
+from tests.fake_workbench_session import attach_refresh_same_project
 
 
 def _make_project(tmp_path: Path) -> HSFProject:
@@ -47,6 +45,8 @@ def _plan_json(**overrides) -> str:
     plan = {
         "intent_summary": "给书架加一层层板",
         "user_visible_changes": ["3D 几何会多出一层层板"],
+        "change_delta": ["在现有两层之间新增一块层板"],
+        "preserved_constraints": ["保留书架宽度、深度和现有层板间距逻辑"],
         "affected_files": ["scripts/3d.gdl"],
         "risk": "几何形状变化",
     }
@@ -146,6 +146,8 @@ class TestPipelinePlanConfirmation(unittest.TestCase):
         self.assertEqual(mock_llm.call_count, 3)
         convo = str(mock_llm.call_history)
         self.assertIn("已确认的修改计划", convo)
+        self.assertIn("在现有两层之间新增一块层板", convo)
+        self.assertIn("必须保持：保留书架宽度、深度和现有层板间距逻辑", convo)
         self.assertIn("给书架加一层层板", convo)
 
     def test_confirm_plan_false_unchanged(self):

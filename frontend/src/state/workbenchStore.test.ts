@@ -19,9 +19,26 @@ test('initial load discovers Archicad before the preview source is used', async 
   expect(store.getState().tapirStatus).toEqual(expected.tapir)
 })
 
+test('initial snapshot restores a server-held pending plan for display only', async () => {
+  const plan = {
+    turn_id: 'restored-turn', plan_id: 'restored-plan', plan_version: 2,
+    intent_summary: '加背板', user_visible_changes: [], affected_files: [], risk: '',
+  }
+  const store = createWorkbenchStore(makeApi({ fetchSnapshot: async () => ({
+    project: null, parameters: [], preview: { meshes: [], wires: [], warnings: [] }, warnings: [],
+    pending_plan: plan,
+  }) }))
+
+  await store.getState().load()
+
+  expect(store.getState().pendingPlan).toEqual(plan)
+})
+
 function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
   return {
     conversationTurn: async () => ({ ok: false, error: 'Unified entry is not mocked in this legacy test.' }),
+    requestVisualReview: async () => ({ ok: false, error: '视觉对照未在该测试中模拟。' }),
+    fetchSavedVisualReviews: async () => ({ ok: true, reports: [] }),
     fetchTurnEvents: async () => ({ ok: false, events: [] }),
     listTurnEvents: async () => ({ ok: false, turns: [] }),
     fetchSnapshot: async () => ({
@@ -4923,6 +4940,21 @@ test('unified plan and cancellation never flush drafts', async () => {
   await store.getState().confirmPendingPlan(false)
   expect(calls[1]).toMatchObject({ phase: 'execute', turn_id: 'plan-turn', approve: false })
   expect(flush).not.toHaveBeenCalled()
+})
+
+test('unified approval preference is sent separately from requested_mode', async () => {
+  const calls: Record<string, unknown>[] = []
+  const store = unifiedStore(async (body) => {
+    calls.push(body)
+    return { ok: true, result_kind: 'awaiting_confirmation', turn_id: 'approval-turn', pending_plan: {
+      intent_summary: '加背板', user_visible_changes: [], affected_files: [], risk: '', plan_id: 'p2', plan_version: 1,
+    } }
+  })
+
+  await store.getState().sendChat('加背板', [], 'auto', undefined, true)
+
+  expect(calls[0]).toMatchObject({ phase: 'prepare', requested_mode: 'auto', confirm_before_execute: true })
+  expect(store.getState().pendingPlan?.turn_id).toBe('approval-turn')
 })
 
 test('unified failed draft save prevents execution', async () => {

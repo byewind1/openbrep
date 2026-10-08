@@ -159,6 +159,32 @@ class TestSemanticRepairAccepted:
         assert check is not None and check["status"] == "pass"
         assert "语义修复" in result.plain_text
 
+    def test_stack_imbalance_alone_triggers_bounded_repair(self, tmp_path: Path):
+        compiler_mock = MagicMock()
+        compiler_mock.hsf2libpart.return_value = _ok_compile()
+        pipeline, mock_llm = _make_pipeline(GDL_REPAIR_REPLY, compiler_mock)
+        broken = (
+            "[FILE: scripts/3d.gdl]\nADDX 0.1\nBLOCK A, B, ZZYZX\nEND\n"
+            "[FILE: scripts/2d.gdl]\nPROJECT2 3, -1, 2\nEND\n"
+        )
+        mock_llm.generate.side_effect = lambda messages, **kwargs: _mock_llm_response(
+            GDL_REPAIR_REPLY if "第 1 轮" in str(messages) else broken
+        )
+
+        with patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_sem(),
+        ):
+            result = _run_create(pipeline, tmp_path)
+
+        assert "[stack_imbalance]" in _llm_texts(mock_llm)
+        assert "语义修复生效" in result.plain_text
+        from openbrep.static_checker import StaticChecker
+        assert not [
+            issue for issue in StaticChecker().check(result.project).errors
+            if issue.check_type == "stack_imbalance"
+        ]
+
     def test_repair_works_without_compiler(self, tmp_path: Path):
         """未配置编译器时语义修复仍可用（判决者 previewer 不依赖编译器）。"""
         compiler_mock = MagicMock()

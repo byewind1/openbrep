@@ -2596,3 +2596,23 @@ class TestP14bRealWorldLibraryParts(unittest.TestCase):
         )
         res = preview_3d_script(script)
         self.assertEqual(len(res.meshes), 1)  # 删除后第二次放置为空
+
+
+class TestGDLPreviewerModulo(unittest.TestCase):
+    def test_mod_function_controls_geometry_inside_for_loop(self):
+        script = (
+            "FOR i = 0 TO panel_count - 1\n"
+            "    IF MOD(i, 2) = 0 THEN\n"
+            "        BLOCK 1, 1, 1\n"
+            "    ELSE\n"
+            "        BLOCK 2, 1, 1\n"
+            "    ENDIF\n"
+            "NEXT i\n"
+        )
+
+        four = preview_3d_script(script, parameters={"panel_count": 4})
+        five = preview_3d_script(script, parameters={"panel_count": 5})
+
+        self.assertFalse(any("IF 条件解析失败" in warning for warning in four.warnings))
+        self.assertEqual(len(four.meshes), 4)
+        self.assertEqual(len(five.meshes), 5)

@@ -41,6 +41,40 @@ class TestProjectReports(unittest.TestCase):
         self.assertIn("archetype.bookshelf", markdown)
         self.assertIn("Validation Checks", markdown)
 
+    def test_report_keeps_typed_plan_status_hash_and_requirement_trace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("cabinet", work_dir=tmpdir)
+            path = write_object_plan_report(
+                project,
+                {"object_type": "柜体"},
+                planning_artifact={
+                    "status": "degraded",
+                    "candidate_spec": {"spec_id": "spec-123"},
+                    "execution_plan": {
+                        "plan_id": "plan-456",
+                        "plan_hash": "abc123",
+                        "requirement_mappings": [{
+                            "requirement_id": "req-door",
+                            "part_refs": ["doors"],
+                            "parameter_refs": ["p.door_count"],
+                            "script_refs": ["scripts/3d.gdl"],
+                            "scenario_refs": ["front-default"],
+                        }],
+                    },
+                    "issues": [{"field_path": "req-door", "message": "无注册检查器"}],
+                },
+            )
+            reports_dir = Path(project.root) / ".openbrep" / "reports"
+            latest = json.loads((reports_dir / "latest_object_plan.json").read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            markdown = (reports_dir / latest["object_plan_markdown"]).read_text(encoding="utf-8")
+
+        assert payload["planning_artifact"]["status"] == "degraded"
+        assert payload["planning_artifact"]["execution_plan"]["plan_hash"] == "abc123"
+        assert "Status: degraded" in markdown
+        assert "parts=['doors']" in markdown
+        assert "scenarios=['front-default']" in markdown
+
 
 if __name__ == "__main__":
     unittest.main()

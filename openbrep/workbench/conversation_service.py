@@ -40,7 +40,11 @@ class PreparedTurn:
     state: str = 'prepared'
     result: dict | None = None
     plan: dict | None = None
+    prepared_typed_plan: dict | None = None
+    prepared_typed_plan_token: str | None = None
     working_intent_version: int = 0
+    plan_revision: int = 0
+    reference_asset_ids: list[str] | None = None
 
 
 class WorkbenchConversationService:
@@ -61,6 +65,19 @@ class WorkbenchConversationService:
         self.inspection_cache = InspectionCache()
         self.advisor = self._answer
         self.semantic_decision = self._semantic_decision
+
+    def pending_plan_snapshot(self) -> dict | None:
+        """Read-only pending plan projection for UI reload; never executes a turn."""
+        turn = self.turns.get(self.pending_turn_id or '')
+        if turn is None or turn.state != 'pending' or not turn.plan:
+            return None
+        if self.clock() - turn.created_at > TURN_TTL_SECONDS:
+            return None
+        if turn.working_intent_version != self.working_intent['version'] or not turn.snapshot.matches(
+            self.session.project, self.session.project_epoch, self._dependency_version()
+        ):
+            return None
+        return {**copy.deepcopy(turn.plan), 'turn_id': turn.turn_id}
 
     def _llm(self):
         from openbrep.config import is_codex_qualified_model
@@ -143,7 +160,7 @@ class WorkbenchConversationService:
             if intent == 'CHAT' or (project is None and intent == 'MODIFY'):
                 intent = 'MODIFY' if project else 'CREATE'
             turn.policy = replace(turn.policy, task_intent=intent)
-            turn.plan = {**answer.plan, 'plan_id': uuid.uuid4().hex, 'plan_version': 1, 'task_intent': intent,
+            turn.plan = {**answer.plan, 'plan_id': uuid.uuid4().hex, 'plan_version': turn.plan_revision + 1, 'task_intent': intent,
                          'constraints': list(dict.fromkeys([*turn.policy.constraints, *answer.plan['constraints']])),
                          'project_epoch': turn.snapshot.project_epoch, 'source_version': turn.snapshot.source_version,
                          'working_intent_version': turn.working_intent_version}
@@ -157,6 +174,7 @@ class WorkbenchConversationService:
     def clear(self):
         for turn in self.turns.values():
             if turn.state in {'prepared', 'pending'}:
+                self._discard_prepared_typed_plan(turn)
                 turn.state = 'cancelled'
                 turn.result = self._response(turn, 'cancelled', cancelled=True)
                 self._record_task_terminal(turn, kind='cancelled', state='cancelled',
@@ -176,6 +194,7 @@ class WorkbenchConversationService:
                 self.working_intent = reduce_intent(self.working_intent, {'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
                 for turn in self.turns.values():
                     if turn.state in {'pending', 'prepared'}:
+                        self._discard_prepared_typed_plan(turn)
                         turn.state = 'stale'
                         turn.result = self._failure(turn, 'PLAN_STALE' if turn.plan else 'SOURCE_CHANGED')
                 self.pending_turn_id = None
@@ -283,9 +302,28 @@ class WorkbenchConversationService:
         phase = body.get('phase', 'prepare')
         if phase == 'prepare':
             return self.prepare(body, should_cancel=should_cancel, on_event=on_event)
+        if phase == 'revise':
+            return self.revise_plan(body, should_cancel=should_cancel, on_event=on_event)
+        if phase == 'status':
+            return self.turn_status(body)
         if phase == 'execute':
             return self.execute(body, should_cancel=should_cancel, on_event=on_event)
         return self._failure(None, 'INVALID_PHASE')
+
+    def turn_status(self, body: dict):
+        """Read-only status lookup used to restore an approval card after UI reload."""
+        turn = self.turns.get(str(body.get('turn_id') or ''))
+        if turn is None:
+            return self._failure(None, 'TURN_NOT_FOUND')
+        if turn.state == 'pending' and turn.plan:
+            valid = (
+                self.clock() - turn.created_at <= TURN_TTL_SECONDS
+                and turn.working_intent_version == self.working_intent['version']
+                and turn.snapshot.matches(self.session.project, self.session.project_epoch, self._dependency_version())
+            )
+            if valid:
+                return self._response(turn, 'awaiting_confirmation', state='pending', pending_plan=copy.deepcopy(turn.plan))
+        return self._response(turn, 'status', state=turn.state)
 
     def prepare(self, body: dict, *, should_cancel=None, on_event=None):
         client_id = body.get('client_turn_id')
@@ -318,10 +356,20 @@ class WorkbenchConversationService:
                                  semantic_decision=self.semantic_decision)
         except (ValueError, TypeError) as exc:
             return self._failure(None, 'INVALID_TURN', str(exc))
+        confirm_before_execute = body.get(
+            'confirm_before_execute',
+            bool(self.session.config.llm.confirm_before_execute),
+        )
+        if type(confirm_before_execute) is not bool:
+            return self._failure(None, 'INVALID_TURN', 'confirm_before_execute 必须是布尔值。')
+        if confirm_before_execute and policy.mode == 'execute':
+            # Approval is a separate execution policy: keep routing and intent,
+            # but prepare a plan and stop before the mutating execution path.
+            policy = replace(policy, mode='plan')
         if self.last_context_fingerprint is not None and self.last_context_fingerprint != snapshot.context_fingerprint:
             self.working_intent = reduce_intent(self.working_intent, {'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
         self.last_context_fingerprint = snapshot.context_fingerprint
-        allowed = {'client_turn_id', 'message', 'history', 'images', 'image_b64', 'image_mime', 'requested_mode', 'project_epoch', 'draft_scripts', 'proposal_id', 'continue_from', 'proposal_action', 'assistant_settings', 'output_dir', 'project_name', 'effect_contract'}
+        allowed = {'client_turn_id', 'message', 'history', 'images', 'image_b64', 'image_mime', 'requested_mode', 'confirm_before_execute', 'project_epoch', 'draft_scripts', 'proposal_id', 'continue_from', 'proposal_action', 'assistant_settings', 'output_dir', 'project_name', 'effect_contract'}
         turn = PreparedTurn(uuid.uuid4().hex, client_id, copy.deepcopy({k: v for k, v in body.items() if k in allowed}), policy, snapshot, self.clock())
         self.working_intent = reduce_intent(self.working_intent, {'kind': 'turn', 'message_id': turn.turn_id, 'message': message,
             'constraints': [c for c in policy.constraints if c in message], 'execute': policy.mode == 'execute' and not policy.error, 'task_intent': policy.task_intent})
@@ -455,7 +503,142 @@ class WorkbenchConversationService:
         if callable(on_event):
             on_event('status', {'stage': 'advice' if turn.policy.mode != 'plan' else 'plan',
                                 'message': '正在生成顾问回答…' if turn.policy.mode != 'plan' else '正在生成修改计划…'})
+        if turn.policy.mode == 'plan' and (
+            turn.policy.task_intent in {'CREATE', 'IMAGE'}
+            or (self.session.project is None and turn.policy.task_intent == 'MODIFY')
+        ):
+            if turn.policy.task_intent == 'MODIFY':
+                turn.policy = replace(turn.policy, task_intent='CREATE')
+            return self._prepare_typed_create_plan(turn, should_cancel=should_cancel)
         return self.advisor(turn, should_cancel=should_cancel)
+
+    def revise_plan(self, body: dict, *, should_cancel=None, on_event=None):
+        """Re-plan a user-edited intent and bump its approval version."""
+        turn = self.turns.get(str(body.get('turn_id') or ''))
+        if turn is None or turn.state != 'pending' or not turn.plan:
+            return self._failure(turn, 'PLAN_NOT_PENDING')
+        if body.get('plan_id') != turn.plan.get('plan_id') or type(body.get('plan_version')) is not int or body.get('plan_version') != turn.plan.get('plan_version'):
+            return {**self._failure(turn, 'PLAN_VERSION_MISMATCH'), 'pending_plan': copy.deepcopy(turn.plan)}
+        instruction = body.get('revision_instruction')
+        if not isinstance(instruction, str) or not instruction.strip() or len(instruction) > 2000:
+            return self._failure(turn, 'INVALID_PLAN_REVISION', '请填写不超过 2000 字的计划修改要求。')
+        if turn.working_intent_version != self.working_intent['version'] or not turn.snapshot.matches(
+            self.session.project, self.session.project_epoch, self._dependency_version()
+        ):
+            turn.state = 'stale'
+            turn.result = self._failure(turn, 'PLAN_STALE')
+            self.pending_turn_id = None
+            return copy.deepcopy(turn.result)
+        if should_cancel and should_cancel():
+            return self._response(turn, 'cancelled', cancelled=True)
+
+        previous_version = int(turn.plan.get('plan_version') or 1)
+        self._discard_prepared_typed_plan(turn)
+        turn.plan_revision = previous_version
+        turn.plan = None
+        turn.result = None
+        turn.body['message'] = (
+            str(turn.body.get('message') or '').rstrip()
+            + '\n用户要求修改本次计划：'
+            + instruction.strip()
+        )
+        turn.policy = replace(turn.policy, mode='plan')
+        turn.state = 'prepared'
+        self.pending_turn_id = None
+        if on_event:
+            setattr(turn, '_prepare_on_event', on_event)
+        if turn.policy.task_intent in {'CREATE', 'IMAGE'} or (
+            self.session.project is None and turn.policy.task_intent == 'MODIFY'
+        ):
+            if turn.policy.task_intent == 'MODIFY':
+                turn.policy = replace(turn.policy, task_intent='CREATE')
+            return self._prepare_typed_create_plan(turn, should_cancel=should_cancel)
+        return self.advisor(turn, should_cancel=should_cancel)
+
+    def _discard_prepared_typed_plan(self, turn: PreparedTurn) -> None:
+        token = turn.prepared_typed_plan_token
+        if not token:
+            return
+        facade = getattr(self.session, 'project_service', None)
+        service = getattr(facade, 'session_service', facade)
+        discard = getattr(service, 'discard_prepared_typed_plan', None)
+        if callable(discard):
+            discard(token)
+        turn.prepared_typed_plan_token = None
+        turn.prepared_typed_plan = None
+
+    def _prepare_typed_create_plan(self, turn: PreparedTurn, *, should_cancel=None):
+        """Prepare the same typed CREATE plan later consumed by execution."""
+        facade = getattr(self.session, 'project_service', None)
+        service = getattr(facade, 'session_service', facade)
+        prepare = getattr(service, 'prepare_typed_create_plan', None)
+        if not callable(prepare):
+            turn.state = 'failed'
+            return self._failure(turn, 'TYPED_PLANNER_UNAVAILABLE')
+        body = {
+            **turn.body,
+            '_turn_should_cancel': should_cancel,
+            '_turn_on_event': getattr(turn, '_prepare_on_event', None),
+        }
+        result, response = prepare(body)
+        if not response.get('ok') or result is None:
+            turn.state = 'failed'
+            return self._failure(turn, response.get('code') or 'PLAN_GENERATION_FAILED', response.get('error'))
+        metadata = result.metadata or {}
+        artifact = metadata.get('planning_artifact')
+        prepared = metadata.get('prepared_typed_plan')
+        object_plan = result.object_plan or {}
+        if not isinstance(artifact, dict) or not isinstance(prepared, dict) or not isinstance(object_plan, dict):
+            turn.state = 'failed'
+            return self._failure(turn, 'INVALID_TYPED_PLAN')
+        if turn.policy.task_intent == 'IMAGE':
+            turn.policy = replace(turn.policy, task_intent='CREATE')
+        old = self.turns.get(self.pending_turn_id or '')
+        if old and old.state == 'pending':
+            self._discard_prepared_typed_plan(old)
+            old.state = 'stale'
+            old.result = self._failure(old, 'PLAN_SUPERSEDED')
+            old.result['pending_plan'] = old.plan
+        execution = artifact.get('execution_plan') or {}
+        steps = (execution.get('steps') or []) if isinstance(execution, dict) else []
+        requirements = (execution.get('requirements') or []) if isinstance(execution, dict) else []
+        plan = {
+            'intent_summary': f"生成{object_plan.get('object_type') or 'GDL 构件'}",
+            'user_visible_changes': list(object_plan.get('geometry') or [])[:12],
+            'change_delta': list(object_plan.get('geometry_parts') or [])[:12],
+            'preserved_constraints': list(turn.policy.constraints),
+            'affected_files': list(dict.fromkeys(
+                str(step.get('target')) for step in steps
+                if isinstance(step, dict) and step.get('kind') == 'modify_script' and step.get('target')
+            )),
+            'risk': '；'.join(object_plan.get('risks') or []) or ('计划需要补充信息' if artifact.get('status') == 'needs_input' else '未识别到额外风险'),
+            'constraints': list(turn.policy.constraints),
+            'assumptions': list(object_plan.get('assumptions') or []),
+            'acceptance_criteria': [str(item.get('text')) for item in requirements if isinstance(item, dict) and item.get('text')],
+            'typed_plan': copy.deepcopy(artifact),
+            'object_plan': copy.deepcopy(object_plan),
+            'plan_id': uuid.uuid4().hex,
+            'plan_version': turn.plan_revision + 1,
+            'task_intent': turn.policy.task_intent,
+            'project_epoch': turn.snapshot.project_epoch,
+            'source_version': turn.snapshot.source_version,
+            'working_intent_version': self.working_intent['version'],
+        }
+        turn.plan = plan
+        turn.prepared_typed_plan = copy.deepcopy(prepared)
+        register = getattr(service, 'register_prepared_typed_plan', None)
+        if callable(register):
+            turn.prepared_typed_plan_token = register(prepared)
+        else:
+            turn.state = 'failed'
+            return self._failure(turn, 'TYPED_PLAN_UNAVAILABLE')
+        turn.working_intent_version = self.working_intent['version']
+        turn.state = 'pending'
+        self.pending_turn_id = turn.turn_id
+        return self._response(turn, 'awaiting_confirmation', awaiting_confirmation=True,
+                              pending_plan=plan, planning_artifact=copy.deepcopy(artifact),
+                              events=response.get('events') or [],
+                              assistant={'kind': 'advisor', 'reply': result.plain_text})
 
     def execute(self, body: dict, *, should_cancel=None, on_event=None):
         turn = self.turns.get(str(body.get('turn_id') or ''))
@@ -480,6 +663,7 @@ class WorkbenchConversationService:
         if turn.state == 'executing':
             return self._response(turn, 'executing', state='executing')
         if body.get('approve') is False:
+            self._discard_prepared_typed_plan(turn)
             turn.state = 'cancelled'
             turn.result = self._response(turn, 'cancelled', cancelled=True)
             self._record_task_terminal(turn, kind='cancelled', state='cancelled', message='用户取消了本次任务。')
@@ -487,6 +671,7 @@ class WorkbenchConversationService:
                 self.pending_turn_id = None
             return _with_recording(copy.deepcopy(turn.result))
         if self.clock() - turn.created_at > TURN_TTL_SECONDS:
+            self._discard_prepared_typed_plan(turn)
             turn.state = 'cancelled'
             turn.result = self._failure(turn, 'TURN_EXPIRED')
             self._record_task_terminal(turn, kind='cancelled', state='cancelled', error_code='TURN_EXPIRED')
@@ -495,12 +680,21 @@ class WorkbenchConversationService:
             return self._failure(turn, 'READ_ONLY_TURN')
         if turn.policy.mode == 'plan':
             if turn.working_intent_version != self.working_intent['version']:
-                return {**self._failure(turn, 'PLAN_STALE'), 'pending_plan': copy.deepcopy(turn.plan)}
+                self._discard_prepared_typed_plan(turn)
+                turn.state = 'stale'
+                turn.result = {**self._failure(turn, 'PLAN_STALE'), 'pending_plan': copy.deepcopy(turn.plan)}
+                if self.pending_turn_id == turn.turn_id:
+                    self.pending_turn_id = None
+                return copy.deepcopy(turn.result)
             if body.get('approve') is not True:
                 return self._failure(turn, 'APPROVAL_REQUIRED')
             if not turn.plan or body.get('plan_id') != turn.plan['plan_id'] or (type(body.get('plan_version')) is not int or body.get('plan_version') != turn.plan['plan_version']):
-                return self._failure(turn, 'PLAN_VERSION_MISMATCH')
+                return {**self._failure(turn, 'PLAN_VERSION_MISMATCH'), 'pending_plan': copy.deepcopy(turn.plan)}
+            typed = turn.plan.get('typed_plan')
+            if isinstance(typed, dict) and typed.get('status') == 'needs_input':
+                return self._failure(turn, 'PLAN_NEEDS_INPUT', '计划依据需要澄清；当前计划不能执行。请取消后补充要求重新规划。')
         if not turn.snapshot.matches(self.session.project, self.session.project_epoch, self._dependency_version()):
+            self._discard_prepared_typed_plan(turn)
             turn.state = 'stale'
             turn.result = self._failure(turn, 'PLAN_STALE' if turn.policy.mode == 'plan' else 'SOURCE_CHANGED')
             self._record_task_stage(turn, kind='source_changed', stage=None,
@@ -560,6 +754,7 @@ class WorkbenchConversationService:
         if reference_images and not request.get('images') and not request.get('image_b64'):
             request['images'] = reference_images
             injected_reference_ids = [asset.id for asset in self.session.reference_service.selected_assets()]
+        turn.reference_asset_ids = list(injected_reference_ids)
         # R2/S1/S2（评审）：效果契约的 change_kind 必须来自本轮任务意图，
         # 不来自"有没有图片/参考资产"（有图 ≠ 要求形状变化——材质/新增选项
         # 任务会被 geometry 门误拦）。确定性关键词推导（子句级否定过滤 +
@@ -595,10 +790,12 @@ class WorkbenchConversationService:
             turn.state = 'failed'
             turn.result = self._failure(turn, 'CONTEXT_TOO_LARGE')
             return copy.deepcopy(turn.result)
-        if turn.policy.task_intent == 'CREATE' and (turn.body.get('images') or turn.body.get('image_b64')):
+        if turn.policy.task_intent == 'CREATE' and not turn.prepared_typed_plan and (turn.body.get('images') or turn.body.get('image_b64')):
             request['confirm_extraction'] = True
         if turn.plan:
             request['confirmed_plan'] = copy.deepcopy(turn.plan)
+        if turn.prepared_typed_plan_token:
+            request['_prepared_typed_plan_token'] = turn.prepared_typed_plan_token
         try:
             if turn.policy.task_intent == 'CREATE':
                 response = self.session.create_project_from_prompt(request)

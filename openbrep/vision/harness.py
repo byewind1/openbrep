@@ -28,6 +28,7 @@ run(images, intent, user_input, llm, on_event=None, critic_pass=True)
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -61,6 +62,65 @@ _CRITIC_SYSTEM_PROMPT = """\
 - 只核对列出的必核字段，不要修改其他字段
 - 输出严格按 JSON 格式（不加任何 markdown 包裹）
 """
+
+
+def extraction_cache_context(
+    image: Any,
+    *,
+    user_input: str,
+    model: str,
+    intent: str = "CREATE",
+    schema_name: Optional[str] = None,
+    project_hints: str = "",
+    position: int = 1,
+    total: int = 1,
+) -> dict[str, str]:
+    """Return the cache identity for the exact S1/S2 extraction context.
+
+    The image hash remains the storage lookup key; this context is checked before
+    reuse so role, selected schema, provider model, and prompt text changes miss.
+    Critic output is a later optional verification layer and is not part of S2.
+    """
+    schemas = load_all_schemas()
+    from openbrep.vision.domain_skill_schema import select_domain_vision_schema
+
+    domain_selection = select_domain_vision_schema(
+        user_input, intent=intent, project_hints=project_hints,
+    )
+    if schema_name and domain_selection.schema and schema_name == domain_selection.schema.name:
+        schema = domain_selection.schema
+    elif schema_name and schema_name in schemas:
+        schema = schemas[schema_name]
+    elif not schema_name and domain_selection.schema is not None:
+        schema = domain_selection.schema
+    else:
+        schema = schemas[select_schema(user_input, schemas, project_hints=project_hints)]
+    role = str(getattr(image, "role", "") or "")
+    if role not in {"outline", "pattern", "material"}:
+        role = derive_role(
+            getattr(image, "token", "") or f"图{position}", user_input, position, total,
+        )
+    if schema.name == "generic":
+        from openbrep.vision.image_to_plan import _SYSTEM_PROMPT, _USER_PROMPT_TEMPLATE
+
+        prompt = _SYSTEM_PROMPT + _USER_PROMPT_TEMPLATE.format(user_hint=user_input or "（无额外说明）")
+    else:
+        prompt = "\n".join((
+            _SCHEMA_SYSTEM_PROMPT,
+            schema.extract_prompt.strip(),
+            f"用户说明：{user_input or '（无额外说明）'}",
+            json.dumps({"fields": schema.fields, "required": schema.required}, ensure_ascii=False, sort_keys=True),
+        ))
+    return {
+        "version": "vision-cache-v1",
+        "image_sha256": str(getattr(image, "sha256", "") or ""),
+        "role": role,
+        "schema_name": schema.name,
+        "model": str(model or ""),
+        "prompt_version": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "domain_skill_id": schema.domain_skill_id,
+        "domain_skill_version": schema.domain_skill_version,
+    }
 
 
 def build_project_hints(project: Any, effect_contract: Optional[dict] = None) -> str:
@@ -116,8 +176,16 @@ def run(
     """
     on_event = on_event or (lambda *_: None)
     schemas = load_all_schemas()
-    schema_name = select_schema(user_input, schemas, project_hints=project_hints)
-    schema = schemas[schema_name]
+    from openbrep.vision.domain_skill_schema import select_domain_vision_schema
+
+    domain_selection = select_domain_vision_schema(
+        user_input, intent=intent, project_hints=project_hints,
+    )
+    if domain_selection.schema is not None:
+        schema = domain_selection.schema
+    else:
+        schema_name = select_schema(user_input, schemas, project_hints=project_hints)
+        schema = schemas[schema_name]
 
     plans: list[Optional[ModelingPlan]] = []
     total = len(images)
@@ -128,11 +196,12 @@ def run(
         role = derive_role(img.token, user_input, idx, total)
         img.role = role
 
-        if schema_name == "generic":
+        if schema.name == "generic":
             plan = _generic_plan(img, user_input, llm, llm_kwargs=llm_kwargs)
             if plan is None:
                 plans.append(None)
                 continue
+            plan.domain_skill_status = domain_selection.status
             vs = plan.fields.get("visual_structure")
             on_event("vision_analysis_done", {
                 "component_type": vs.component_type if vs is not None else "unknown",
@@ -143,6 +212,8 @@ def run(
             })
         else:
             plan = _schema_plan(schema, img, user_input, llm, llm_kwargs=llm_kwargs)
+            if not plan.domain_skill_id:
+                plan.domain_skill_status = domain_selection.status
             # S3 critic（设计 D3，bounded 1 轮）：
             #   触发 = 意图 CREATE/IMAGE + schema 声明 critic_checks + 开关 on
             #         + 该图提取未降级（degraded 无可信 JSON 可核，跳过）。
@@ -249,10 +320,12 @@ def _schema_plan(
     if isinstance(envelope, dict):
         fields_data = envelope
         confidence_data = data.get("confidence")
+        evidence_data = data.get("evidence")
         raw_value = data.get("raw_description")
     else:
         fields_data = data  # 旧平铺结构（P5b 形状），confidence 全 unknown
         confidence_data = None
+        evidence_data = None
         raw_value = data.get("raw_description")
 
     # 按 schema.fields 声明顺序收窄字段（LLM 可能多吐/乱序）
@@ -266,6 +339,11 @@ def _schema_plan(
         declared_required=list(schema.required),
     )
     confidence = _extract_confidence(schema, fields, confidence_data)
+    evidence = {
+        key: str(value).strip()[:500]
+        for key, value in (evidence_data or {}).items()
+        if key in fields and isinstance(value, str) and value.strip()
+    } if isinstance(evidence_data, dict) else {}
     for key, forced in adjustments.items():
         if forced == "low":
             confidence[key] = "low"
@@ -282,6 +360,11 @@ def _schema_plan(
         required=list(schema.required),
         critic_checks=list(schema.critic_checks),
         validation_issues=validation_issues,
+        editable_fields=list(schema.editable_fields),
+        domain_skill_id=schema.domain_skill_id,
+        domain_skill_status=schema.domain_skill_status,
+        domain_skill_version=schema.domain_skill_version,
+        evidence=evidence,
     )
 
 
@@ -494,6 +577,15 @@ def apply_field_validation(plan: "ModelingPlan", *, schemas: Optional[dict] = No
     """
     if plan.schema_name == "generic":
         return plan
+    if schemas is None:
+        schemas = load_all_schemas()
+        if plan.schema_name not in schemas:
+            from openbrep.domain_skills import DomainSkillRegistry
+            from openbrep.vision.domain_skill_schema import schema_from_skill
+
+            loaded = DomainSkillRegistry.builtin().load(plan.schema_name)
+            if loaded.ok and loaded.skill is not None:
+                schemas[plan.schema_name] = schema_from_skill(loaded.skill)
     cleaned, issues, adjustments = validate_fields_against_schema(
         plan.schema_name, plan.fields, schemas=schemas,
         declared_required=list(plan.required) if plan.required else None,

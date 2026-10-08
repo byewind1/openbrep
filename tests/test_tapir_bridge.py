@@ -85,6 +85,9 @@ def test_verify_library_part_artifact_forwards_hash_and_path():
         lib_part_guid="guid",
         parameters={"A": 2.0},
         want=["identity", "mesh3d"],
+        scenario_id="default",
+        spec_hash="sha256:spec",
+        dependencies_hash="sha256:deps",
     )
 
     assert result["success"] is True
@@ -99,6 +102,10 @@ def test_verify_library_part_artifact_forwards_hash_and_path():
             "want": ["identity", "mesh3d"],
             "restoreLibraryState": True,
             "rollbackElements": True,
+            "protocolVersion": 1,
+            "scenarioId": "default",
+            "specHash": "sha256:spec",
+            "dependenciesHash": "sha256:deps",
         },
     )]
 

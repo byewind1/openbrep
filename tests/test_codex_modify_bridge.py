@@ -285,6 +285,10 @@ def test_success_flow_tools_audited_and_scripts_changed(tmp_path):
         md = result.metadata["codex_modify"]
         assert md["turns"] == 1
         assert md["tool_calls"] == 2
+        impact = result.metadata["impact_report"]
+        assert "scripts/2d.gdl" in impact["affected_scripts"]
+        assert "semantic" in impact["checks"]
+        assert impact["coverage"]["complete"] is False
         # 审计：2 次执行（executed=True），call_id 与 wire request 关联
         audit = md["tool_audit"]
         assert len(audit) == 2
@@ -725,7 +729,11 @@ def test_driver_tool_timeout_bounded_and_join_pending(tmp_path):
 def test_driver_timeout_reasons_idle_vs_task():
     """卡03：虚拟时钟下超时原因细分——零事件=idle_timeout；任务截止先到=
     task_deadline（同一驱动，两个场景）。"""
-    from tests.fake_codex_modify_transport import _DelegatingClient, _ServerRequestTransport, _SteppingClock
+    from tests.fake_codex_modify_transport import (
+        _DelegatingClient,
+        _ServerRequestTransport,
+        _SteppingClock,
+    )
 
     # 场景一：无任何事件 → idle 窗口到期
     transport = _ServerRequestTransport(notifications=[], tool_calls=[])
@@ -1443,7 +1451,7 @@ def _wire_digest(recs: list[dict]) -> str:
 # 基线曾按 HF6 摘要重录（c2420473...）。ST05 新增 read_parameters /
 # edit_parameters schema 及结构化参数协议，属于明确 prompt 变更；审计后的新摘要
 # 为 d3dc122d...。benchmark golden corpus 需按受影响套件重录。
-HF2_NO_IMAGE_WIRE_SHA256 = "d3dc122d430e01307070efcdaff9f678bde017ab3b20d6ea9c348399e791c67f"
+HF2_NO_IMAGE_WIRE_SHA256 = "e3abd51e17dba9d5bb6884bccf92ef8a30e517ca2b06ecc617111d3e2322328c"
 
 # 桥接 thread 的 system 消息标识（baseInstructions 中必含的协议锚点）
 _BRIDGE_SYSTEM_MARK = "Agent Loop 工作模式（本次任务生效，Codex 动态工具桥接）"
@@ -1617,11 +1625,19 @@ def test_extraction_reuse_zero_vision_turns(tmp_path):
     harness = _FakeServerHarness(tmp_path)
     _write_script(tmp_path, [[_final("已按缓存图完成修改。")]])
     config = _codex_config()
+    user_input = "这是漏窗，给它加一层层板"
     provider = harness.provider()
     pipeline = _pipeline(config, provider, tmp_path)
     project = _make_project(tmp_path)
     img_b64 = _png_b64()
     sha = _sha256_b64(img_b64)
+    from openbrep.vision.harness import extraction_cache_context
+    cache_context = extraction_cache_context(
+        ImageRef(token="图1", b64=img_b64, mime="image/png", sha256=sha),
+        user_input=user_input,
+        model=config.llm.model,
+        schema_name="lattice_window",
+    )
     # 预置提取工件（D7 内容哈希寻址；模拟此前 CREATE/带图 MODIFY 落盘）
     vision_dir = project.root / ".openbrep" / "vision"
     vision_dir.mkdir(parents=True, exist_ok=True)
@@ -1635,6 +1651,7 @@ def test_extraction_reuse_zero_vision_turns(tmp_path):
         "raw_description": "",
         "sha256": sha,
         "model": "mock-vision-model",
+        "cache_context": cache_context,
         "created_at": "2026-08-12T00:00:00+00:00",
     }, ensure_ascii=False), encoding="utf-8")
 
@@ -1650,6 +1667,7 @@ def test_extraction_reuse_zero_vision_turns(tmp_path):
         with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
             result = pipeline.execute(_request(
                 tmp_path, project,
+                user_input=user_input,
                 images=[ImageRef(token="图1", b64=img_b64, mime="image/png")],
             ))
         assert result.success, result.plain_text

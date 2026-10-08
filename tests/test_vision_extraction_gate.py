@@ -30,6 +30,7 @@ from unittest.mock import MagicMock, patch
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import LLMResponse
+from openbrep.object_planner import GDLObjectPlan
 from openbrep.runtime.pipeline import ImageRef, TaskPipeline, TaskRequest, TaskResult
 from openbrep.vision.extraction_store import plan_to_dict
 from openbrep.vision.modeling_plan import ModelingPlan
@@ -91,6 +92,96 @@ def _fake_harness(*args, **kwargs):
     return [_lattice_plan()]
 
 
+def test_pipeline_fuses_conflicting_image_observations_and_confirmation_override_wins():
+    pipeline = _make_pipeline()
+    images = [
+        ImageRef(token="图1", b64=base64.b64encode(b"a").decode(), mime="image/png"),
+        ImageRef(token="图2", b64=base64.b64encode(b"b").decode(), mime="image/png"),
+    ]
+    plans = [_lattice_plan(rows=4), _lattice_plan(rows=5)]
+    request = TaskRequest(user_input="这是漏窗，按图生成", intent="IMAGE", images=images, confirm_extraction=True)
+    image_b64, image_mime, multi_images = pipeline._load_request_images(request)
+    with patch("openbrep.vision.harness.run", return_value=plans):
+        _, extractions, early = pipeline._run_vision_pre_analysis(
+            request, None, MagicMock(), {}, image_b64, image_mime, multi_images, lambda *_: None,
+        )
+    assert early is not None
+    fusion = extractions[0]["fusion"]
+    conflict = next(item for item in fusion["conflicts"] if item["field_path"] == "pattern.rows")
+    assert [candidate["value"] for candidate in conflict["candidates"]] == [4, 5]
+    assert "pattern.rows" in fusion["needs_clarification"]
+
+    confirmed = [dict(entry) for entry in extractions]
+    confirmed[0]["fields"]["grid_topology"]["rows"] = 6
+    confirmed[0]["user_overrides"] = {"grid_topology.rows": 6}
+    confirmed_request = TaskRequest(
+        user_input="这是漏窗，按图生成", intent="IMAGE", images=images,
+        confirmed_extractions=confirmed,
+    )
+    b64, mime, refs = pipeline._load_request_images(confirmed_request)
+    _, confirmed_entries, _ = pipeline._run_vision_pre_analysis(
+        confirmed_request, None, MagicMock(), {}, b64, mime, refs, lambda *_: None,
+    )
+    fused_item = next(item for item in confirmed_entries[0]["fusion"]["observation"]["items"] if item["field_path"] == "pattern.rows")
+    assert fused_item["value"] == 6
+    assert fused_item["note"] == "explicit user value"
+
+
+def test_pipeline_stops_before_generation_when_confirmed_observations_still_conflict(tmp_path):
+    pipeline = _make_pipeline()
+    project = HSFProject.create_new("LatticeWindow", work_dir=str(tmp_path))
+    images = [
+        ImageRef(token="图1", b64=base64.b64encode(b"a").decode(), mime="image/png"),
+        ImageRef(token="图2", b64=base64.b64encode(b"b").decode(), mime="image/png"),
+    ]
+    confirmed = []
+    for index, rows in enumerate((4, 5), start=1):
+        extraction = plan_to_dict(_lattice_plan(rows=rows))
+        extraction["token"] = f"图{index}"
+        extraction["role"] = "outline"
+        confirmed.append(extraction)
+    typed_plan = GDLObjectPlan(
+        object_type="lattice_window",
+        parts=[{"part_id": "pattern", "description": "格栅纹样"}],
+        typed_parameters=[{
+            "param_id": "p.rows", "gdl_name": "row_count", "type": "Integer",
+            "description": "横向排数", "default_value": 4,
+        }],
+        requirement_mappings=[{
+            "requirement_id": "req-pattern",
+            "text": "保留格栅排数",
+            "kind": "constraint",
+            "part_refs": ["pattern"],
+            "parameter_refs": ["p.rows"],
+            "script_refs": ["scripts/3d.gdl"],
+            "check_id": None,
+            "scenario_refs": ["front-default"],
+            "source_refs": ["user:request"],
+        }],
+    )
+    request = TaskRequest(
+        user_input="按图生成漏窗",
+        intent="IMAGE",
+        project=project,
+        images=images,
+        confirm_extraction=True,
+        confirmed_extractions=confirmed,
+    )
+    with patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=typed_plan):
+        with patch.object(
+            pipeline,
+            "_generate_with_agent",
+            side_effect=AssertionError("generation must wait for conflict clarification"),
+        ):
+            result = pipeline.execute(request)
+
+    assert result.metadata["awaiting_plan_input"] is True
+    artifact = result.metadata["planning_artifact"]
+    assert artifact["status"] == "needs_input"
+    assert "pattern.rows" in {issue["field_path"] for issue in artifact["issues"]}
+    assert not (project.root / ".openbrep/contracts/object_spec.json").exists()
+
+
 class TestPipelineExtractionGate(unittest.TestCase):
     def test_confirm_extraction_early_exit_no_generation(self):
         """confirm_extraction=True + 无 confirmed → 早退，不进规划/生成（LLM 只到 harness）。"""
@@ -114,6 +205,14 @@ class TestPipelineExtractionGate(unittest.TestCase):
         self.assertEqual(len(extractions), 1)
         self.assertEqual(extractions[0]["schema_name"], "lattice_window")
         self.assertEqual(extractions[0]["fields"]["opening_shape"], "rect")
+        self.assertEqual(extractions[0]["cache_context"]["schema_name"], "lattice_window")
+        self.assertEqual(extractions[0]["cache_context"]["role"], "outline")
+        self.assertEqual(extractions[0]["cache_context"]["model"], "")
+        fusion = extractions[0]["fusion"]
+        self.assertEqual(fusion["observation"]["source"], "vision_fusion")
+        self.assertEqual(fusion["observation"]["source_refs"], ["extraction:" + "aa" * 32])
+        self.assertEqual(fusion["conflicts"], [])
+        json.dumps(fusion, ensure_ascii=False)
         # 可编辑卡片数据源：required + critic_checks 随提取透出
         self.assertEqual(extractions[0]["required"], ["opening_shape", "pattern_family", "grid_topology"])
         self.assertIn("grid_topology.rows", extractions[0]["critic_checks"])
@@ -171,7 +270,7 @@ class TestPipelineExtractionGate(unittest.TestCase):
     def test_confirmed_without_edit_hint_byte_identical_to_harness_path(self):
         """确认但不编辑 → 重建 plan 的 hint 与原始 harness 路径逐字节一致（零变化回归）。"""
         pipeline = _make_pipeline()
-        with patch("openbrep.vision.harness.run", side_effect=_fake_harness) as mock_h:
+        with patch("openbrep.vision.harness.run", side_effect=_fake_harness):
             with patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()) as mock_plan:
                 request = TaskRequest(
                     user_input="这是漏窗，按图生成",
@@ -203,7 +302,7 @@ class TestPipelineExtractionGate(unittest.TestCase):
     def test_non_interactive_path_unchanged(self):
         """confirm_extraction=False（默认，benchmark/CLI）→ 照旧交付，无确认门。"""
         pipeline = _make_pipeline()
-        with patch("openbrep.vision.harness.run", side_effect=_fake_harness) as mock_h:
+        with patch("openbrep.vision.harness.run", side_effect=_fake_harness):
             with patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()) as mock_plan:
                 request = TaskRequest(
                     user_input="这是漏窗，按图生成",

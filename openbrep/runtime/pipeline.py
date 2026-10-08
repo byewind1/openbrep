@@ -18,6 +18,7 @@ Intent dispatch:
 from __future__ import annotations
 
 import difflib
+import json
 import logging
 import re
 import secrets
@@ -66,7 +67,7 @@ from openbrep.knowledge_selector import (
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
 from openbrep.model_catalog import ModelSelection, build_model_catalog, role_for_intent
-from openbrep.object_planner import plan_gdl_object
+from openbrep.object_planner import GDLObjectPlan, plan_gdl_object
 from openbrep.preflight import PreflightAnalyzer
 from openbrep.project_context import (
     ProjectContext,
@@ -79,6 +80,7 @@ from openbrep.project_context import (
 )
 from openbrep.revisions import create_revision, get_latest_revision_id, is_hsf_project_dir
 from openbrep.runtime.router import IntentRouter
+from openbrep.runtime.run_control import RunControl
 from openbrep.runtime.tracer import Tracer
 from openbrep.skill_creator import SkillCreator
 from openbrep.skills_loader import SkillsLoader
@@ -166,6 +168,20 @@ def _new_run_id() -> str:
     return f"r_{datetime.now():%Y%m%d_%H%M%S}_{secrets.token_hex(3)}"
 
 
+def _run_control_commit_executor(run_control: RunControl | None):
+    """Hold the run-control commit lock across one synchronous source write."""
+    if run_control is None:
+        return None
+
+    def execute(mutation):
+        decision, result = run_control.commit(mutation, stage="commit")
+        if not decision.allowed:
+            raise RuntimeError(f"RUN_CONTROL_REJECTED:{decision.reason or 'terminal'}")
+        return result
+
+    return execute
+
+
 _GREETING_ONLY_PATTERNS = (
     r"^(你好|您好|hello|hi|hey|嗨|哈喽|bonjour|hola|ciao|こんにちは|안녕)[!！。.\s]*$",
 )
@@ -207,6 +223,8 @@ class TaskRequest:
     agent_loop_plan: bool = False          # agent loop 是否先输出可审查计划（流式/SSE 默认开）
     confirm_plan: bool = False             # 计划确认门：GUI MODIFY 置 True（先出计划，确认后才执行）
     confirmed_plan: Optional[dict] = None  # 已确认的计划（/api/modify/confirm approve 后注入 agent loop）
+    prepared_typed_plan: Optional[dict] = None  # workbench prepare 阶段冻结的 CREATE/IMAGE Plan（仅服务端会话传递）
+    plan_selection: str = "auto_selected"  # auto_selected | user_approved，进入报告/metadata，不进 prompt
     # D10：会话层 project epoch 守卫（workbench 注入）。长任务执行期间会话项目
     # 切换时返回 False，Codex modify 桥接据此拒绝后续工具 mutation 并中止任务；
     # 非 codex 路径不使用。None = 不检查（benchmark/CLI 直连 pipeline 保持原状）。
@@ -223,6 +241,7 @@ class TaskRequest:
     credential_scope: str = ""
     execution_policy: Optional[dict] = None
     conversation_context: Optional[dict] = None
+    run_control: Optional[RunControl] = field(default=None, repr=False)
     # P0-A：显式执行效果契约（GUI/调用方传入；None = 不判定，CLI/benchmark
     # 语义不变）。normalize 后进入 acceptance/verification 的 effect 门。
     effect_contract: Optional[dict] = None
@@ -403,6 +422,30 @@ class TaskPipeline:
             ):
                 request.agent_loop_budget = configured_budget
 
+        # One run-wide control plane is shared by pipeline stages and the
+        # tool loop. It starts after read-only policy/routing and before any
+        # model or source work, so CREATE and MODIFY use the same deadline.
+        if request.run_control is None and not request.confirm_extraction:
+            from openbrep.config import AGENT_TASK_TIMEOUT_DEFAULT
+            from openbrep.runtime.modify_agent_loop import (
+                DEFAULT_AGENT_LOOP_BUDGET,
+                MAX_AGENT_LOOP_BUDGET,
+            )
+
+            budget = 0
+            if request.intent in ("MODIFY", "DEBUG", "REPAIR") and request.agent_loop:
+                budget = request.agent_loop_budget or DEFAULT_AGENT_LOOP_BUDGET
+                budget = max(1, min(budget, MAX_AGENT_LOOP_BUDGET))
+            raw_timeout = getattr(self.config.agent, "agent_task_timeout", None)
+            timeout = (
+                float(raw_timeout)
+                if isinstance(raw_timeout, (int, float)) and raw_timeout > 0
+                else float(AGENT_TASK_TIMEOUT_DEFAULT)
+            )
+            request.run_control = RunControl(
+                tool_budget=budget, task_timeout=timeout, should_cancel=request.should_cancel,
+            )
+
         # 注入侧通道清零（不调用 get_for_task 的任务不会残留上一任务的注入名单；
         # get_for_task 每次调用也会在开头重置，这里是双保险）
         if self._skills_loader is not None:
@@ -448,11 +491,34 @@ class TaskPipeline:
                     result = self._handle_gdl(request)
         except Exception as exc:
             logger.exception("Pipeline execution failed: %s", exc)
+            stopped_reason = None
+            if isinstance(exc, RuntimeError) and str(exc).startswith("RUN_CONTROL_STOPPED:"):
+                stopped_reason = str(exc).split(":", 1)[1]
+            elif request.run_control is not None:
+                decision = request.run_control.check(stage="pipeline_error")
+                if not decision.allowed:
+                    stopped_reason = decision.reason
             result = TaskResult(
                 success=False,
                 intent=request.intent or "",
-                error=str(exc),
+                error=("TASK_CANCELLED" if stopped_reason == "cancelled" else
+                       "TASK_DEADLINE_EXCEEDED" if stopped_reason == "deadline" else str(exc)),
             )
+
+        # Handlers can contain blocking model calls. Recheck once they return
+        # so a late answer cannot be reported as a completed delivery.
+        if request.run_control is not None and request.run_control.terminal_reason is None:
+            final_decision = request.run_control.check(stage="pipeline_finalize")
+            if not final_decision.allowed:
+                request.run_control.finish(final_decision.reason or "stopped")
+                result.success = False
+                result.error = (
+                    "TASK_CANCELLED" if final_decision.reason == "cancelled" else
+                    "TASK_DEADLINE_EXCEEDED" if final_decision.reason == "deadline" else
+                    result.error
+                )
+                result.metadata = dict(result.metadata or {})
+                result.metadata["execution_stop"] = final_decision.reason
 
         # 3. 注入名单透出（只加 metadata、不改任何 prompt）：把本次实际注入的
         # skill 名写入 TaskResult.metadata["injected_skills"]（无注入记 []）。
@@ -477,6 +543,15 @@ class TaskPipeline:
             execution.setdefault("timeout", False)
             execution.setdefault("budget_exhausted", False)
             execution.setdefault("cancelled", False)
+            if request.run_control is not None:
+                control_snapshot = request.run_control.snapshot()
+                execution["run_control"] = control_snapshot
+                if execution.get("tool_calls") is None:
+                    execution["tool_calls"] = control_snapshot["tool_calls"]
+                if control_snapshot["terminal_reason"] == "deadline":
+                    execution["timeout"] = True
+                if control_snapshot["terminal_reason"] == "cancelled":
+                    execution["cancelled"] = True
             repair = (result.semantic_repair or {}).get("attempted", 0) or 0
             execution["repair_rounds"] = int(repair)
             execution["elapsed_sec"] = round(time.monotonic() - started_at, 3)
@@ -515,6 +590,49 @@ class TaskPipeline:
             logger.debug("Failed to record delivery memory", exc_info=True)
 
         return result
+
+    def prepare_typed_plan(self, request: TaskRequest) -> TaskResult:
+        """Build a read-only CREATE/IMAGE plan for the workbench prepare phase.
+
+        This method may call vision/planner models, but it does not generate GDL,
+        compile, save a project, create a revision, or write a plan report.
+        """
+        if request.intent not in ("CREATE", "IMAGE"):
+            return TaskResult(success=False, error="TYPED_PLAN_REQUIRES_CREATE", metadata={"mode": "prepare"})
+        request = replace(request, confirm_extraction=False)
+        project = request.project
+        if project is None:
+            project = HSFProject.create_new(request.gsm_name or "untitled", work_dir=request.work_dir)
+        llm = self._make_llm(request)
+        assembled_context = self._assemble_context(request, project)
+        image_b64, image_mime, multi_images = self._load_request_images(request)
+        on_event = request.on_event or (lambda *_: None)
+        enriched_instruction, vision_extractions, early_exit = self._run_vision_pre_analysis(
+            request, project, llm, {}, image_b64, image_mime, multi_images, on_event,
+        )
+        if early_exit is not None:
+            return early_exit
+        object_plan, enriched_instruction, planning_artifact = self._plan_gdl_object_phase(
+            request, llm, enriched_instruction, assembled_context, assembled_context.skills_text,
+            {}, on_event, vision_extractions,
+        )
+        if object_plan is None or planning_artifact is None:
+            return TaskResult(success=False, error="TYPED_PLAN_UNAVAILABLE", project=project)
+        prepared = {
+            "object_plan": object_plan.to_dict(),
+            "planning_artifact": planning_artifact,
+            "enriched_instruction": enriched_instruction,
+            "vision_extractions": vision_extractions,
+        }
+        return TaskResult(
+            success=True,
+            intent=request.intent,
+            project=project,
+            object_plan=object_plan.to_dict(),
+            plain_text=object_plan.to_user_summary(planning_artifact),
+            metadata={"planning_artifact": planning_artifact, "vision_extractions": vision_extractions,
+                      "prepared_typed_plan": prepared, "mode": "prepare"},
+        )
 
     def _finalize_delivery_source(
         self, request: TaskRequest, result: TaskResult, *, run_id: str
@@ -1204,6 +1322,8 @@ class TaskPipeline:
             # 跳过 harness（零 vision 重调），从确认的 dict 重建 ModelingPlan
             # （用户编辑值经 from_dict → to_hint 自然生效）；空则走正常 harness。
             confirmed = request.confirmed_extractions or []
+            confirmed_by_image: list[Optional[dict]] = []
+            project_hints = ""
             try:
                 if confirmed:
                     from openbrep.vision.modeling_plan import ModelingPlan
@@ -1213,10 +1333,29 @@ class TaskPipeline:
                     # 坏字段/未知 schema 不作为已验证事实渲染（旧 payload 可读）。
                     from openbrep.vision.harness import apply_field_validation
 
-                    plans = [
-                        apply_field_validation(ModelingPlan.from_dict(entry))
-                        for entry in confirmed
-                    ]
+                    confirmed_by_token = {
+                        str(entry.get("token")): (entry_idx, entry)
+                        for entry_idx, entry in enumerate(confirmed) if entry.get("token")
+                    }
+                    used: set[int] = set()
+                    plans = []
+                    for idx, img in enumerate(multi_images, start=1):
+                        token = img.token or f"图{idx}"
+                        pair = confirmed_by_token.get(token)
+                        if pair is None and idx - 1 < len(confirmed) and idx - 1 not in used:
+                            pair = (idx - 1, confirmed[idx - 1])
+                        if pair is None:
+                            confirmed_by_image.append(None)
+                            plans.append(None)
+                            continue
+                        entry_idx, entry = pair
+                        if entry_idx in used:
+                            confirmed_by_image.append(None)
+                            plans.append(None)
+                            continue
+                        used.add(entry_idx)
+                        confirmed_by_image.append(entry)
+                        plans.append(apply_field_validation(ModelingPlan.from_dict(entry)))
                 else:
                     on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
                     # P1-B：显式效果契约存在时注入项目领域提示（GUI 门控，
@@ -1225,6 +1364,7 @@ class TaskPipeline:
                     from openbrep.vision.harness import build_project_hints
 
                     contract = normalize_effect_contract(getattr(request, "effect_contract", None))
+                    project_hints = build_project_hints(request.project, contract) if contract else ""
                     plans = vision_harness_run(
                         multi_images,
                         request.intent,
@@ -1235,9 +1375,7 @@ class TaskPipeline:
                         # D5：Codex 图片通道——提取/critic 的视觉调用带
                         # codex kwargs（无图/非 codex 时为空 → 现有行为逐字节不变）。
                         llm_kwargs=codex_kwargs or None,
-                        project_hints=(
-                            build_project_hints(request.project, contract) if contract else ""
-                        ),
+                        project_hints=project_hints,
                     )
                 # P5d-1：plans 序列化进 metadata（设计 D7 存储 + 前端只读卡片数据源）。
                 # 每图一条：schema/fields/confidence/corrections/降级标记 + sha256；
@@ -1250,14 +1388,126 @@ class TaskPipeline:
                         continue
                     entry = plan_to_dict(plan)
                     entry["token"] = token
+                    entry["role"] = str(getattr(img, "role", "auto") or "auto")
+                    if confirmed and idx - 1 < len(confirmed_by_image) and confirmed_by_image[idx - 1]:
+                        confirmed_entry = confirmed_by_image[idx - 1]
+                        if confirmed_entry.get("role"):
+                            entry["role"] = str(confirmed_entry["role"])
+                        if confirmed_entry.get("state_key"):
+                            entry["state_key"] = confirmed_entry["state_key"]
+                        overrides = confirmed_entry.get("user_overrides")
+                        if isinstance(overrides, dict) and overrides:
+                            entry["user_overrides"] = overrides
+                        elif isinstance(confirmed_entry.get("cache_context"), dict):
+                            entry["cache_context"] = confirmed_entry["cache_context"]
+                    else:
+                        from openbrep.vision.harness import extraction_cache_context
+
+                        llm_config = getattr(llm, "config", None)
+                        model_name = getattr(llm_config, "model", None)
+                        if not isinstance(model_name, str):
+                            model_name = getattr(llm, "model", "")
+                        if not isinstance(model_name, str):
+                            model_name = ""
+                        entry["cache_context"] = extraction_cache_context(
+                            img,
+                            user_input=request.user_input,
+                            model=str(model_name or ""),
+                            intent=request.intent or "CREATE",
+                            schema_name=entry["schema_name"],
+                            project_hints=project_hints,
+                        )
                     # U04-A：提取 → Observation（U03-A 合同）随条目透出（只读）
                     try:
                         from openbrep.contracts.object_spec import observation_from_modeling_plan
 
                         entry["observation"] = observation_from_modeling_plan(plan).to_dict()
+                        state_values = [
+                            (item.get("field_path"), item.get("value"))
+                            for item in entry["observation"].get("items", [])
+                            if item.get("field_path") in {"state.opening", "parts.doors.state"}
+                            and item.get("status") in {"observed", "inferred"}
+                            and item.get("value") is not None
+                        ]
+                        if state_values:
+                            entry["state_key"] = "|".join(
+                                f"{path}:{value}" for path, value in state_values
+                            )
                     except Exception:  # noqa: BLE001 —— 观察适配失败不阻塞提取
                         pass
                     vision_extractions.append(entry)
+                # U04-B：保留逐图提取之外的融合视图。融合只进入结果元数据，
+                # 不回写 ModelingPlan、不改 enriched_instruction 或任何 LLM prompt。
+                # 状态键只有在提取 schema 明确提供 state_key 时才分组；不能从
+                # 视角/图序猜测构件开合状态。
+                try:
+                    from openbrep.contracts.object_spec import Observation, ObservationItem
+                    from openbrep.vision.observation_fusion import fuse_observations
+
+                    observation_rows = []
+                    observation_roles = []
+                    observation_states = []
+                    explicit_items_by_state = {}
+                    for entry, img in zip(vision_extractions, multi_images):
+                        payload = entry.get("observation")
+                        if entry.get("skipped") or not isinstance(payload, dict):
+                            continue
+                        observation_rows.append(Observation(
+                            observation_id=str(payload.get("observation_id") or entry.get("token") or "vision"),
+                            source=str(payload.get("source") or "vision_extraction"),
+                            source_refs=list(payload.get("source_refs") or []),
+                            items=[ObservationItem(**item) for item in payload.get("items") or [] if isinstance(item, dict)],
+                        ))
+                        observation_roles.append(str(entry.get("role") or getattr(img, "role", "auto") or "auto"))
+                        observation_states.append(str(entry.get("state_key") or "default"))
+                        state_key = observation_states[-1]
+                        overrides = entry.get("user_overrides") or {}
+                        if overrides:
+                            from openbrep.vision.domain_skill_schema import (
+                                normalize_domain_observation_fields,
+                            )
+
+                            overrides = normalize_domain_observation_fields(
+                                str(entry.get("domain_skill_id") or entry.get("schema_name") or ""),
+                                overrides,
+                            )
+                        for field_path, value in overrides.items():
+                            prior = next((item for item in observation_rows[-1].items if item.field_path == field_path), None)
+                            explicit_items_by_state.setdefault(state_key, {})[field_path] = ObservationItem(
+                                field_path=field_path,
+                                status="observed",
+                                value=value,
+                                unit=prior.unit if prior else None,
+                                confidence="high",
+                                note="edited by user in extraction confirmation",
+                            )
+                    if observation_rows:
+                        explicit_by_state = {
+                            state: Observation(
+                                observation_id=f"user-extraction-overrides-{state}",
+                                source="user_typed",
+                                source_refs=[f"extraction-confirmation:{state}"],
+                                items=list(items.values()),
+                            )
+                            for state, items in explicit_items_by_state.items()
+                        }
+                        fused = fuse_observations(
+                            observation_rows,
+                            roles=observation_roles,
+                            state_keys=observation_states,
+                            explicit_by_state=explicit_by_state,
+                        )
+                        fusion_payload = {
+                            "observation": fused.observation.to_dict(),
+                            "by_state": {key: value.to_dict() for key, value in fused.by_state.items()},
+                            "conflicts": list(fused.conflicts),
+                            "needs_clarification": list(fused.needs_clarification),
+                        }
+                        first = next((entry for entry in vision_extractions if not entry.get("skipped")), None)
+                        if first is not None:
+                            first["fusion"] = fusion_payload
+                except Exception:  # noqa: BLE001 —— 融合增强失败不阻断原有读图链
+                    logger.warning("Vision observation fusion failed; keeping per-image observations", exc_info=True)
                 hint_parts: list[str] = []
                 for idx, plan in enumerate(plans, start=1):
                     if plan is None:
@@ -1296,9 +1546,11 @@ class TaskPipeline:
         skills_text: str,
         codex_kwargs: dict,
         on_event: Callable,
-    ) -> tuple[Optional[object], str]:
+        vision_extractions: list[dict] | None = None,
+    ) -> tuple[Optional[object], str, dict | None]:
         """CREATE/IMAGE 的 GDL 对象规划（planner_context + 知识来源合并）。"""
         object_plan = None
+        planning_artifact = None
         if request.intent in ("CREATE", "IMAGE"):
             on_event("status", {"message": "正在规划 GDL 对象结构…"})
             object_plan = plan_gdl_object(
@@ -1315,13 +1567,103 @@ class TaskPipeline:
                     assembled_context.source_ids,
                 ),
             )
+            from openbrep.planning.typed_plan import build_planning_artifact
+
+            observations, conflict_fields = self._planning_observations(
+                request.user_input, vision_extractions or [],
+            )
+            planning_artifact = build_planning_artifact(
+                object_plan,
+                observations=observations,
+                conflict_fields=conflict_fields,
+                project=request.project,
+                user_input=request.user_input,
+            ).to_dict()
+            candidate_params = (planning_artifact.get("candidate_spec") or {}).get("params") or []
+            parameter_sources = planning_artifact.get("parameter_sources") or {}
+            if candidate_params:
+                source_by_param = {
+                    str(source.get("param_id")): source
+                    for source in parameter_sources.values() if isinstance(source, dict)
+                }
+                typed_parameters = []
+                for param in candidate_params:
+                    current = dict(param)
+                    source = source_by_param.get(str(current.get("param_id")))
+                    if source:
+                        current["value_source"] = source.get("source")
+                        current["source_refs"] = list(source.get("source_refs") or [])
+                    typed_parameters.append(current)
+                object_plan = replace(object_plan, typed_parameters=typed_parameters)
+            explicit_values = planning_artifact.get("parameter_sources") or {}
+            explicit_dimensions = ""
+            if explicit_values:
+                explicit_dimensions = (
+                    "\n\n【用户明确尺寸覆盖规则】以下值来自用户明确输入，优先于任何参考图估计，"
+                    "必须按规范米单位实现：\n"
+                    + "\n".join(
+                        f"- {name} = {source['value']} m；{source['requirement']}"
+                        for name, source in explicit_values.items()
+                    )
+                )
             enriched_instruction = (
                 f"{enriched_instruction}\n\n"
                 f"{object_plan.to_prompt()}\n\n"
                 "请严格按上述规划生成可继续工程化修改的 HSF/GDL 源码。"
+                f"{explicit_dimensions}"
             )
-            on_event("object_plan_done", {"object_type": object_plan.object_type})
-        return object_plan, enriched_instruction
+            on_event("object_plan_done", {
+                "object_type": object_plan.object_type,
+                "planning_artifact": planning_artifact,
+            })
+        return object_plan, enriched_instruction, planning_artifact
+
+    @staticmethod
+    def _planning_observations(
+        user_input: str,
+        vision_extractions: list[dict],
+    ) -> tuple[list[Any], list[str]]:
+        from openbrep.contracts.object_spec import Observation, ObservationItem, parse_observation
+
+        observations = [Observation(
+            observation_id="user-request",
+            source="user_typed",
+            source_refs=["request:user_input"],
+            items=[ObservationItem(
+                field_path="user_request.text",
+                status="observed",
+                value=str(user_input or ""),
+                confidence="high",
+                note="原始用户要求；需在 Plan 中区分明确约束与假设",
+            )],
+        )]
+        conflict_fields: list[str] = []
+        fusion_payload = next((
+            entry.get("fusion") for entry in vision_extractions
+            if isinstance(entry, dict) and isinstance(entry.get("fusion"), dict)
+        ), None)
+        candidates: list[dict] = []
+        if fusion_payload:
+            conflict_fields = [
+                str(value) for value in fusion_payload.get("needs_clarification", [])
+                if isinstance(value, str) and value
+            ]
+            by_state = fusion_payload.get("by_state")
+            if isinstance(by_state, dict):
+                candidates.extend(value for value in by_state.values() if isinstance(value, dict))
+            fused = fusion_payload.get("observation")
+            if not candidates and isinstance(fused, dict):
+                candidates.append(fused)
+        else:
+            candidates.extend(
+                entry["observation"] for entry in vision_extractions
+                if isinstance(entry, dict) and isinstance(entry.get("observation"), dict)
+            )
+        for candidate in candidates:
+            parsed = parse_observation(candidate)
+            if parsed.ok:
+                observations.append(parsed.value)
+        return observations, conflict_fields
 
     def _inject_generation_constraints(
         self,
@@ -1431,12 +1773,17 @@ class TaskPipeline:
         返回 (agent, cleaned, plain_text, lint_summary)；agent 供后续
         零产出重试 / 静态修复 / 编译自愈 / 语义修复复用。
         """
+        def should_cancel_generation() -> bool:
+            if request.run_control is not None:
+                return not request.run_control.check(stage="create_generate").allowed
+            return bool(request.should_cancel and request.should_cancel())
+
         agent = GDLAgent(
             llm=llm,
             compiler=compiler,
             on_event=on_event,
             assistant_settings=request.assistant_settings,
-            should_cancel=request.should_cancel,
+            should_cancel=should_cancel_generation,
             llm_kwargs=codex_kwargs or None,
         )
 
@@ -1900,6 +2247,27 @@ class TaskPipeline:
 
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
         """GDL generation / modification via GDLAgent.generate_only()."""
+        run_control = request.run_control
+
+        def stopped_result(stage: str) -> Optional[TaskResult]:
+            if run_control is None:
+                return None
+            decision = run_control.check(stage=stage)
+            if decision.allowed:
+                return None
+            error = (
+                "TASK_CANCELLED" if decision.reason == "cancelled" else
+                "TASK_DEADLINE_EXCEEDED" if decision.reason == "deadline" else
+                "TASK_STOPPED"
+            )
+            return TaskResult(
+                success=False, intent=request.intent or "CREATE", error=error,
+                plain_text="任务已停止，未将迟到的生成结果作为交付。",
+                project=None,
+                metadata={"execution_stop": decision.reason,
+                          "execution_stage": decision.stage},
+            )
+
         effective = self._effective_llm_config(request.selection)
         llm = self._make_llm(request)
         compiler = self._make_compiler()
@@ -1933,6 +2301,9 @@ class TaskPipeline:
                 work_dir=request.work_dir,
             )
         request.project = project
+        early_stop = stopped_result("create_prepare")
+        if early_stop is not None:
+            return early_stop
         assembled_context = self._assemble_context(request, project)
         knowledge = assembled_context.generation_context
         skills_text = assembled_context.skills_text
@@ -1942,17 +2313,71 @@ class TaskPipeline:
         on_event = request.on_event or (lambda *_: None)
         debug_mode = request.intent == "DEBUG"
 
-        enriched_instruction, vision_extractions, early_exit = self._run_vision_pre_analysis(
-            request, project, llm, codex_kwargs, image_b64, image_mime, multi_images, on_event,
-        )
-        if early_exit is not None:
-            return early_exit
-        # ─────────────────────────────────────────────────────────────────────
+        prepared_typed_plan = request.prepared_typed_plan
+        if prepared_typed_plan is not None:
+            if not isinstance(prepared_typed_plan, dict):
+                return TaskResult(success=False, intent=request.intent or "CREATE", error="INVALID_PREPARED_PLAN", project=project)
+            planning_artifact = prepared_typed_plan.get("planning_artifact")
+            object_plan_data = prepared_typed_plan.get("object_plan")
+            enriched_instruction = prepared_typed_plan.get("enriched_instruction")
+            vision_extractions = prepared_typed_plan.get("vision_extractions") or []
+            if (
+                not isinstance(planning_artifact, dict)
+                or planning_artifact.get("status") not in {"ready", "degraded", "needs_input"}
+                or not isinstance(object_plan_data, dict)
+                or not isinstance(enriched_instruction, str)
+                or not isinstance(vision_extractions, list)
+            ):
+                return TaskResult(success=False, intent=request.intent or "CREATE", error="INVALID_PREPARED_PLAN", project=project)
+            execution_plan = planning_artifact.get("execution_plan")
+            from openbrep.contracts.object_spec import parse_execution_plan
 
-        object_plan, enriched_instruction = self._plan_gdl_object_phase(
-            request, llm, enriched_instruction, assembled_context, skills_text,
-            codex_kwargs, on_event,
-        )
+            parsed_execution = parse_execution_plan(execution_plan if isinstance(execution_plan, dict) else {})
+            if not parsed_execution.ok:
+                return TaskResult(success=False, intent=request.intent or "CREATE", error="INVALID_PREPARED_PLAN_HASH", project=project)
+            if planning_artifact.get("status") == "needs_input":
+                return TaskResult(
+                    success=True, intent=request.intent or "CREATE", project=project,
+                    object_plan=object_plan_data,
+                    plain_text="计划仍需要补充确认，尚未进入生成。",
+                    metadata={"awaiting_plan_input": True, "planning_artifact": planning_artifact,
+                              "vision_extractions": vision_extractions},
+                )
+            from openbrep.object_planner import parse_gdl_object_plan
+
+            object_plan = parse_gdl_object_plan(json.dumps(object_plan_data, ensure_ascii=False))
+        else:
+            enriched_instruction, vision_extractions, early_exit = self._run_vision_pre_analysis(
+                request, project, llm, codex_kwargs, image_b64, image_mime, multi_images, on_event,
+            )
+            if early_exit is not None:
+                return early_exit
+            early_stop = stopped_result("create_vision_return")
+            if early_stop is not None:
+                return early_stop
+            # ─────────────────────────────────────────────────────────────────────
+
+            object_plan, enriched_instruction, planning_artifact = self._plan_gdl_object_phase(
+                request, llm, enriched_instruction, assembled_context, skills_text,
+                codex_kwargs, on_event, vision_extractions,
+            )
+            early_stop = stopped_result("create_plan_return")
+            if early_stop is not None:
+                return early_stop
+        if planning_artifact and planning_artifact.get("status") == "needs_input":
+            on_event("status", {"stage": "plan", "message": "计划依据存在冲突，需要补充确认后再生成。"})
+            return TaskResult(
+                success=True,
+                intent=request.intent or "CREATE",
+                project=project,
+                object_plan=object_plan.to_dict() if object_plan is not None else {},
+                plain_text="参考图中的关键观察互相冲突。请先确认冲突项，再继续生成。",
+                metadata={
+                    "awaiting_plan_input": True,
+                    "planning_artifact": planning_artifact,
+                    "vision_extractions": vision_extractions,
+                },
+            )
 
         enriched_instruction, _graph_constraint_injected = self._inject_generation_constraints(
             enriched_instruction, request.user_input, on_event,
@@ -1964,6 +2389,26 @@ class TaskPipeline:
             multi_images,
         )
 
+        early_stop = stopped_result("create_generate_return")
+        if early_stop is not None:
+            return early_stop
+
+        # All initial and repair writes share this commit boundary. A model
+        # response that arrives after cancellation/deadline cannot mutate HSF.
+        original_apply_changes = agent._apply_changes
+
+        def guarded_apply_changes(target_project, changes):
+            if run_control is None:
+                return original_apply_changes(target_project, changes)
+            decision, applied = run_control.commit(
+                lambda: original_apply_changes(target_project, changes), stage="create_commit",
+            )
+            if not decision.allowed:
+                raise RuntimeError(f"RUN_CONTROL_STOPPED:{decision.reason}")
+            return applied
+
+        agent._apply_changes = guarded_apply_changes
+
         cleaned, plain_text, lint_summary, hard_fail = self._retry_zero_create_output(
             request, agent, project, cleaned, plain_text, lint_summary,
             enriched_instruction, knowledge, skills_text, debug_mode,
@@ -1972,34 +2417,94 @@ class TaskPipeline:
         if hard_fail is not None:
             return hard_fail
 
+        early_stop = stopped_result("create_retry_return")
+        if early_stop is not None:
+            return early_stop
+
         # Apply changes to the project in-place
         if cleaned:
-            agent._apply_changes(project, cleaned)
+            try:
+                agent._apply_changes(project, cleaned)
+            except RuntimeError as exc:
+                if str(exc).startswith("RUN_CONTROL_STOPPED:"):
+                    return stopped_result("create_commit") or TaskResult(
+                        success=False, intent=request.intent or "CREATE",
+                        error="TASK_STOPPED", project=None,
+                    )
+                raise
 
+        parameter_contract_report = None
+        if planning_artifact is not None:
+            from openbrep.paramlist_builder import build_paramlist_xml
+            from openbrep.planning.paramlist_contract import apply_planned_parameters
+
+            parameter_contract = apply_planned_parameters(project.parameters, planning_artifact)
+            parameter_contract_report = {
+                "added": list(parameter_contract.added),
+                "reconciled": list(parameter_contract.reconciled),
+                "errors": list(parameter_contract.errors),
+            }
+            if not parameter_contract.ok:
+                return TaskResult(
+                    success=False,
+                    intent=request.intent or "CREATE",
+                    error="PLANNED_PARAMETER_CONTRACT_FAILED",
+                    plain_text="冻结 Plan 的参数合同无法安全应用：\n" + "\n".join(
+                        f"- {item.get('field_path')}: {item.get('message')}" for item in parameter_contract.errors
+                    ),
+                    project=None,
+                    metadata={
+                        "planning_artifact": planning_artifact,
+                        "parameter_contract": parameter_contract_report,
+                    },
+                )
+            project.parameters = parameter_contract.parameters
+            if parameter_contract.added or parameter_contract.reconciled or "paramlist.xml" in cleaned:
+                cleaned["paramlist.xml"] = build_paramlist_xml(project.parameters)
+
+        early_stop = stopped_result("create_static_check")
+        if early_stop is not None:
+            return early_stop
         static_result, undef_errors, cleaned, lint_summary = self._static_check_and_repair(
             request, agent, project, cleaned, lint_summary,
             enriched_instruction, knowledge, skills_text, on_event,
         )
+        early_stop = stopped_result("create_static_repair_return")
+        if early_stop is not None:
+            return early_stop
         # ─────────────────────────────────────────────────────────────────────
 
+        early_stop = stopped_result("create_compile")
+        if early_stop is not None:
+            return early_stop
         compile_result, compile_not_run_reason, auto_repair_info, _graph_powered_repair, create_metadata, cleaned, lint_summary = self._compile_create_with_repair(
             request, project, compiler, agent, cleaned, lint_summary,
             enriched_instruction, knowledge, skills_text, on_event,
         )
+        early_stop = stopped_result("create_compile_repair_return")
+        if early_stop is not None:
+            return early_stop
         # ─────────────────────────────────────────────────────────────────────
 
+        early_stop = stopped_result("create_semantic_repair")
+        if early_stop is not None:
+            return early_stop
         semantic_result, compile_result, cleaned, lint_summary, auto_repair_info, _sem_outcome, create_metadata = self._run_semantic_repair_phase(
             request, project, agent, compiler, cleaned, compile_result,
             enriched_instruction, knowledge, skills_text, lint_summary,
             auto_repair_info, create_metadata, on_event,
         )
+        early_stop = stopped_result("create_semantic_repair_return")
+        if early_stop is not None:
+            return early_stop
         # ─────────────────────────────────────────────────────────────────────
 
         return self._finalize_create_result(
             request, project, llm, object_plan, static_result, semantic_result,
             compile_result, compile_not_run_reason, undef_errors, lint_summary,
             auto_repair_info, _graph_constraint_injected, _graph_powered_repair,
-            vision_extractions, _sem_outcome, cleaned, create_metadata, plain_text,
+            vision_extractions, planning_artifact, _sem_outcome, cleaned, create_metadata, plain_text,
+            parameter_contract_report=parameter_contract_report,
         )
 
     def _finalize_create_result(
@@ -2018,15 +2523,22 @@ class TaskPipeline:
         graph_constraint_injected: bool,
         graph_powered_repair: bool,
         vision_extractions: list[dict],
+        planning_artifact: dict | None,
         sem_outcome,
         cleaned: dict,
         create_metadata: dict,
         plain_text: str,
+        parameter_contract_report: dict | None = None,
     ) -> TaskResult:
         """组装 CREATE/IMAGE 交付：文本分节 + 统一验证报告 + 素材推断 + metadata。"""
         create_text_parts = []
         if object_plan is not None:
-            create_text_parts.append(object_plan.to_user_summary())
+            if isinstance(object_plan, GDLObjectPlan):
+                create_text_parts.append(object_plan.to_user_summary(planning_artifact))
+            else:
+                # Keep the planner summary protocol compatible with test doubles
+                # and downstream adapters that still implement the no-arg form.
+                create_text_parts.append(object_plan.to_user_summary())
         if plain_text:
             create_text_parts.append(plain_text)
         if lint_summary:
@@ -2069,6 +2581,31 @@ class TaskPipeline:
         # ─────────────────────────────────────────────────────────────────────
 
         result_metadata: dict = dict(create_metadata)
+        if parameter_contract_report is not None:
+            result_metadata["parameter_contract"] = parameter_contract_report
+        if object_plan is not None:
+            try:
+                from openbrep.project_reports import write_object_plan_report
+
+                report_path = write_object_plan_report(
+                    project,
+                    object_plan.to_dict(),
+                    instruction=request.user_input,
+                    intent=request.intent or "CREATE",
+                    planning_artifact=planning_artifact,
+                    plan_selection=request.plan_selection,
+                )
+                result_metadata["object_plan_report"] = str(report_path) if report_path else None
+                result_metadata["object_plan_report_status"] = "saved" if report_path else "unavailable"
+            except Exception as exc:  # noqa: BLE001 — 派生报告故障不能伪装成规格提交
+                logger.warning("Typed plan report could not be saved: %s", exc)
+                result_metadata["object_plan_report_status"] = "failed"
+        if planning_artifact is not None:
+            result_metadata["planning_artifact"] = planning_artifact
+            result_metadata["plan_selection"] = (
+                request.plan_selection if request.plan_selection in {"auto_selected", "user_approved"}
+                else "auto_selected"
+            )
         if vision_extractions:
             # P5d-1：vision 提取透出（无提取时为空 dict，避免污染 metadata）
             result_metadata["vision_extractions"] = vision_extractions
@@ -2183,7 +2720,26 @@ class TaskPipeline:
                 }
             },
             create_revision=create_revision,
+            commit_executor=_run_control_commit_executor(request.run_control),
         )
+        rejection = next(
+            (warning for warning in revision_warnings if warning.startswith("PARAMETER_MUTATION_REJECTED:")),
+            None,
+        )
+        if rejection is not None:
+            return TaskResult(
+                success=False,
+                intent="MODIFY",
+                project=project,
+                error=rejection.split(":", 2)[-1].strip(),
+                plain_text="参数修改被对象合同拒绝；请先检查合同并重新规划。",
+                revision_warnings=[rejection],
+                metadata={
+                    "execution": {"llm_calls": 0, "tool_calls": 0},
+                    "micro_modify": {"param": micro.param_name, "rejected": True},
+                    "changed_files": [],
+                },
+            )
         on_event("status", {"stage": "modify", "message": f"✏️ 已更新参数 {micro.param_name}"})
 
         # 修改后预览摘要（before 已在应用前取）
@@ -2444,8 +3000,24 @@ class TaskPipeline:
             user_instruction=instruction,
             metadata=revision_metadata,
             create_revision=create_revision,
+            commit_executor=_run_control_commit_executor(request.run_control),
         )
         if not outcome.applied:
+            if outcome.error_code:
+                return TaskResult(
+                    success=False,
+                    intent="MODIFY",
+                    project=project,
+                    error="; ".join(outcome.warnings) or outcome.error_code,
+                    plain_text="参数操作被对象合同拒绝；请先检查合同并重新规划。",
+                    revision_warnings=outcome.warnings,
+                    metadata={
+                        "execution": {"llm_calls": 1, "tool_calls": 0},
+                        "param_modify": {"plan": plan.to_dict(), "rejected": True,
+                                          "error_code": outcome.error_code},
+                        "changed_files": [],
+                    },
+                )
             # 守护回滚：计划外文件被改动，按"识别不出"回落 LLM 路径
             return None
         on_event("status", {"stage": "modify", "message": "✏️ 已应用参数操作：" + "；".join(op_lines)})

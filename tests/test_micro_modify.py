@@ -25,9 +25,9 @@ from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 def _make_project() -> HSFProject:
     proj = HSFProject.create_new("test_shelf", work_dir="./workdir")
     proj.parameters = [
-        GDLParameter(name="A", type_tag="Length", description="宽度", value="0.9"),
-        GDLParameter(name="B", type_tag="Length", description="深度", value="0.4"),
-        GDLParameter(name="ZZYZX", type_tag="Length", description="高度", value="1.8"),
+        GDLParameter(name="A", type_tag="Length", description="宽度", value="0.9", is_fixed=True),
+        GDLParameter(name="B", type_tag="Length", description="深度", value="0.4", is_fixed=True),
+        GDLParameter(name="ZZYZX", type_tag="Length", description="高度", value="1.8", is_fixed=True),
         GDLParameter(name="shelf_count", type_tag="Integer", description="层板数量", value="4"),
         GDLParameter(name="shelf_thk", type_tag="Length", description="层板厚度", value="0.018"),
         GDLParameter(name="show_frame", type_tag="Boolean", description="显示边框", value="1"),
@@ -445,7 +445,7 @@ class TestExplicitUnitZeroLLM(unittest.TestCase):
 
         for instruction, param, expected in (
             ("把 shelf_thk 改成 25mm", "shelf_thk", "0.025"),
-            ("把 door_angle 改成 45度", "door_angle", "45.0"),
+            ("把 door_angle 改成 45度", "door_angle", "45"),
         ):
             llm = MagicMock()
             llm.generate.side_effect = AssertionError("micro_modify must not call LLM")

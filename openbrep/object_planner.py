@@ -29,6 +29,10 @@ class GDLObjectPlan:
     validation_checks: list[str] = field(default_factory=list)
     knowledge_sources: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
+    # U05-B: machine-validated candidate contract and traceable coverage.
+    parts: list[dict[str, Any]] = field(default_factory=list)
+    typed_parameters: list[dict[str, Any]] = field(default_factory=list)
+    requirement_mappings: list[dict[str, Any]] = field(default_factory=list)
     # U02-A：planner 失败/解析失败回落最小规划时必须显式降级——
     # 报告据此追加 degraded 检查行，不冒充正常规划。
     degraded: bool = False
@@ -52,6 +56,9 @@ class GDLObjectPlan:
             "validation_checks": list(self.validation_checks),
             "knowledge_sources": list(self.knowledge_sources),
             "risks": list(self.risks),
+            "parts": [dict(item) for item in self.parts],
+            "typed_parameters": [dict(item) for item in self.typed_parameters],
+            "requirement_mappings": [dict(item) for item in self.requirement_mappings],
             "degraded": self.degraded,
         }
 
@@ -78,13 +85,42 @@ class GDLObjectPlan:
         _append_section(lines, "Validation checks", self.validation_checks)
         _append_section(lines, "Knowledge sources", self.knowledge_sources)
         _append_section(lines, "Risks to avoid", self.risks)
+        if self.parts:
+            lines.extend(["", "## Traceable Plan Contract"])
+            lines.append("- Parts: " + "; ".join(
+                f"{item.get('part_id')}: {item.get('description', '')}" for item in self.parts
+            ))
+            lines.append("- Typed parameters:")
+            for item in self.typed_parameters:
+                unit = f" {item.get('unit')}" if item.get("unit") else ""
+                default = f" = {item.get('default_value')}{unit}" if item.get("default_value") is not None else ""
+                lines.append(
+                    f"  - {item.get('param_id')} → {item.get('gdl_name')} "
+                    f"({item.get('type')}){default}; {item.get('description', '')}"
+                )
+            lines.append("- Requirement mappings:")
+            for item in self.requirement_mappings:
+                lines.append(
+                    f"  - {item.get('requirement_id')}: {item.get('text', '')}; "
+                    f"parts={item.get('part_refs', [])}; parameters={item.get('parameter_refs', [])}; "
+                    f"scripts={item.get('script_refs', [])}; check={item.get('check_id')}; "
+                    f"scenarios={item.get('scenario_refs', [])}; sources={item.get('source_refs', [])}"
+                )
         return "\n".join(lines)
 
-    def to_user_summary(self) -> str:
+    def to_user_summary(self, planning_artifact: dict[str, Any] | None = None) -> str:
         parts = [
             "### 生成前规划",
             f"- 对象类型：{self.object_type}",
         ]
+        if self.degraded:
+            parts.append("- 规划状态：降级候选；部分结构化依据缺失，不能视为完整 typed Plan。")
+        elif planning_artifact and planning_artifact.get("status") == "needs_input":
+            parts.append("- 规划状态：需要补充确认；存在冲突或输入歧义。")
+        elif planning_artifact and planning_artifact.get("status") == "degraded":
+            parts.append("- 规划状态：降级候选；部分要求尚未映射或验证。")
+        elif planning_artifact and planning_artifact.get("status") == "ready":
+            parts.append("- 规划状态：结构化计划已通过合同校验；这不代表生成结果已验证。")
         if self.geometry:
             parts.append(f"- 几何组成：{'；'.join(self.geometry[:4])}")
         if self.parameters:
@@ -97,6 +133,29 @@ class GDLObjectPlan:
             parts.append(f"- 2D 策略：{'；'.join(self.script_2d_strategy[:2])}")
         if self.knowledge_sources:
             parts.append(f"- 本次使用知识：{'；'.join(self.knowledge_sources[:8])}")
+        if planning_artifact:
+            spec = planning_artifact.get("candidate_spec") or {}
+            params = spec.get("params") if isinstance(spec, dict) else []
+            if params:
+                parts.append("- 候选参数：" + "；".join(
+                    f"{item.get('gdl_name')} ({item.get('type')}{', ' + str(item.get('unit')) if item.get('unit') else ''})"
+                    for item in params if isinstance(item, dict)
+                ))
+            execution = planning_artifact.get("execution_plan") or {}
+            mappings = execution.get("requirement_mappings") if isinstance(execution, dict) else []
+            if mappings:
+                parts.append("- 要求覆盖：" + "；".join(
+                    f"{item.get('requirement_id')} → 部件 {item.get('part_refs') or '无'} / 参数 {item.get('parameter_refs') or '无'} / 脚本 {item.get('script_refs') or '无'} / 场景 {item.get('scenario_refs') or '无'}"
+                    for item in mappings if isinstance(item, dict)
+                ))
+            issues = planning_artifact.get("issues") or []
+            if issues:
+                parts.append("- 规划缺口：" + "；".join(
+                    f"{item.get('field_path') or 'plan'}：{item.get('message') or item.get('code') or '未说明'}"
+                    for item in issues if isinstance(item, dict)
+                ))
+            if isinstance(execution, dict) and execution.get("plan_hash"):
+                parts.append(f"- Plan hash：{execution['plan_hash']}")
         return "\n".join(parts)
 
 
@@ -179,6 +238,9 @@ def parse_gdl_object_plan(text: str, *, fallback: GDLObjectPlan | None = None) -
         validation_checks=_as_list(data.get("validation_checks")) or fallback.validation_checks,
         knowledge_sources=_as_list(data.get("knowledge_sources")) or fallback.knowledge_sources,
         risks=_as_list(data.get("risks")) or fallback.risks,
+        parts=_as_object_list(data.get("parts")),
+        typed_parameters=_as_object_list(data.get("typed_parameters")),
+        requirement_mappings=_as_object_list(data.get("requirement_mappings")),
     )
 
 
@@ -331,7 +393,16 @@ def _build_planner_user_prompt(
         "",
         "请先自主规划一个能用于工程继续修改的 GDL 物件，不要要求用户提供过细参数。",
         "规划必须覆盖：构件假设、参数组、派生参数、几何拆解、GDL 命令选择、2D/3D 策略、材质、热点可编辑性、校验项和风险。",
+        "另请输出 typed_parameters、parts 与 requirement_mappings。参数使用规范单位并关联稳定 param_id；每条用户/图像要求要映射到实际 part_refs、parameter_refs、script_refs、check_id（只用已提供的框架检查 ID；不确定则 null）、scenario_refs 与 source_refs。",
+        "把图像推断与用户明确尺寸分开：用户明确值优先；未观察到的内部结构必须标为 assumption 或要求澄清，不能写成观察事实。",
     ]
+    from openbrep.contracts.bindings import BUILTIN_CHECK_EXECUTORS
+
+    parts.append(
+        "当前可引用的框架 check_id："
+        + ", ".join(sorted(BUILTIN_CHECK_EXECUTORS))
+        + "。不得创造列表外 check_id；没有适用执行器时 check_id 必须为 null。"
+    )
     if knowledge:
         parts.append("可参考知识片段：\n" + _limit_text(knowledge, knowledge_max_chars))
     if skills:
@@ -369,6 +440,12 @@ def _as_list(value: Any) -> list[str]:
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
+
+
+def _as_object_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
 
 
 def _append_section(lines: list[str], title: str, values: list[str]) -> None:
@@ -424,6 +501,9 @@ Return only compact JSON with this schema:
   "material_strategy": ["..."],
   "hotspots_and_editability": ["..."],
   "validation_checks": ["..."],
+  "parts": [{"part_id": "stable_snake_case_id", "description": "..."}],
+  "typed_parameters": [{"param_id": "p.stable_id", "gdl_name": "A", "type": "Length", "unit": "m", "description": "...", "default_value": 1.2, "required": true}],
+  "requirement_mappings": [{"requirement_id": "stable_req_id", "text": "...", "kind": "check|constraint|assumption", "part_refs": ["part_id"], "parameter_refs": ["p.stable_id"], "script_refs": ["scripts/3d.gdl"], "check_id": "registered_check_or_null", "scenario_refs": ["scenario-id"], "source_refs": ["user:... or observation:..."]}],
   "knowledge_sources": ["..."],
   "risks": ["..."]
 }

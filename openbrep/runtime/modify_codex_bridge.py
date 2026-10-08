@@ -44,6 +44,7 @@ from openbrep.codex.turn import (
     TURN_ERROR_TEXT,
     build_turn_prompt,
 )
+from openbrep.compiler import CompileResult
 from openbrep.llm import ToolCall, ToolDefinition
 
 if TYPE_CHECKING:
@@ -921,6 +922,7 @@ class CodexModifyBridge:
         self.on_event = request.on_event or (lambda *_: None)
         # 卡03：可注入时钟（task 截止计算与 driver 共用同一时间源）
         self._clock = clock or _default_clock
+        self.run_control = getattr(request, "run_control", None)
 
         compiler = pipeline._make_compiler()
         self.compiler = compiler
@@ -992,6 +994,7 @@ class CodexModifyBridge:
                     plan_to_dict,
                     save_extraction,
                 )
+                from openbrep.vision.harness import build_project_hints, extraction_cache_context
                 from openbrep.vision.harness import run as vision_harness_run
                 from openbrep.vision.modeling_plan import ModelingPlan
                 from openbrep.vision.multi_image import resolve_and_preprocess
@@ -1004,14 +1007,29 @@ class CodexModifyBridge:
                     "codex_reasoning_effort": self.reasoning_effort,
                 }
                 hint_parts: list[str] = []
+                vision_hints = (
+                    build_project_hints(project, self.effect_contract)
+                    if self.effect_contract else ""
+                )
                 for idx, img in enumerate(multi_images, start=1):
                     token = img.token or f"图{idx}"
                     plan: Any = None
                     reused = False
                     reused_from_model = ""
+                    cache_context = extraction_cache_context(
+                        img,
+                        user_input=request.user_input,
+                        model=_llm_model_name(llm),
+                        intent="MODIFY",
+                        project_hints=vision_hints,
+                        position=idx,
+                        total=len(multi_images),
+                    )
                     if img.b64:
                         try:
-                            stored = load_extraction(project.root, img.sha256)
+                            stored = load_extraction(
+                                project.root, img.sha256, expected_context=cache_context,
+                            )
                         except Exception as exc:
                             self.logger.warning(
                                 "codex modify: extraction load failed for %s: %s", token, exc
@@ -1025,23 +1043,19 @@ class CodexModifyBridge:
                         else:
                             # 未命中：只对这一张图跑简化档 harness（无 critic）
                             # P1-B：显式契约存在时注入项目领域提示（GUI 门控）
-                            from openbrep.vision.harness import build_project_hints
-
-                            hints = (
-                                build_project_hints(project, self.effect_contract)
-                                if self.effect_contract
-                                else ""
-                            )
                             plans = vision_harness_run(
                                 [img], "MODIFY", request.user_input, llm,
                                 on_event=self.on_event, critic_pass=False,
                                 llm_kwargs=codex_kwargs,
-                                project_hints=hints,
+                                project_hints=vision_hints,
                             )
                             plan = plans[0] if plans else None
                             if plan is not None:
                                 try:
-                                    save_extraction(project.root, plan, model=_llm_model_name(llm))
+                                    save_extraction(
+                                        project.root, plan, model=_llm_model_name(llm),
+                                        cache_context=cache_context,
+                                    )
                                 except Exception as exc:
                                     self.logger.warning(
                                         "codex modify: extraction persist failed for %s: %s",
@@ -1107,6 +1121,13 @@ class CodexModifyBridge:
             apply_changes=agent._apply_changes,
             on_event=self.on_event,
         )
+        self.registry.before_params = list(self.before_params)
+        self.registry.before_preview = dict(self.before_preview)
+        if isinstance(getattr(request, "confirmed_plan", None), dict):
+            self.registry.preserved_constraints = [
+                str(item) for item in request.confirmed_plan.get("preserved_constraints", [])
+                if str(item).strip()
+            ]
         self.registry.on_before_write = self._ensure_before_revision
         # RF01/R2-02：提交前授权 + 原子提交边界——校验与变更在同一提交锁内
         self.registry.write_guard = self._write_guard_rejection
@@ -1120,6 +1141,7 @@ class CodexModifyBridge:
         self.turns = 0
         self.budget_exhausted = False
         self.cancelled = False
+        self.task_timed_out = False
         self.gate_rejections = 0
         self.gate_unresolved = False
         self.epoch_violated = False
@@ -1185,6 +1207,12 @@ class CodexModifyBridge:
         """
         if not self._task_auth.valid:
             return self._task_auth.reason
+        if self.run_control is not None:
+            decision = self.run_control.check(stage="codex_tool")
+            if not decision.allowed:
+                reason = "任务已取消" if decision.reason == "cancelled" else "任务时间预算已耗尽"
+                self._revoke_task(reason)
+                return reason
         if self.cancelled:
             self._revoke_task("任务已取消")
             return "任务已取消"
@@ -1194,7 +1222,7 @@ class CodexModifyBridge:
         if self._task_deadline_at is not None and self._clock() >= self._task_deadline_at:
             self._revoke_task("任务超时")
             return "任务超时"
-        if self.request.should_cancel is not None:
+        if self.run_control is None and self.request.should_cancel is not None:
             try:
                 if self.request.should_cancel():
                     self._revoke_task("任务已取消")
@@ -1220,7 +1248,14 @@ class CodexModifyBridge:
                 self._tls.commit_rejected = True
                 raise WriteRejected(rejection)
             self._tls.commit_rejected = False
-            mutation()
+            if self.run_control is not None:
+                decision, _ = self.run_control.commit(mutation, stage="codex_commit")
+                if not decision.allowed:
+                    reason = "任务已取消" if decision.reason == "cancelled" else "任务时间预算已耗尽"
+                    self._tls.commit_rejected = True
+                    raise WriteRejected(reason)
+            else:
+                mutation()
 
     def _revoke_task(self, reason: str) -> None:
         """任务级撤销：任务授权 + 全部在途调用授权，一次终局、不可复活。"""
@@ -1292,6 +1327,18 @@ class CodexModifyBridge:
             entry["rejected_reason"] = "budget_exhausted"
             self.audit.append(entry)
             return BUDGET_EXHAUSTED_TOOL_TEXT, False
+        if self.run_control is not None:
+            decision = self.run_control.begin_tool(stage=f"codex_tool:{tool}")
+            if not decision.allowed:
+                if decision.reason == "cancelled":
+                    self.cancelled = True
+                elif decision.reason == "deadline":
+                    self.task_timed_out = True
+                elif decision.reason == "tool_budget":
+                    self.budget_exhausted = True
+                entry["rejected_reason"] = decision.reason or "stopped"
+                self.audit.append(entry)
+                return "任务已停止，拒绝执行迟到的工具调用。", False
         self.seen_call_ids.add(call_id)
         # R2-01：每次调用持独立授权令牌（提交点校验；回合结束/超时撤销）
         call_auth = _CommitAuthorization()
@@ -1388,7 +1435,11 @@ class CodexModifyBridge:
             tool_timeout = _positive_float(
                 getattr(agent_cfg, "agent_tool_timeout", None), _DEFAULT_TOOL_TIMEOUT
             )
-            self._task_deadline_at = self._clock() + task_timeout
+            self._task_deadline_at = (
+                self.run_control.deadline_at
+                if self.run_control is not None
+                else self._clock() + task_timeout
+            )
             kwargs = {
                 "client": client,
                 "model": self.model,
@@ -1548,8 +1599,15 @@ class CodexModifyBridge:
 
             # 如实报告的最终编译（AI 全程未编译时补跑一次；不算工具调用）
             if compile_result is None:
-                hsf_dir = self.project.save_to_disk()
-                compile_result = self.compiler.hsf2libpart(str(hsf_dir), self.gsm_path)
+                from openbrep.contracts.project_store import commit_project_source_state
+
+                committed = commit_project_source_state(self.project)
+                compile_result = (
+                    self.compiler.hsf2libpart(str(self.project.root), self.gsm_path)
+                    if committed.ok else CompileResult(
+                        False, stderr=f"源码事务提交失败：{committed.error}", exit_code=1
+                    )
+                )
                 self.registry.last_compile_result = compile_result
 
             if semantic_result is None:
@@ -1675,6 +1733,11 @@ class CodexModifyBridge:
                 + "\n".join(f"- {w}" for w in diff_warnings)
             )
 
+        if self.registry.changed_files and self.registry.impact_report is None:
+            self.registry.refresh_impact()
+        if self.registry.impact_report:
+            output_parts.append(self.registry._impact_summary(self.registry.impact_report))
+
         static_result = StaticChecker().check(self.project)
         verification_report = build_verification_report(
             intent=self.intent,
@@ -1692,6 +1755,19 @@ class CodexModifyBridge:
         )
         output_parts.append(verification_report.to_summary_text())
 
+        if self.run_control is not None:
+            final_decision = self.run_control.check(stage="codex_finalize")
+            if not final_decision.allowed:
+                self.cancelled = self.cancelled or final_decision.reason == "cancelled"
+                self.task_timed_out = self.task_timed_out or final_decision.reason == "deadline"
+            terminal_reason = (
+                "cancelled" if self.cancelled else
+                "deadline" if self.task_timed_out else
+                "tool_budget" if self.budget_exhausted else
+                "completed"
+            )
+            self.run_control.finish(terminal_reason)
+
         # 交付门禁：取消 / epoch 违规 / 崩溃 / 超时 / 无 final 一律不算成功
         # （任何非 stop 终局都意味着任务未完成——不得以"项目恰好可编译"假成功）。
         # R2-03：关键写入被拒且无后续有效修复（成功写提交）→ 非完整交付，
@@ -1705,6 +1781,7 @@ class CodexModifyBridge:
         # 迟到提交必被拒），不再据此否定交付；交付以真实源状态与后续判定为准。
         aborted_delivery = (
             self.cancelled
+            or self.task_timed_out
             or self.epoch_violated
             or rejected_unresolved
             or any(
@@ -1731,6 +1808,7 @@ class CodexModifyBridge:
                 }
             },
             "acceptance": acceptance,
+            **({"impact_report": self.registry.impact_report} if self.registry.impact_report else {}),
             # G1 统一结构化计数接口（与非 codex agent loop 同形状）：
             # llm_calls = turn 次数（每次 turn 一次模型调用，真实计数点）；
             # timeout = 任一 turn finish_reason=="timeout"；均不解析文本反推。
@@ -1739,7 +1817,7 @@ class CodexModifyBridge:
                 "tool_calls": self.tool_calls_used,
                 "budget_exhausted": self.budget_exhausted,
                 "cancelled": self.cancelled,
-                "timeout": any(
+                "timeout": self.task_timed_out or any(
                     o.finish_reason == "timeout" for o in self.turn_outcomes
                 ),
                 # 卡03：细分原因（task_deadline 优先于 idle_timeout；布尔字段

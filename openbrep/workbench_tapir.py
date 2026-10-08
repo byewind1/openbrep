@@ -226,5 +226,13 @@ def _is_unsupported_command(error: str) -> bool:
     lowered = error.lower()
     return any(
         marker in lowered
-        for marker in ("unknown command", "unsupported", "not supported", "does not support")
+        for marker in (
+            "unknown command",
+            "unsupported",
+            "not supported",
+            "does not support",
+            "additional properties",
+            "additionalproperties",
+            "unexpected property",
+        )
     )

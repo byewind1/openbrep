@@ -11,8 +11,7 @@ import os
 import shutil
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from openbrep.source_fingerprint import collect_managed_source_files, compute_source_fingerprint
@@ -26,6 +25,7 @@ CONTRACT_SCHEMA_VERSION = 1
 class ProjectContract:
     status: str  # missing | fresh | stale | invalid
     object_spec: dict[str, Any] | None = None
+    observation: dict[str, Any] | None = None
     source_fingerprint: str = ""
     current_source_fingerprint: str = ""
     errors: tuple[str, ...] = ()
@@ -73,6 +73,21 @@ def _validate_spec(spec: dict[str, Any] | None) -> tuple[dict[str, Any] | None, 
     from openbrep.contracts.object_spec import parse_object_spec
 
     parsed = parse_object_spec(spec)
+    if not parsed.ok:
+        return None, tuple(f"{e.field_path}: {e.code}" for e in parsed.errors)
+    return parsed.value.to_dict(), ()
+
+
+def _validate_observation(observation: dict[str, Any] | None) -> tuple[dict[str, Any] | None, tuple[str, ...]]:
+    if observation is None:
+        return None, ()
+    if hasattr(observation, "to_dict"):
+        observation = observation.to_dict()
+    if not isinstance(observation, dict):
+        return None, ("observation must be a JSON object",)
+    from openbrep.contracts.object_spec import parse_observation
+
+    parsed = parse_observation(observation)
     if not parsed.ok:
         return None, tuple(f"{e.field_path}: {e.code}" for e in parsed.errors)
     return parsed.value.to_dict(), ()
@@ -152,6 +167,7 @@ def commit_project_state(
     object_spec: dict[str, Any] | Any | None,
     *,
     source_writer: Callable[[], Any] | None = None,
+    observation: dict[str, Any] | Any | None = None,
 ) -> CommitResult:
     """Commit saved HSF source and its adopted ObjectSpec as one recoverable unit.
 
@@ -165,6 +181,9 @@ def commit_project_state(
     validated, errors = _validate_spec(object_spec)
     if errors:
         return CommitResult(False, error="Invalid object spec: " + "; ".join(errors))
+    validated_observation, observation_errors = _validate_observation(observation)
+    if observation_errors:
+        return CommitResult(False, error="Invalid observation: " + "; ".join(observation_errors))
 
     recover_project_state(root)
     txn_id = f"source-spec-{uuid.uuid4().hex}"
@@ -196,6 +215,18 @@ def commit_project_state(
         else:
             raise TypeError("source_writer is required when project has no save_to_disk()")
 
+        # A coordinated mutation may refresh the source-bound observation and
+        # its ObjectSpec reference from inside source_writer. Revalidate and
+        # persist that final pair after the source commit has produced its new
+        # fingerprint; the initial validation above still fails closed before
+        # any source write for malformed contracts.
+        validated, errors = _validate_spec(object_spec)
+        if errors:
+            raise ValueError("Invalid object spec after source write: " + "; ".join(errors))
+        validated_observation, observation_errors = _validate_observation(observation)
+        if observation_errors:
+            raise ValueError("Invalid observation after source write: " + "; ".join(observation_errors))
+
         source_fingerprint = compute_source_fingerprint(root)
         if validated is None:
             contract_path.unlink(missing_ok=True)
@@ -205,7 +236,82 @@ def commit_project_state(
                 "source_fingerprint": source_fingerprint,
                 "object_spec": validated,
             }
+            if validated_observation is not None:
+                payload["observation"] = validated_observation
             _atomic_write(contract_path, _json_bytes(payload))
+        manifest["state"] = "committed"
+        manifest["source_fingerprint"] = source_fingerprint
+        _manifest_write(txn_dir / "manifest.json", manifest)
+        shutil.rmtree(txn_dir)
+        return CommitResult(True, source_fingerprint=source_fingerprint)
+    except Exception as exc:
+        try:
+            _restore_transaction(root, txn_dir, manifest)
+            shutil.rmtree(txn_dir)
+        except Exception as recovery_exc:
+            return CommitResult(False, error=f"{exc}; rollback needs recovery: {recovery_exc}")
+        return CommitResult(False, error=str(exc))
+
+
+def commit_project_source_state(
+    project: Any,
+    *,
+    source_writer: Callable[[], Any] | None = None,
+    before_commit: Callable[[], None] | None = None,
+) -> CommitResult:
+    """Commit changed HSF source while preserving the existing contract bytes.
+
+    Ordinary script edits do not prove that an adopted ObjectSpec still
+    describes the source. Keeping its old fingerprint makes that fact visible
+    as ``stale``. The transaction still backs up both source and contract so a
+    failed save restores the complete pre-edit state.
+    """
+    candidate = project if isinstance(project, (str, Path)) else getattr(project, "root", project)
+    root = Path(candidate).expanduser().resolve()
+    if not root.is_dir():
+        # New projects do not have an on-disk generation to journal yet.
+        try:
+            if source_writer is not None:
+                source_writer()
+            elif callable(getattr(project, "save_to_disk", None)):
+                project.save_to_disk()
+            else:
+                raise TypeError("source_writer is required when project has no save_to_disk()")
+            return CommitResult(True, source_fingerprint=compute_source_fingerprint(root))
+        except Exception as exc:
+            return CommitResult(False, error=str(exc))
+    recover_project_state(root)
+    txn_id = f"source-spec-{uuid.uuid4().hex}"
+    txn_dir = root / TRANSACTIONS_RELATIVE_PATH / txn_id
+    backup = txn_dir / "backup"
+    files = collect_managed_source_files(root)
+    contract_path = root / CONTRACT_RELATIVE_PATH
+    txn_dir.mkdir(parents=True, exist_ok=False)
+    for rel_path in files:
+        src = root / rel_path
+        dst = backup / "source" / rel_path
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    if contract_path.is_file():
+        shutil.copy2(contract_path, backup / "contract.json")
+    manifest = {
+        "schema_version": 1,
+        "state": "prepared",
+        "source_files": files,
+        "contract_existed": contract_path.is_file(),
+    }
+    _manifest_write(txn_dir / "manifest.json", manifest)
+
+    try:
+        if before_commit is not None:
+            before_commit()
+        if source_writer is not None:
+            source_writer()
+        elif callable(getattr(project, "save_to_disk", None)):
+            project.save_to_disk()
+        else:
+            raise TypeError("source_writer is required when project has no save_to_disk()")
+        source_fingerprint = compute_source_fingerprint(root)
         manifest["state"] = "committed"
         manifest["source_fingerprint"] = source_fingerprint
         _manifest_write(txn_dir / "manifest.json", manifest)
@@ -237,7 +343,12 @@ def load_project_contract(project_root: str | Path) -> ProjectContract:
     validated, errors = _validate_spec(spec)
     if errors:
         return ProjectContract("invalid", errors=errors)
+    observation = None
+    if payload.get("observation") is not None:
+        observation, observation_errors = _validate_observation(payload.get("observation"))
+        if observation_errors:
+            return ProjectContract("invalid", errors=observation_errors)
     current = compute_source_fingerprint(root)
     bound = str(payload.get("source_fingerprint") or "")
     status = "fresh" if bound and bound == current else "stale"
-    return ProjectContract(status, validated, bound, current)
+    return ProjectContract(status, validated, observation, bound, current)

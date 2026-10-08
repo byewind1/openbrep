@@ -47,6 +47,46 @@ class HostVerificationService:
         )
 
     def run(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Run one request or a serial, isolated batch of named scenarios."""
+        body = dict(body or {})
+        scenarios = body.get("scenarios")
+        if not isinstance(scenarios, list):
+            return self._run_one(body)
+        if not scenarios:
+            return {"ok": False, "error": "scenarios 不能为空", "status": "not_checked"}
+        normalized_scenarios: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for index, scenario in enumerate(scenarios):
+            if not isinstance(scenario, dict):
+                return {"ok": False, "error": f"scenarios[{index}] 必须是对象", "status": "not_checked"}
+            scenario_id = str(scenario.get("scenario_id") or "").strip()
+            if not scenario_id or scenario_id in seen:
+                return {
+                    "ok": False,
+                    "error": f"scenarios[{index}].scenario_id 缺失或重复",
+                    "status": "not_checked",
+                }
+            seen.add(scenario_id)
+            normalized_scenarios.append({**scenario, "scenario_id": scenario_id})
+        results: list[dict[str, Any]] = []
+        for scenario in normalized_scenarios:
+            case = {key: value for key, value in body.items() if key != "scenarios"}
+            case.update(scenario)
+            results.append(self._run_one(case))
+        passed_count = sum(
+            item.get("verification", {}).get("status") == "passed"
+            and item.get("current") is True for item in results
+        )
+        return {
+            "ok": all(item.get("ok") is True for item in results),
+            "status": "passed" if passed_count == len(results) else "failed",
+            "scenario_results": results,
+            "scenario_count": len(results),
+            "passed_count": passed_count,
+            "current": all(item.get("current") is True for item in results),
+        }
+
+    def _run_one(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
         body = body or {}
         project = getattr(self.session, "project", None)
         if project is None:
@@ -71,7 +111,21 @@ class HostVerificationService:
         requested_parameters = parameter_values(project, overrides)
         required_names = {str(name).lower() for name in overrides}
         parameter_fingerprint = _json_fingerprint(requested_parameters)
-        contract_hash = _file_hash(project.root / ".openbrep" / "contracts" / "stair.json")
+        spec_path = project.root / ".openbrep" / "contracts" / "object_spec.json"
+        spec_hash = _file_hash(spec_path)
+        contract_hash = spec_hash or _file_hash(project.root / ".openbrep" / "contracts" / "stair.json")
+        dependencies_hash = _file_hash(
+            project.root / ".openbrep" / "dependencies" / "library-parts.json"
+        )
+        project_contract = _load_object_spec(project.root)
+        if project_contract.get("status") in {"invalid", "stale"}:
+            return {
+                "ok": False,
+                "error": "对象合同无效或已过期，不能复用宿主验收",
+                "status": project_contract["status"],
+                "stale": project_contract.get("status") == "stale",
+                "contract_errors": project_contract.get("errors", []),
+            }
         revision_id = _matching_revision(project.root, source_fingerprint)
         record_root = project.root / HOST_RECORD_DIR
         artifact_path = record_root / "artifacts" / f"{record_id}.gsm"
@@ -89,10 +143,20 @@ class HostVerificationService:
             "source_fingerprint_before_compile": source_fingerprint,
             "source_fingerprint_after_compile": None,
             "contract_hash": contract_hash,
+            "spec_hash": spec_hash,
+            "spec_id": project_contract.get("spec_id"),
+            "scenario_id": str(body.get("scenario_id") or "default"),
+            "scenario": _scenario_payload(body),
+            "scenario_hash": _json_fingerprint(_scenario_payload(body)),
+            "executor_id": "host_run",
+            "executor_version": "1",
+            "dependencies_hash": dependencies_hash,
             "gsm_sha256": None,
             "loaded_identity": None,
             "identity_status": "unverified",
             "requested_parameters": requested_parameters,
+            "effective_parameters": None,
+            "parameter_readback_status": "unavailable",
             "applied_parameters": [],
             "skipped_parameters": [],
             "parameter_fingerprint": parameter_fingerprint,
@@ -100,6 +164,9 @@ class HostVerificationService:
             "addon_version": None,
             "preview_3d": None,
             "preview_2d": None,
+            "automatic_measurements": None,
+            "human_review": {"status": "not_reviewed", "reviewer": None, "notes": None},
+            "evidence_source": "archicad",
             "host_transaction": None,
             "diagnostics": diagnostics,
             "converter": {"path": converter_path, "mode": "lp"},
@@ -140,6 +207,9 @@ class HostVerificationService:
                         gsm_sha256=gsm_sha,
                         project=project,
                         parameters=requested_parameters,
+                        scenario_id=record["scenario_id"],
+                        spec_hash=spec_hash,
+                        dependencies_hash=dependencies_hash,
                     )
                     _apply_host_result(record, host, required_names, diagnostics)
         except _SnapshotSourceMismatch:
@@ -150,6 +220,12 @@ class HostVerificationService:
             record["status"] = "failed"
 
         record["finished_at"] = self.now_fn()
+        record["evidence_binding"] = _host_evidence_binding(
+            record,
+            project_epoch=start_epoch,
+            requirement_ids=body.get("requirement_ids"),
+            plan_hash=str(body.get("plan_hash") or ""),
+        )
         if record["status"] == "passed" and revision_id:
             try:
                 from openbrep.revisions import register_revision_protection
@@ -202,6 +278,8 @@ class HostVerificationService:
             and int(getattr(self.session, "project_epoch", 0)) == start_epoch
             and fingerprints_equal(compute_source_fingerprint(project.root), source_fingerprint)
         )
+        if project_contract.get("status") == "stale":
+            current = False
         return {
             "ok": True,
             "verification": record,
@@ -231,9 +309,15 @@ class HostVerificationService:
             compute_source_fingerprint(project.root),
         ):
             reasons.append("source_changed")
-        current_contract = _file_hash(project.root / ".openbrep" / "contracts" / "stair.json")
+        current_spec = _file_hash(project.root / ".openbrep" / "contracts" / "object_spec.json")
+        current_contract = current_spec or _file_hash(project.root / ".openbrep" / "contracts" / "stair.json")
         if record.get("contract_hash") != current_contract:
             reasons.append("contract_changed")
+        current_dependencies = _file_hash(
+            project.root / ".openbrep" / "dependencies" / "library-parts.json"
+        )
+        if record.get("dependencies_hash") != current_dependencies:
+            reasons.append("dependencies_changed")
         overrides = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
         current_parameters = parameter_values(project, overrides)
         if record.get("parameter_fingerprint") != _json_fingerprint(current_parameters):
@@ -252,6 +336,9 @@ class HostVerificationService:
             lib_part_guid=kwargs["project"].guid,
             parameters=kwargs["parameters"],
             want=["identity", "mesh3d", "prims2d"],
+            scenario_id=kwargs.get("scenario_id"),
+            spec_hash=kwargs.get("spec_hash"),
+            dependencies_hash=kwargs.get("dependencies_hash"),
         )
 
     def _write_record(self, record: dict[str, Any]) -> None:
@@ -284,6 +371,34 @@ def _apply_host_result(
         diagnostics.append(str(host.get("error") or "host verification failed"))
         return
     identity = host.get("loadedIdentity") if isinstance(host.get("loadedIdentity"), dict) else {}
+    protocol_version = host.get("verificationProtocolVersion")
+    raw_capabilities = host.get("capabilities")
+    capabilities = {
+        item for item in raw_capabilities if isinstance(item, str)
+    } if isinstance(raw_capabilities, list) else set()
+    record["verification_protocol_version"] = protocol_version
+    record["addon_capabilities"] = sorted(capabilities)
+    required_capabilities = {
+        "artifact_identity",
+        "effective_parameters_readback",
+        "scenario_context",
+        "transaction_restore",
+    }
+    if type(protocol_version) is not int or protocol_version != 1 or not required_capabilities.issubset(capabilities):
+        missing = sorted(required_capabilities - capabilities)
+        diagnostics.append("host_verification_protocol_unsupported:" + ",".join(missing))
+        record["status"] = "unsupported"
+        return
+    for field, key in (
+        ("scenario_id", "scenarioId"),
+        ("spec_hash", "specHash"),
+        ("dependencies_hash", "dependenciesHash"),
+    ):
+        expected = record.get(field)
+        if expected is not None and host.get(key) != expected:
+            diagnostics.append(f"host_context_mismatch:{field}")
+            record["status"] = "failed"
+            return
     loaded_hash = str(identity.get("gsmSha256") or "")
     expected_hash = str(record.get("gsm_sha256") or "")
     record["loaded_identity"] = {
@@ -296,6 +411,25 @@ def _apply_host_result(
     record["identity_status"] = "verified" if identity_verified else "mismatch"
     record["applied_parameters"] = _name_list(host.get("appliedParameters"))
     record["skipped_parameters"] = _name_list(host.get("skippedParameters"))
+    effective = host.get("effectiveParameters")
+    if isinstance(effective, dict):
+        record["effective_parameters"] = effective
+        record["parameter_readback_status"] = "verified"
+        requested = record.get("requested_parameters") or {}
+        normalized_effective = {str(name).upper(): value for name, value in effective.items()}
+        differences = {
+            name: {"requested": value, "effective": normalized_effective.get(str(name).upper())}
+            for name, value in requested.items()
+            if str(name).upper() not in normalized_effective
+            or _json_fingerprint(value) != _json_fingerprint(normalized_effective[str(name).upper()])
+        }
+        record["parameter_differences"] = differences
+        if differences:
+            diagnostics.append("effective_parameters_differ:" + ",".join(sorted(differences)))
+    else:
+        record["parameter_readback_status"] = "unavailable"
+        diagnostics.append("host_effective_parameters_unavailable")
+    record["automatic_measurements"] = host.get("measurements") if isinstance(host.get("measurements"), dict) else None
     record["archicad_version"] = str(host.get("archicadVersion") or "") or None
     record["addon_version"] = str(host.get("addonVersion") or "") or None
     record["preview_3d"] = {"meshes": host.get("meshes") or []}
@@ -340,6 +474,10 @@ def _apply_host_result(
         record["status"] = "failed"
     elif not identity_verified:
         record["status"] = "identity_unverified"
+    elif record["parameter_readback_status"] != "verified":
+        record["status"] = "identity_unverified"
+    elif record.get("parameter_differences"):
+        record["status"] = "failed"
     elif not record["archicad_version"] or not record["addon_version"]:
         diagnostics.append("host_version_missing")
         record["status"] = "identity_unverified"
@@ -390,3 +528,61 @@ def _matching_revision(project_root: Path, source_fingerprint: str) -> str | Non
         except Exception:
             continue
     return None
+
+
+def _load_object_spec(project_root: Path) -> dict[str, Any]:
+    """Read the adopted generic ObjectSpec; retain stair.json as a legacy adapter."""
+    from openbrep.contracts.project_store import load_project_contract
+
+    contract = load_project_contract(project_root)
+    spec = contract.object_spec if contract.status == "fresh" else None
+    return {
+        "status": contract.status,
+        "spec_id": str(spec.get("spec_id") or "") if isinstance(spec, dict) else None,
+        "errors": list(contract.errors),
+    }
+
+
+def _scenario_payload(body: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "kind": str(body.get("scenario_kind") or "explicit"),
+        "parameters": dict(body.get("parameters") or {}) if isinstance(body.get("parameters"), dict) else {},
+        "expected": dict(body.get("expected") or {}) if isinstance(body.get("expected"), dict) else {},
+    }
+
+
+def _host_evidence_binding(
+    record: dict[str, Any], *, project_epoch: int, requirement_ids: Any, plan_hash: str
+) -> dict[str, Any]:
+    from openbrep.contracts.bindings import EvidenceBinding, GuardBinding
+
+    guard = GuardBinding(
+        source_fingerprint=str(record.get("source_fingerprint") or ""),
+        project_epoch=project_epoch,
+        requirement_ids=[str(item) for item in requirement_ids] if isinstance(requirement_ids, list) else [],
+        plan_hash=plan_hash,
+    )
+    evidence = EvidenceBinding(
+        guard=guard,
+        evidence_kind="host",
+        executor_id=str(record.get("executor_id") or "host_run"),
+        gsm_fingerprint=str(record.get("gsm_sha256") or ""),
+        parameter_values_hash=str(record.get("parameter_fingerprint") or ""),
+        dependencies_hash=str(record.get("dependencies_hash") or ""),
+        scene_refs=[str(record.get("scenario_id") or "default")],
+        contract_hash=str(record.get("contract_hash") or ""),
+        result_facts={
+            "record_id": record.get("record_id"),
+            "status": record.get("status"),
+            "identity_status": record.get("identity_status"),
+            "parameter_readback_status": record.get("parameter_readback_status"),
+            "verification_protocol_version": record.get("verification_protocol_version"),
+            "addon_capabilities": record.get("addon_capabilities"),
+            "archicad_version": record.get("archicad_version"),
+            "addon_version": record.get("addon_version"),
+            "executor_version": record.get("executor_version"),
+            "evidence_source": record.get("evidence_source"),
+        },
+        produced_at=str(record.get("finished_at") or ""),
+    )
+    return evidence.to_dict()

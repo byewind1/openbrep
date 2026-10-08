@@ -458,6 +458,7 @@ class WorkbenchSettingsService:
             # model = 生效模型（会话覆盖存在时即覆盖值）；session_model = 会话覆盖
             # 模型（D16，无覆盖时为 None）。前端 pill 据此显示覆盖态。
             "conversation_entry": self.session.config.llm.effective_conversation_entry(),
+            "confirm_before_execute": bool(self.session.config.llm.confirm_before_execute),
             "model": self.session.llm_model,
             "session_model": session_llm_model_override(self.session),
             "model_available": llm_model_available(
@@ -587,6 +588,19 @@ class WorkbenchSettingsService:
             self.session.config.llm.codex_routing_mode = routing_mode
         self.session.llm_api_key = self.session.config.llm.resolve_api_key(model) or ""
         self.session.llm_api_base = self.session.config.llm.resolve_api_base(model) or ""
+        save_workbench_config(self.session.config, self.session.config_path)
+        return {"ok": True, "llm": self.llm_settings()}
+
+    def update_plan_approval_default(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Save the explicit default for the per-turn pre-execution approval toggle."""
+        value = body.get("confirm_before_execute")
+        if type(value) is not bool:
+            return {
+                "ok": False,
+                "code": "invalid_plan_approval_default",
+                "error": "confirm_before_execute 必须是布尔值。",
+            }
+        self.session.config.llm.confirm_before_execute = value
         save_workbench_config(self.session.config, self.session.config_path)
         return {"ok": True, "llm": self.llm_settings()}
 

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.knowledge_selector import select_gdl_knowledge
 from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 
@@ -220,6 +221,18 @@ class TestCommandSelectionPipeline(unittest.TestCase):
         self.assertNotIn("\n---\n", body)
         # 正文以标题开头，不是 frontmatter 残留
         self.assertTrue(body.lstrip().startswith("# GDL 几何命令选择规则"))
+
+    def test_injected_core_knowledge_uses_meter_units_and_correct_script_roles(self):
+        selected = select_gdl_knowledge(
+            instruction="做一个参数化柜体",
+            intent="create",
+            knowledge_dir=_REPO / "knowledge",
+        )
+        for context in (selected.planner_context, selected.generation_context):
+            self.assertIn("内部单位为米", context)
+            self.assertIn("A=宽、B=深、ZZYZX=高", context)
+            self.assertIn("Parameter（Values）脚本", context)
+            self.assertIn("不在此脚本声明参数", context)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,9 @@ class WorkbenchProjectService:
     def load_hsf_directory(self, path: str) -> dict[str, Any]:
         return self.session_service.load_hsf_directory(path)
 
+    def adopt_import_candidate(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.session_service.adopt_import_candidate(body)
+
     def import_gdl_file(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.session_service.import_gdl_file(body)
 

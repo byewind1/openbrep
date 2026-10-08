@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from openbrep.hsf_project import VALID_PARAM_TYPES, GDLParameter, HSFProject
-from openbrep.parameter_mutations import mutate_parameters
+from openbrep.parameter_mutations import mutate_project_parameters
 from openbrep.parameter_units import UnitValueError, normalize_typed_value
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.values_declarations import parse_values_declarations  # compatibility export
+
+logger = logging.getLogger(__name__)
 
 GDL_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 AUTHORABLE_PARAM_TYPES = {"Length", "RealNum", "Integer", "Boolean", "String"}
@@ -105,6 +108,29 @@ class WorkbenchProjectParameterService:
             self.session.project.get_script(ScriptType.PARAM)
         ).get(name)
 
+    def _snapshot_before_parameter_write(self, operations: list[dict[str, Any]]) -> None:
+        """Create the before revision at the shared coordinator's commit edge."""
+        project = self.session.project
+        if project is None:
+            return
+        try:
+            from openbrep.revisions import create_revision, get_latest_revision_id
+
+            create_revision(
+                project.root,
+                message="auto: before parameter edit",
+                gsm_name=project.name,
+                metadata={"parameter_mutation": {"source": "workbench", "operations": operations}},
+                trigger="parameter_edit",
+                intent="MODIFY",
+                changed_files=["paramlist.xml"],
+                parent_revision_id=get_latest_revision_id(project.root),
+            )
+        except Exception as exc:
+            # Snapshot failures remain visible in logs but preserve the prior
+            # explicit parameter-edit behavior: a valid edit can still commit.
+            logger.warning("parameter edit snapshot failed: %s", exc)
+
     def apply(self, changes: dict[str, Any]) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": False, "error": "Create or open a project before applying parameters."}
@@ -132,10 +158,11 @@ class WorkbenchProjectParameterService:
             if name in known
         ]
         if operations and self.session.source_path is not None:
-            result = mutate_parameters(
+            result = mutate_project_parameters(
                 self.session.project,
                 expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
                 operations=operations,
+                before_commit=lambda: self._snapshot_before_parameter_write(operations),
             )
             if not result.ok:
                 return {"ok": False, "error": result.error, "error_code": result.error_code}
@@ -148,7 +175,7 @@ class WorkbenchProjectParameterService:
         if self.session.project is None:
             return {"ok": False, "error": "Create or open a project before adding parameters."}
         if self.session.source_path is not None:
-            result = mutate_parameters(
+            result = mutate_project_parameters(
                 self.session.project,
                 expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
                 operations=[{
@@ -159,6 +186,9 @@ class WorkbenchProjectParameterService:
                     "description": body.get("description"),
                     "unit": body.get("unit"),
                 }],
+                before_commit=lambda: self._snapshot_before_parameter_write([{
+                    "op": "add", "name": body.get("name"), "type": body.get("type_tag"),
+                }]),
             )
             if not result.ok:
                 return {"ok": False, "error": result.error, "error_code": result.error_code}
@@ -203,31 +233,41 @@ class WorkbenchProjectParameterService:
             )
             if param.is_fixed and (new_name != param.name or new_type != param.type_tag):
                 return {"ok": False, "error": f"Fixed parameter '{param.name}' cannot be renamed or retagged"}
-            structured_only = new_name == param.name and new_type == param.type_tag
-            if structured_only and self.session.source_path is not None:
+            if self.session.source_path is not None:
                 operations = []
-                if "value" in body:
+                if new_name != param.name:
+                    operations.append({"op": "rename", "name": param.name, "new_name": new_name})
+                if new_type != param.type_tag:
+                    operation = {"op": "type_change", "name": new_name, "type": new_type}
+                    if "value" in body:
+                        operation["value"] = body.get("value")
+                        operation["unit"] = body.get("unit")
+                    operations.append(operation)
+                elif "value" in body:
                     operations.append({
                         "op": "set_value",
-                        "name": param.name,
+                        "name": new_name,
                         "value": body.get("value"),
                         "unit": body.get("unit"),
                     })
                 if "description" in body:
                     operations.append({
                         "op": "set_description",
-                        "name": param.name,
+                        "name": new_name,
                         "description": body.get("description"),
                     })
                 if operations:
-                    result = mutate_parameters(
+                    result = mutate_project_parameters(
                         self.session.project,
                         expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
                         operations=operations,
+                        before_commit=lambda: self._snapshot_before_parameter_write(operations),
                     )
                     if not result.ok:
                         return {"ok": False, "error": result.error, "error_code": result.error_code}
-                    param = self.session.project.get_parameter(param.name)
+                    param = self.session.project.get_parameter(new_name)
+                if param is None:
+                    return {"ok": False, "error": f"Parameter '{new_name}' not found"}
             else:
                 if "value" in body:
                     if body.get("unit"):
@@ -246,8 +286,12 @@ class WorkbenchProjectParameterService:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-        if self.session.source_path is not None and not structured_only:
-            self.session.project.save_to_disk()
+        if self.session.source_path is not None:
+            return {
+                "ok": True,
+                "updated": parameter_to_dict(param, values=self._values_for(param.name)),
+                **self.session.snapshot(),
+            }
         return {
             "ok": True,
             "updated": parameter_to_dict(param, values=self._values_for(param.name)),
@@ -262,10 +306,11 @@ class WorkbenchProjectParameterService:
         if param is None:
             return {"ok": False, "error": f"Parameter '{name}' not found"}
         if self.session.source_path is not None:
-            result = mutate_parameters(
+            result = mutate_project_parameters(
                 self.session.project,
                 expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
                 operations=[{"op": "delete", "name": name}],
+                before_commit=lambda: self._snapshot_before_parameter_write([{"op": "delete", "name": name}]),
             )
             if not result.ok:
                 return {"ok": False, "error": result.error, "error_code": result.error_code}

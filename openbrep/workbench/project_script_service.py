@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import os
+import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,21 +61,68 @@ class WorkbenchProjectScriptService:
             return {"ok": False, "error": f"Unsupported script file: {script_name}"}
         content = str(body.get("content") or "")
         script_type = SCRIPT_NAME_TO_TYPE.get(resolved)
-        if script_type is not None:
+        if self.session.source_path is None and script_type is not None:
+            # A new, not-yet-saved project keeps editor changes in its HSF draft.
             self.session.project.set_script(script_type, content)
-            if self.session.source_path is not None:
-                self.session.project.save_to_disk()
+            return {
+                "ok": True,
+                "success": True,
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+                "source_fingerprint": None,
+                "draft": True,
+            }
+        if self.session.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before saving source files."}
+
+        from openbrep.contracts.project_store import commit_project_source_state
+
+        live_project = self.session.project
+        if script_type is not None:
+            candidate = copy.deepcopy(live_project)
+            candidate.set_script(script_type, content)
+            commit = commit_project_source_state(candidate)
         else:
-            if self.session.source_path is None:
-                return {"ok": False, "error": "Load an HSF project before saving XML files."}
-            target = project_file_path(self.session.project, resolved)
+            target = project_file_path(live_project, resolved)
             if target is None:
                 return {"ok": False, "error": f"Unsupported script file: {script_name}"}
-            target.write_text(content, encoding="utf-8-sig")
-            # XML 保存后的内存重载是同项目源刷新，不是项目激活：保持 project_epoch
-            self.session.refresh_same_project(
-                HSFProject.load_from_disk(str(self.session.source_path))
-            )
+            if resolved in {"paramlist.xml", "libpartdata.xml"}:
+                try:
+                    ET.fromstring(content)
+                    if resolved == "paramlist.xml":
+                        from openbrep.paramlist_builder import parse_paramlist_xml
+
+                        parse_paramlist_xml(content)
+                    else:
+                        candidate = copy.deepcopy(live_project)
+                        candidate._parse_libpartdata(content)
+                except Exception as exc:
+                    return {"ok": False, "error": f"Invalid {resolved}: {exc}"}
+            old_project = live_project
+
+            def write_source_file() -> None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8-sig", newline="") as stream:
+                        stream.write(content)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.replace(temp_name, target)
+                except Exception:
+                    try:
+                        os.unlink(temp_name)
+                    except OSError:
+                        pass
+                    raise
+
+            commit = commit_project_source_state(old_project, source_writer=write_source_file)
+        if not commit.ok:
+            return {"ok": False, "success": False, "error": f"Could not save source: {commit.error}"}
+        # Source edit leaves any adopted contract bound to its prior source hash;
+        # refresh the in-memory project without advancing the project epoch.
+        self.session.refresh_same_project(
+            HSFProject.load_from_disk(str(self.session.source_path))
+        )
         return {
             "ok": True,
             "success": True,

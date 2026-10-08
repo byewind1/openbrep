@@ -49,6 +49,21 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set({ loading: false })
     },
 
+    async adoptImportContractCandidate() {
+      const candidate = get().importContractCandidate
+      if (!candidate || !api.adoptImportContractCandidate) return
+      set({ loading: true, lastError: null })
+      const snapshot = await api.adoptImportContractCandidate(
+        candidate.source_fingerprint,
+        candidate.candidate_hash,
+      )
+      if (snapshot.ok === false) {
+        set({ loading: false, lastError: snapshot.error ?? 'Failed to adopt the imported source facts.' })
+        return
+      }
+      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+    },
+
     async newProject() {
       set({ loading: true, lastError: null })
       const snapshot = await api.newProject()

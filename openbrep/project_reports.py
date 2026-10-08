@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,8 @@ def write_object_plan_report(
     *,
     instruction: str = "",
     intent: str = "",
+    planning_artifact: dict[str, Any] | None = None,
+    plan_selection: str = "auto_selected",
 ) -> Path | None:
     """Persist a generated object plan as project-level JSON and Markdown."""
     if project is None or not object_plan:
@@ -38,15 +42,14 @@ def write_object_plan_report(
         "intent": intent,
         "instruction": instruction,
         "object_plan": object_plan,
+        "planning_artifact": planning_artifact,
+        "plan_selection": plan_selection if plan_selection in {"auto_selected", "user_approved"} else "auto_selected",
     }
 
     json_path = reports_dir / f"{stem}.json"
     md_path = reports_dir / f"{stem}.md"
-    json_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    md_path.write_text(_render_object_plan_markdown(payload), encoding="utf-8")
+    _atomic_text_write(json_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    _atomic_text_write(md_path, _render_object_plan_markdown(payload))
     _write_latest_pointer(reports_dir, json_path, md_path)
     return json_path
 
@@ -56,10 +59,20 @@ def _write_latest_pointer(reports_dir: Path, json_path: Path, md_path: Path) -> 
         "object_plan_json": json_path.name,
         "object_plan_markdown": md_path.name,
     }
-    (reports_dir / "latest_object_plan.json").write_text(
-        json.dumps(latest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    _atomic_text_write(reports_dir / "latest_object_plan.json", json.dumps(latest, ensure_ascii=False, indent=2) + "\n")
+
+
+def _atomic_text_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _render_object_plan_markdown(payload: dict[str, Any]) -> str:
@@ -69,6 +82,7 @@ def _render_object_plan_markdown(payload: dict[str, Any]) -> str:
         "",
         f"- Project: {payload.get('project_name', '')}",
         f"- Intent: {payload.get('intent', '')}",
+        f"- Plan selection: {payload.get('plan_selection', 'auto_selected')}",
         f"- Created: {payload.get('created_at', '')}",
     ]
     instruction = str(payload.get("instruction") or "").strip()
@@ -92,6 +106,33 @@ def _render_object_plan_markdown(payload: dict[str, Any]) -> str:
     _append_list(lines, "Validation Checks", plan.get("validation_checks"))
     _append_list(lines, "Knowledge Sources", plan.get("knowledge_sources"))
     _append_list(lines, "Risks To Avoid", plan.get("risks"))
+    artifact = payload.get("planning_artifact") or {}
+    if artifact:
+        lines.extend([
+            "", "## Typed Plan", "",
+            f"- Status: {artifact.get('status', 'unknown')}",
+        ])
+        candidate_spec = artifact.get("candidate_spec") or {}
+        lines.append(f"- Candidate spec: {candidate_spec.get('spec_id', 'unavailable')}")
+        execution = artifact.get("execution_plan") or {}
+        lines.append(f"- Execution plan: {execution.get('plan_id', 'unavailable')}")
+        lines.append(f"- Plan hash: {execution.get('plan_hash', 'unavailable')}")
+        _append_list(lines, "Assumptions And Gaps", [
+            f"{item.get('field_path', '')}: {item.get('message', '')}"
+            for item in artifact.get("issues", []) if isinstance(item, dict)
+        ])
+        _append_list(lines, "Explicit User Values", [
+            f"{gdl_name} = {source.get('value')} {source.get('unit')}; "
+            f"source={source.get('source')}; refs={source.get('source_refs', [])}"
+            for gdl_name, source in (artifact.get("parameter_sources") or {}).items()
+            if isinstance(source, dict)
+        ])
+        _append_list(lines, "Requirement Mappings", [
+            f"{mapping.get('requirement_id', '')}: parts={mapping.get('part_refs', [])}; "
+            f"parameters={mapping.get('parameter_refs', [])}; scripts={mapping.get('script_refs', [])}; "
+            f"scenarios={mapping.get('scenario_refs', [])}"
+            for mapping in execution.get("requirement_mappings", []) if isinstance(mapping, dict)
+        ])
     return "\n".join(lines).rstrip() + "\n"
 
 

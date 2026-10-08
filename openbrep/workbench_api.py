@@ -136,6 +136,9 @@ class WorkbenchSession:
 
         # P1-A：会话参考图资产（搜索—整理—选图—执行闭环；唯一写入入口是显式 adopt）
         self.reference_service = WorkbenchReferenceService(self)
+        from openbrep.workbench.visual_review_service import WorkbenchVisualReviewService
+
+        self.visual_review_service = WorkbenchVisualReviewService(self)
         default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
         self.tapir = WorkbenchTapirAdapter(
             tapir_import_ok=default_import_ok if tapir_import_ok is None else tapir_import_ok,
@@ -209,6 +212,9 @@ class WorkbenchSession:
         snapshot["compiler"] = self.compiler_settings()
         snapshot["llm"] = self.llm_settings()
         snapshot["workspace"] = self.workspace_snapshot()
+        pending_plan = getattr(getattr(self, "conversation_service", None), "pending_plan_snapshot", None)
+        if callable(pending_plan):
+            snapshot["pending_plan"] = pending_plan()
         return snapshot
 
     def _workspace_scan_result(self, workspace_root: Path) -> dict[str, Any]:
@@ -238,6 +244,9 @@ class WorkbenchSession:
         if result.get("ok"):
             self._attach_workspace_for_project(self.source_path)
         return result
+
+    def adopt_import_candidate(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.project_service.adopt_import_candidate(body)
 
     # ── Workspace（工作区附着，P3-d1）────────────────────────
 
@@ -551,6 +560,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/load":
             return self.load_hsf_directory(str(body.get("path") or ""))
 
+        if normalized_method == "POST" and route == "/api/project/object-contract/adopt-import-candidate":
+            return self.adopt_import_candidate(body)
+
         if normalized_method == "POST" and route == "/api/workspace/init":
             return self.workspace_init(body)
 
@@ -645,6 +657,8 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/settings/llm/test":
             return self.settings_service.test_llm_settings(body)
+        if normalized_method == "POST" and route == "/api/settings/llm/plan-approval":
+            return self.settings_service.update_plan_approval_default(body)
 
         if normalized_method in ("PATCH", "PUT") and route == "/api/settings/llm/model":
             return self.settings_service.update_llm_model_only(body)
@@ -776,6 +790,9 @@ class WorkbenchSession:
         # P1-A：参考图资产（adopt 取回/采用、选择状态、列表、字节读取）
         if route == "/api/references" or route.startswith("/api/references/"):
             return self._reference_route(normalized_method, route, body)
+
+        if route == "/api/vision/review" or route.startswith("/api/vision/reviews/"):
+            return self.visual_review_service.route(normalized_method, route, body)
 
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)

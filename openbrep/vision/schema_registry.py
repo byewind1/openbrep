@@ -38,6 +38,10 @@ class VisionSchema:
     fields: dict = field(default_factory=dict)
     required: list[str] = field(default_factory=list)
     critic_checks: list[str] = field(default_factory=list)
+    editable_fields: list[str] = field(default_factory=list)
+    domain_skill_id: str = ""
+    domain_skill_status: str = "legacy"
+    domain_skill_version: str = ""
 
 
 def load_schema(name: str) -> VisionSchema:
@@ -163,6 +167,14 @@ def _load_schema_file(path: Path) -> VisionSchema:
     critic_checks = raw.get("critic_checks") or []
     if not isinstance(critic_checks, list) or not all(isinstance(k, str) for k in critic_checks):
         raise ValueError(f"Vision schema {path.name}: 'critic_checks' must be a list of strings")
+    editable_fields = raw.get("editable_fields") or []
+    if not isinstance(editable_fields, list) or not all(isinstance(k, str) for k in editable_fields):
+        raise ValueError(f"Vision schema {path.name}: 'editable_fields' must be a list of strings")
+    unknown_editable = [key for key in editable_fields if key not in fields]
+    if unknown_editable:
+        raise ValueError(
+            f"Vision schema {path.name}: editable fields not declared in 'fields': {', '.join(unknown_editable)}"
+        )
 
     return VisionSchema(
         name=name,
@@ -171,4 +183,5 @@ def _load_schema_file(path: Path) -> VisionSchema:
         fields=fields,
         required=required,
         critic_checks=critic_checks,
+        editable_fields=editable_fields,
     )

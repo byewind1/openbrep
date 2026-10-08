@@ -36,9 +36,9 @@ from openbrep.skills_loader import SkillsLoader
 def _make_project(tmp_path: Path, name: str = "Shelf") -> HSFProject:
     proj = HSFProject.create_new(name, work_dir=str(tmp_path))
     proj.parameters = [
-        GDLParameter(name="A", type_tag="Length", description="宽度", value="0.9"),
-        GDLParameter(name="B", type_tag="Length", description="深度", value="0.4"),
-        GDLParameter(name="ZZYZX", type_tag="Length", description="高度", value="1.8"),
+        GDLParameter(name="A", type_tag="Length", description="宽度", value="0.9", is_fixed=True),
+        GDLParameter(name="B", type_tag="Length", description="深度", value="0.4", is_fixed=True),
+        GDLParameter(name="ZZYZX", type_tag="Length", description="高度", value="1.8", is_fixed=True),
         GDLParameter(name="shelf_count", type_tag="Integer", description="层板数量", value="4"),
         GDLParameter(name="shelf_thk", type_tag="Length", description="层板厚度", value="0.018"),
         GDLParameter(name="show_frame", type_tag="Boolean", description="是否显示边框", value="0"),

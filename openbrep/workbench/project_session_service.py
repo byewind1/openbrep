@@ -7,6 +7,7 @@ import datetime as _dt
 import logging
 import os
 import re
+import secrets
 import shutil
 import tempfile
 from pathlib import Path
@@ -157,6 +158,28 @@ class WorkbenchProjectSessionService:
     ) -> None:
         self.session = session
         self.real_compiler_factory = real_compiler_factory
+        self._prepared_typed_plans: dict[str, dict[str, Any]] = {}
+
+    def register_prepared_typed_plan(self, plan: dict[str, Any]) -> str:
+        """Issue a session-local, one-shot token for an approved typed Plan."""
+        token = secrets.token_urlsafe(32)
+        self._prepared_typed_plans[token] = copy.deepcopy(plan)
+        while len(self._prepared_typed_plans) > 128:
+            self._prepared_typed_plans.pop(next(iter(self._prepared_typed_plans)))
+        return token
+
+    def discard_prepared_typed_plan(self, token: str) -> None:
+        """Revoke an approval token when its plan is revised or cancelled."""
+        self._prepared_typed_plans.pop(token, None)
+
+    def _consume_prepared_typed_plan(self, body: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+        token = body.get("_prepared_typed_plan_token")
+        if token is None:
+            return None, True
+        if not isinstance(token, str) or not token:
+            return None, False
+        plan = self._prepared_typed_plans.pop(token, None)
+        return plan, plan is not None
 
     def load_hsf_directory(self, path: str) -> dict[str, Any]:
         hsf_path = Path(path).expanduser().resolve()
@@ -173,6 +196,41 @@ class WorkbenchProjectSessionService:
         self.session.source_path = hsf_path
         self.remember_project_path(hsf_path)
         return {"ok": True, **self.session.snapshot()}
+
+    def adopt_import_candidate(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Explicitly adopt the current source-derived spec candidate.
+
+        The candidate is recomputed server-side and bound to the expected HSF
+        fingerprint. A stale screen or edited request cannot adopt a different
+        contract. This operation never writes the original GSM/library file.
+        """
+        project = getattr(self.session, "project", None)
+        if project is None:
+            return {"ok": False, "code": "NO_PROJECT", "error": "当前没有项目"}
+        expected_fingerprint = str(body.get("expected_source_fingerprint") or "")
+        expected_candidate_hash = str(body.get("candidate_hash") or "")
+        if not expected_fingerprint or not expected_candidate_hash:
+            return {"ok": False, "code": "MISSING_CANDIDATE_BINDING", "error": "缺少候选规格或源码指纹"}
+        from openbrep.contracts.import_adapter import build_import_candidate
+        from openbrep.contracts.project_store import commit_project_state
+        from openbrep.source_fingerprint import compute_source_fingerprint, fingerprints_equal
+
+        try:
+            current_fingerprint = compute_source_fingerprint(project.root)
+            if not fingerprints_equal(expected_fingerprint, current_fingerprint):
+                return {"ok": False, "code": "SOURCE_CHANGED", "error": "源码已变化，请重新检查导入事实"}
+            candidate = build_import_candidate(project)
+        except Exception as exc:
+            return {"ok": False, "code": "CANDIDATE_UNAVAILABLE", "error": str(exc)}
+        if candidate.get("candidate_hash") != expected_candidate_hash:
+            return {"ok": False, "code": "CANDIDATE_CHANGED", "error": "候选规格已变化，请重新检查"}
+        result = commit_project_state(
+            project, candidate["candidate_spec"], source_writer=lambda: None,
+            observation=candidate["observation"],
+        )
+        if not result.ok:
+            return {"ok": False, "code": "CONTRACT_COMMIT_FAILED", "error": result.error}
+        return {"ok": True, "adopted": True, **self.session.snapshot()}
 
     # ── 工作区附着导入（任务 U：GUI 导入收敛到工作区）─────────────────
 
@@ -417,6 +475,10 @@ class WorkbenchProjectSessionService:
         image_payload = validate_image_payload(body)
         if not image_payload["ok"]:
             return {"ok": False, "error": image_payload["error"]}
+        prepared_typed_plan, valid_plan_token = self._consume_prepared_typed_plan(body)
+        if not valid_plan_token:
+            return {"ok": False, "code": "INVALID_PREPARED_PLAN_TOKEN", "error": "已确认的 typed Plan 已失效，请重新生成计划。"}
+        plan_selection = "user_approved" if prepared_typed_plan is not None else "auto_selected"
 
         # P5d-2 提取确认门：GUI 带图创建置 confirm_extraction=True；用户确认后
         # 同路由带 confirmed_extractions 重发原 body（校验 project_epoch 防跨项目
@@ -506,8 +568,17 @@ class WorkbenchProjectSessionService:
                 # P5d-2 提取确认门：确认/重发状态透传给 pipeline
                 confirm_extraction=confirm_extraction,
                 confirmed_extractions=confirmed_extractions,
+                prepared_typed_plan=prepared_typed_plan,
+                plan_selection=plan_selection,
             )
         )
+        if result.metadata.get("awaiting_plan_input"):
+            return {
+                "ok": True,
+                "awaiting_plan_input": True,
+                "planning_artifact": result.metadata.get("planning_artifact"),
+                "events": events,
+            }
         # P5d-2 提取确认门早退：harness 提取完成、等用户确认/编辑。不挂载项目、
         # 不落盘；存 session.pending_extraction（防跨项目确认），返回提取结果。
         if result.metadata.get("awaiting_extraction_confirmation"):
@@ -576,6 +647,27 @@ class WorkbenchProjectSessionService:
         self.session.source = "hsf"
         self.session.source_path = hsf_dir
         self.remember_project_path(hsf_dir)
+        source_spec_warnings: list[str] = []
+        planning_artifact = (result.metadata or {}).get("planning_artifact")
+        candidate_spec = planning_artifact.get("candidate_spec") if isinstance(planning_artifact, dict) else None
+        if isinstance(candidate_spec, dict):
+            # U05-A/U06-B: bind the adopted typed spec to the final renamed HSF
+            # source in one recoverable commit; never save the two independently.
+            from openbrep.contracts.project_store import commit_project_state
+
+            commit = commit_project_state(result.project, candidate_spec)
+            if commit.ok:
+                result.metadata["source_spec_commit"] = {
+                    "status": "committed",
+                    "source_fingerprint": commit.source_fingerprint,
+                    "spec_id": candidate_spec.get("spec_id"),
+                }
+            else:
+                source_spec_warnings.append(
+                    "源码已生成，但领域规格未能与源码原子提交；当前项目合同不会显示为新鲜："
+                    + str(commit.error or "未知提交错误")
+                )
+                result.metadata["source_spec_commit"] = {"status": "failed", "error": commit.error}
         # ── P5d-1：vision 提取工件落盘（设计 D7 内容哈希寻址）──────────────
         # 数据源：pipeline 透出的 TaskResult.metadata["vision_extractions"]。
         # 位置必须在 save_to_disk + P7b 目录 rename 之后（root 已是最终路径）；
@@ -600,7 +692,12 @@ class WorkbenchProjectSessionService:
                         degraded=bool(entry.get("degraded")),
                         critic_degraded=bool(entry.get("critic_degraded")),
                     )
-                    save_extraction(result.project.root, plan, model=self.session.llm_model)
+                    save_extraction(
+                        result.project.root,
+                        plan,
+                        model=self.session.llm_model,
+                        cache_context=entry.get("cache_context"),
+                    )
                 except Exception as exc:
                     vision_warnings.append(f"vision 提取工件落盘失败（{entry.get('token') or '?'}）：{exc}")
         # skill 效果回写（GUI 侧通道，best-effort）：失败任务按注入 skill 计 fail_count
@@ -619,6 +716,9 @@ class WorkbenchProjectSessionService:
                 proposal = harvest_for_session(self.session, result, prompt)
         except Exception:
             logger.warning("skill harvest skipped after create (best-effort)", exc_info=True)
+        from openbrep.source_fingerprint import compute_source_fingerprint
+
+        delivered_source_fingerprint = compute_source_fingerprint(hsf_dir)
         response: dict[str, Any] = {
             "ok": True,
             "assistant": {
@@ -626,18 +726,82 @@ class WorkbenchProjectSessionService:
                 "reply": result.plain_text,
                 "changed_files": list((result.scripts or {}).keys()),
                 "intent": result.intent,
+                "run_id": (result.metadata or {}).get("run_id"),
+                "source_fingerprint": delivered_source_fingerprint,
                 "verification": result.verification,
+                "execution_status": (
+                    "source_spec_commit_failed"
+                    if ((result.metadata or {}).get("source_spec_commit") or {}).get("status") == "failed"
+                    else "verified" if result.success else "verification_failed"
+                ),
+                "plan_selection": (result.metadata or {}).get("plan_selection"),
+                "source_spec_commit": (result.metadata or {}).get("source_spec_commit"),
             },
             "events": events,
             **self.session.snapshot(),
         }
-        if rename_warnings:
-            response["warnings"] = list(response.get("warnings") or []) + rename_warnings
+        if rename_warnings or source_spec_warnings:
+            response["warnings"] = list(response.get("warnings") or []) + rename_warnings + source_spec_warnings
         if vision_warnings:
             response["warnings"] = list(response.get("warnings") or []) + vision_warnings
         if proposal:
             response["skill_proposal"] = proposal
         return response
+
+    def prepare_typed_create_plan(self, body: dict[str, Any]):
+        """Read-only CREATE planning used by explicit conversation plan mode."""
+        prompt = str(body.get("prompt") or body.get("message") or "").strip()
+        if not prompt:
+            return None, {"ok": False, "code": "EMPTY_PROMPT", "error": "Create prompt is empty."}
+        image_payload = validate_image_payload(body)
+        if not image_payload.get("ok"):
+            return None, {"ok": False, "code": "INVALID_IMAGE", "error": image_payload.get("error")}
+        output_root = Path(str(body.get("output_dir") or self._save_as_auto_dir())).expanduser().resolve()
+        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        if hasattr(pipeline, "config"):
+            pipeline.config.llm.model = self.session.llm_model
+            if self.session.llm_api_key:
+                pipeline.config.llm.api_key = self.session.llm_api_key
+            if self.session.llm_api_base:
+                pipeline.config.llm.api_base = self.session.llm_api_base
+            pipeline.config.llm.assistant_settings = self.session.assistant_settings
+            pipeline.config.llm.reasoning_effort = effective_session_reasoning_effort(self.session)
+            pipeline.config.llm.codex_routing_mode = self.session.config.llm.effective_codex_routing_mode()
+            pipeline.config.agent.max_iterations = self.session.max_retries
+            pipeline.config.agent.agent_loop_budget = self.session.config.agent.agent_loop_budget or 0
+            if is_codex_qualified_model(self.session.llm_model):
+                try:
+                    pipeline.codex_provider = self.session.settings_service._codex_provider()
+                except Exception:  # noqa: BLE001 — 与正式创建路径保持相同 fail-closed 配置
+                    pipeline.codex_provider = None
+        events: list[dict[str, Any]] = []
+
+        def on_event(kind, data):
+            events.append({"type": kind, "data": data})
+            callback = body.get("_turn_on_event")
+            if callable(callback):
+                callback(kind, data)
+
+        request = TaskRequest(
+            user_input=prompt,
+            intent="IMAGE" if (image_payload.get("image_b64") or image_payload.get("images")) else "CREATE",
+            credential_scope=str(getattr(self.session, "session_id", "") or ""),
+            work_dir=str(output_root),
+            output_dir=str(output_root),
+            gsm_name=project_name_from_prompt(prompt),
+            image_b64=image_payload.get("image_b64"),
+            image_mime=image_payload.get("image_mime") or "image/png",
+            images=_image_refs_from_payload(image_payload.get("images") or []),
+            assistant_settings=str(body.get("assistant_settings") or self.session.assistant_settings),
+            history=list(body.get("history") or []),
+            on_event=on_event,
+            should_cancel=body.get("_turn_should_cancel") if callable(body.get("_turn_should_cancel")) else None,
+        )
+        result = pipeline.prepare_typed_plan(request)
+        if not result.success:
+            return None, {"ok": False, "code": result.error or "PLAN_GENERATION_FAILED",
+                          "error": result.error or "Typed Plan could not be prepared.", "events": events}
+        return result, {"ok": True, "events": events}
 
     def new_project(self) -> dict[str, Any]:
         project = HSFProject.create_new(UNTITLED_PROJECT_NAME)
@@ -927,9 +1091,14 @@ def project_to_snapshot(
         snapshot["object_contract"] = {
             "status": contract.status,
             "object_spec": contract.object_spec,
+            "observation": contract.observation,
             "source_fingerprint": contract.source_fingerprint,
             "errors": list(contract.errors),
         }
+        if contract.status in {"missing", "stale"}:
+            from openbrep.contracts.import_adapter import build_import_candidate
+
+            snapshot["import_contract_candidate"] = build_import_candidate(project)
     except Exception as exc:
         # Domain contracts are additive metadata. A damaged/unsupported
         # contract must not prevent opening or displaying the HSF project.

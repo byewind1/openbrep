@@ -37,6 +37,13 @@ for item, target in [
     if p.exists():
         datas.append((str(p), target))
 
+# This self-contained Vite bundle imports the same geometry/camera/material
+# modules as the live preview. Fail release builds rather than shipping a
+# desktop app that silently depends on a CDN.
+capture_bundle = root / "frontend" / "dist" / "capture" / "preview_capture.js"
+if not capture_bundle.is_file():
+    raise FileNotFoundError("frontend/dist/capture/preview_capture.js is required for offline preview capture")
+
 # openbrep 包内非 .py 数据（data/ prompts/ vision/schemas/ public_keys/ 等）
 datas += collect_data_files("openbrep")
 # litellm 运行时按名称读取模型价格 JSON 等数据文件

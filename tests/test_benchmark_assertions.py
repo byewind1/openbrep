@@ -3,7 +3,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from benchmark.assertions import assert_success_criteria, evaluate_semantic_assertion
+from benchmark.assertions import (
+    _commands_implied_by_geometry_check,
+    assert_success_criteria,
+    evaluate_semantic_assertion,
+)
 from benchmark.runner import BenchmarkRunner, build_summary, render_markdown_summary
 from benchmark.schema import SemanticAssertion, SuccessCriteria, load_benchmark_task
 from openbrep.compiler import CompileResult
@@ -33,6 +37,21 @@ class TestBenchmarkAssertions(unittest.TestCase):
             "PROJECT2 3, 270, 2\n",
         )
         return project
+
+    def test_c13_accepts_effective_geometry_without_command_specific_gate(self):
+        task = load_benchmark_task(
+            Path(__file__).parents[1] / "benchmark/tasks/create/C13_turned_baluster.yaml"
+        )
+        self.assertEqual(_commands_implied_by_geometry_check(task.success_criteria.geometry_check), [])
+        self.assertFalse(any(
+            assertion.type == "command_present"
+            for assertion in task.success_criteria.semantic_assertions
+        ))
+        self.assertIn("ZZYZX", task.success_criteria.required_params)
+        self.assertTrue(any(
+            assertion.type == "param_responsive" and assertion.param == "seg_count"
+            for assertion in task.success_criteria.semantic_assertions
+        ))
 
     def test_required_params_scripts_and_geometry_commands_pass(self):
         criteria = SuccessCriteria(
@@ -246,6 +265,9 @@ class TestGeometricSemanticAssertions(unittest.TestCase):
         result = assert_success_criteria(project, criteria)
 
         self.assertFalse(result.passed)
+        # semantic_verification is one criterion; retain all issue details in
+        # one failure instead of inflating criteria_failures by axis count.
+        self.assertEqual(len(result.failures), 1)
         self.assertTrue(any(f.startswith("semantic_verification: [bbox_mismatch]") for f in result.failures))
 
     def test_param_responsive_passes_when_param_moves_geometry(self):

@@ -185,5 +185,5 @@ test('WorkbenchApp preserves the one-turn plan choice through the right rail cal
   resetStore({ sendChat: send, llmSettings: { ...workbenchStore.getState().llmSettings, conversation_entry: 'unified' } })
   render(<WorkbenchApp />)
   fireEvent.click(screen.getByTestId('right-rail-plan'))
-  await waitFor(() => expect(send).toHaveBeenCalledWith('加背板', [], 'plan', expect.any(Function)))
+  await waitFor(() => expect(send).toHaveBeenCalledWith('加背板', [], 'plan', expect.any(Function), false))
 })

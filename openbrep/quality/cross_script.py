@@ -14,9 +14,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from openbrep.hsf_project import ScriptType
 from openbrep.parameter_observation import classify_parameter_roles
 
 SCRIPT_NAMES = ("1d.gdl", "2d.gdl", "3d.gdl", "vl.gdl", "ui.gdl")
+IMPACT_SCRIPT_NAMES = (*SCRIPT_NAMES, "pr.gdl")
 PARAM_TYPES = {
     "Length",
     "Angle",
@@ -70,6 +72,136 @@ class CrossScriptGraph:
             "eligibility": self.eligibility,
             "coverage": self.coverage,
         }
+
+
+@dataclass
+class ImpactReport:
+    """Current-run mutation impact. Never reads the quality ledger."""
+
+    status: str = "partial"
+    changed_files: list[str] = field(default_factory=list)
+    affected_scripts: list[str] = field(default_factory=list)
+    affected_parameters: list[str] = field(default_factory=list)
+    checks: list[str] = field(default_factory=list)
+    unknown_dependencies: list[str] = field(default_factory=list)
+    coverage: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "changed_files": list(self.changed_files),
+            "affected_scripts": list(self.affected_scripts),
+            "affected_parameters": list(self.affected_parameters),
+            "checks": list(self.checks),
+            "unknown_dependencies": list(self.unknown_dependencies),
+            "coverage": dict(self.coverage),
+        }
+
+
+_DYNAMIC_REFERENCE = re.compile(r"\b(?:CALL|IND|REQUEST)\b", re.I)
+
+
+def analyze_mutation_impact(project: Any, mutation: dict[str, Any] | None = None) -> ImpactReport:
+    """Conservatively map a source/parameter mutation to affected inputs/checks.
+
+    The analyzer uses only the current HSFProject and the supplied mutation
+    summary. It does not consult prior quality runs. Any changed script causes
+    full script invalidation because GDL can pass values through macros or
+    runtime constructs that a static token scan cannot prove absent.
+    """
+    mutation = mutation if isinstance(mutation, dict) else {}
+    raw_files = mutation.get("changed_files") or []
+    changed_files = sorted({
+        str(name) if str(name).startswith("scripts/") else f"scripts/{name}"
+        for name in raw_files
+        if str(name).endswith(".gdl")
+    })
+    raw_params = mutation.get("changed_parameters") or []
+    changed_parameters = sorted({
+        str(item.get("name") or "") if isinstance(item, dict) else str(item)
+        for item in raw_params
+        if (item.get("name") if isinstance(item, dict) else item)
+    })
+    script_types = {script_type.value: script_type for script_type in ScriptType}
+    script_texts = {
+        f"scripts/{name}": project.get_script(script_types[name]) or ""
+        for name in IMPACT_SCRIPT_NAMES
+        if project is not None and name in script_types
+    }
+    parameter_names = [str(getattr(param, "name", "")) for param in getattr(project, "parameters", [])]
+    parameter_keys = {name.casefold() for name in parameter_names}
+    parameter_display_names = {name.casefold(): name for name in parameter_names}
+    affected_symbols = {name.casefold() for name in changed_parameters}
+
+    # A small dependency closure catches Master-derived parameters. Conditional
+    # or otherwise ambiguous assignments are not treated as complete evidence.
+    assignments: list[tuple[str, str, set[str]]] = []
+    for file_name, text in script_texts.items():
+        for line_no, original in enumerate(text.splitlines(), start=1):
+            line = _clean_line(original)
+            if not line.strip():
+                continue
+            target = ASSIGNMENT.match(line)
+            if not target:
+                continue
+            refs = _impact_identifiers(line, parameter_keys) - {target.group(1).casefold()}
+            assignments.append((target.group(1).casefold(), file_name, refs))
+            if "IF" in line.upper() or "GOSUB" in line.upper():
+                continue
+    grew = True
+    while grew:
+        grew = False
+        for target, _file_name, refs in assignments:
+            if target in affected_symbols or refs & affected_symbols:
+                new_names = {target, *refs}
+                if not new_names <= affected_symbols:
+                    affected_symbols.update(new_names)
+                    grew = True
+    affected_parameters = {parameter_display_names[name] for name in affected_symbols & parameter_keys}
+
+    affected_scripts = set(changed_files)
+    unknown: list[str] = []
+    dynamic_files = [name for name, text in script_texts.items() if _DYNAMIC_REFERENCE.search(text)]
+    invalidates_all = bool(changed_files or affected_symbols)
+    if invalidates_all:
+        # Full invalidation is deliberate: unknown GDL data flow must widen
+        # both context and revalidation rather than silently under-report.
+        affected_scripts.update(script_texts)
+        if dynamic_files:
+            unknown.extend(f"dynamic GDL references in {name}" for name in dynamic_files)
+            affected_scripts.update(script_texts)
+    checks = {"compile", "static", "semantic"}
+    if changed_files or affected_symbols:
+        checks.add("preview")
+    if any(name.endswith(("/vl.gdl", "/ui.gdl")) for name in affected_scripts):
+        checks.add("parameter_ui")
+    if mutation.get("preserved_constraints"):
+        checks.add("plan_constraints")
+    total_scripts = len(script_texts)
+    scanned_scripts = sum(1 for text in script_texts.values() if isinstance(text, str))
+    status = "partial"
+    if not project:
+        unknown.append("project source is unavailable")
+    else:
+        unknown.append("static identifier scan cannot prove arbitrary GDL data flow")
+    if changed_files and not script_texts:
+        status = "unavailable"
+        unknown.append("no readable HSF script sources")
+    return ImpactReport(
+        status=status,
+        changed_files=changed_files + (["paramlist.xml"] if changed_parameters else []),
+        affected_scripts=sorted(affected_scripts),
+        affected_parameters=sorted(affected_parameters),
+        checks=sorted(checks),
+        unknown_dependencies=unknown,
+        coverage={
+            "method": "conservative_full_script_invalidation" if invalidates_all else "static_identifier_scan",
+            "scripts_scanned": scanned_scripts,
+            "scripts_total": total_scripts,
+            "ratio": round(scanned_scripts / total_scripts, 3) if total_scripts else None,
+            "complete": False,
+        },
+    )
 
 
 def _issue(
@@ -143,6 +275,14 @@ def _read_parameters(root: Path, graph: CrossScriptGraph) -> tuple[dict[str, dic
 
 def _identifiers(line: str, params: set[str]) -> set[str]:
     return {match.group(0) for match in IDENTIFIER.finditer(line) if match.group(0) in params}
+
+
+def _impact_identifiers(line: str, params: set[str]) -> set[str]:
+    return {
+        match.group(0).casefold()
+        for match in IDENTIFIER.finditer(line)
+        if match.group(0).casefold() in params
+    }
 
 
 def _scan_scripts(
@@ -466,4 +606,10 @@ def format_graph(graph: CrossScriptGraph) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["CrossScriptGraph", "build_cross_script_graph", "format_graph"]
+__all__ = [
+    "CrossScriptGraph",
+    "ImpactReport",
+    "analyze_mutation_impact",
+    "build_cross_script_graph",
+    "format_graph",
+]

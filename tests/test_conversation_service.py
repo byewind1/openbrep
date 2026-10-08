@@ -1,7 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
-
-import pytest
 
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
@@ -130,6 +129,7 @@ def test_stream_worker_protects_validation_and_execution_with_session_lock(tmp_p
 
 def test_api_advice_is_model_backed_and_has_no_mutation_or_preview(tmp_path):
     import json
+
     from openbrep.llm import MockLLM
     from openbrep.source_fingerprint import compute_source_fingerprint
     session = session_at(tmp_path)
@@ -148,6 +148,7 @@ def test_api_advice_is_model_backed_and_has_no_mutation_or_preview(tmp_path):
 
 def test_assistant_compatibility_adapter_is_readonly_without_project(tmp_path):
     import json
+
     from openbrep.llm import MockLLM
     session = session_at(tmp_path)
     session.project = None
@@ -187,6 +188,112 @@ def test_plan_lifecycle_approval_version_and_retries(tmp_path):
     assert session.assistant_service.generate_with_assistant.call_count == 1
 
 
+def test_revising_a_pending_plan_replans_and_invalidates_the_old_approval_version(tmp_path):
+    from openbrep.llm import MockLLM
+
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer(), plan_answer()])
+    original = prepare(session, requested_mode="plan")
+    old_plan = original["pending_plan"]
+
+    revised = session.route("POST", "/api/assistant/turn", {
+        "phase": "revise",
+        "turn_id": original["turn_id"],
+        "plan_id": old_plan["plan_id"],
+        "plan_version": old_plan["plan_version"],
+        "revision_instruction": "保留现有层数，只新增背板。",
+    })
+
+    assert revised["result_kind"] == "awaiting_confirmation"
+    assert revised["pending_plan"]["plan_version"] == old_plan["plan_version"] + 1
+    assert revised["pending_plan"]["plan_id"] != old_plan["plan_id"]
+    turn = session.conversation_service.turns[original["turn_id"]]
+    assert "只新增背板" in turn.body["message"]
+    assert session.assistant_service.generate_with_assistant.call_count == 0
+    stale_approval = session.route("POST", "/api/assistant/turn", {
+        "phase": "execute", "turn_id": original["turn_id"], "approve": True,
+        "plan_id": old_plan["plan_id"], "plan_version": old_plan["plan_version"],
+    })
+    assert stale_approval["code"] == "PLAN_VERSION_MISMATCH"
+    assert stale_approval["pending_plan"] == revised["pending_plan"]
+
+
+def test_revising_a_pending_plan_after_source_change_is_rejected(tmp_path):
+    from openbrep.llm import MockLLM
+
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    original = prepare(session, requested_mode="plan")
+    plan = original["pending_plan"]
+    session.project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nADDZ 2\n")
+    session.project.save_to_disk()
+
+    stale = session.route("POST", "/api/assistant/turn", {
+        "phase": "revise", "turn_id": original["turn_id"], "plan_id": plan["plan_id"],
+        "plan_version": plan["plan_version"], "revision_instruction": "只改材质。",
+    })
+
+    assert stale["code"] == "PLAN_STALE"
+    assert session.assistant_service.generate_with_assistant.call_count == 0
+
+
+def test_pending_plan_is_restored_in_snapshot_without_execution(tmp_path):
+    from openbrep.llm import MockLLM
+
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    pending = prepare(session, requested_mode="plan")
+
+    reopened_snapshot = session.route("GET", "/api/snapshot")
+
+    assert reopened_snapshot["pending_plan"]["turn_id"] == pending["turn_id"]
+    assert reopened_snapshot["pending_plan"]["plan_id"] == pending["pending_plan"]["plan_id"]
+    assert session.assistant_service.generate_with_assistant.call_count == 0
+
+
+def test_confirmation_preference_is_independent_from_requested_mode_and_read_only_until_approved(tmp_path):
+    import json
+
+    from openbrep.llm import MockLLM
+
+    session = session_at(tmp_path)
+    session.conversation_service.semantic_decision = lambda _payload: json.dumps({
+        "mode": "execute", "task_intent": "MODIFY", "constraints": [],
+    })
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    project_root = session.project.root
+    before_scripts = {path.name: path.read_text(encoding="utf-8") for path in (project_root / "scripts").glob("*.gdl")}
+    before_revisions = list((project_root / ".openbrep" / "revisions").glob("*"))
+
+    pending = prepare(session, message="把柜体背面加上背板", requested_mode="auto", confirm_before_execute=True)
+
+    assert pending["result_kind"] == "awaiting_confirmation"
+    assert pending["pending_plan"]["task_intent"] == "MODIFY"
+    assert session.conversation_service.turns[pending["turn_id"]].body["requested_mode"] == "auto"
+    assert {path.name: path.read_text(encoding="utf-8") for path in (project_root / "scripts").glob("*.gdl")} == before_scripts
+    assert list((project_root / ".openbrep" / "revisions").glob("*")) == before_revisions
+    session.assistant_service.generate_with_assistant.assert_not_called()
+
+
+def test_saved_approval_preference_applies_when_request_omits_single_turn_override(tmp_path):
+    import json
+
+    from openbrep.llm import MockLLM
+
+    session = session_at(tmp_path)
+    session.config.llm.confirm_before_execute = True
+    session.conversation_service.semantic_decision = lambda _payload: json.dumps({
+        "mode": "execute", "task_intent": "MODIFY", "constraints": [],
+    })
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+
+    pending = prepare(session, message="把柜体背面加上背板")
+
+    assert pending["result_kind"] == "awaiting_confirmation"
+    assert "confirm_before_execute" not in session.conversation_service.turns[pending["turn_id"]].body
+    session.assistant_service.generate_with_assistant.assert_not_called()
+
+
 def test_plan_failure_and_stale_source_cannot_execute(tmp_path):
     from openbrep.llm import MockLLM
     session = session_at(tmp_path)
@@ -204,11 +311,87 @@ def test_plan_failure_and_stale_source_cannot_execute(tmp_path):
     session.assistant_service.generate_with_assistant.assert_not_called()
 
 
+def test_create_prepare_exposes_typed_plan_and_execution_reuses_server_copy(tmp_path):
+    import json
+
+    session = session_at(tmp_path)
+    session.project = None
+    session.source_path = None
+    session.conversation_service.semantic_decision = lambda _payload: json.dumps(
+        {'mode': 'plan', 'task_intent': 'CREATE', 'constraints': []}, ensure_ascii=False)
+    artifact = {
+        'status': 'ready',
+        'candidate_spec': {'spec_id': 'spec-1', 'params': [{'gdl_name': 'A'}]},
+        'execution_plan': {'plan_id': 'plan-1', 'plan_hash': 'frozen-hash', 'steps': [], 'requirements': []},
+        'observations': [{'observation_id': 'obs-1'}],
+        'issues': [],
+    }
+    prepared = {
+        'object_plan': {'object_type': 'parametric_cabinet', 'geometry': ['柜体与双门'], 'geometry_parts': ['carcass'], 'assumptions': ['背板厚度未指定']},
+        'planning_artifact': artifact,
+        'enriched_instruction': 'frozen instruction',
+        'vision_extractions': [{'schema_name': 'cabinet'}],
+    }
+    fake_result = SimpleNamespace(success=True, metadata={'planning_artifact': artifact, 'prepared_typed_plan': prepared},
+                                  object_plan=prepared['object_plan'], plain_text='typed plan summary')
+    service_call = Mock(return_value=(fake_result, {'ok': True, 'events': []}))
+    session.project_service.session_service.prepare_typed_create_plan = service_call
+    session.create_project_from_prompt = Mock(return_value={'ok': True, 'assistant': {'reply': 'created'}})
+
+    ready = prepare(session, message='先给我一个柜体建模计划', requested_mode='plan')
+
+    assert ready['result_kind'] == 'awaiting_confirmation', ready
+    assert ready['pending_plan']['typed_plan'] == artifact
+    assert ready['pending_plan']['object_plan'] == prepared['object_plan']
+    service_call.assert_called_once()
+    assert not (tmp_path / 'output').exists()
+    plan = ready['pending_plan']
+    done = session.route('POST', '/api/assistant/turn', {
+        'phase': 'execute', 'turn_id': ready['turn_id'], 'plan_id': plan['plan_id'],
+        'plan_version': 1, 'approve': True,
+    })
+
+    assert done['result_kind'] == 'execution'
+    call_body = session.create_project_from_prompt.call_args.args[0]
+    token = call_body['_prepared_typed_plan_token']
+    assert session.project_service.session_service._consume_prepared_typed_plan({'_prepared_typed_plan_token': token}) == (prepared, True)
+    assert '_prepared_typed_plan' not in call_body
+    assert call_body.get('confirm_extraction') is not True
+
+
+def test_create_plan_with_unresolved_input_cannot_be_approved_or_create_source(tmp_path):
+    import json
+
+    session = session_at(tmp_path)
+    session.project = None
+    session.source_path = None
+    session.conversation_service.semantic_decision = lambda _payload: json.dumps(
+        {'mode': 'plan', 'task_intent': 'CREATE', 'constraints': []}, ensure_ascii=False)
+    artifact = {'status': 'needs_input', 'candidate_spec': None, 'execution_plan': None, 'issues': [{'code': 'MISSING_EXPLICIT_UNIT'}]}
+    prepared = {'object_plan': {'object_type': 'cabinet'}, 'planning_artifact': artifact,
+                'enriched_instruction': 'clarify unit', 'vision_extractions': []}
+    fake_result = SimpleNamespace(success=True, metadata={'planning_artifact': artifact, 'prepared_typed_plan': prepared},
+                                  object_plan=prepared['object_plan'], plain_text='needs clarification')
+    session.project_service.session_service.prepare_typed_create_plan = Mock(
+        return_value=(fake_result, {'ok': True, 'events': []}))
+    session.create_project_from_prompt = Mock(return_value={'ok': True})
+
+    ready = prepare(session, message='生成宽度1200的柜体，先给我计划', requested_mode='plan')
+    plan = ready['pending_plan']
+    result = session.route('POST', '/api/assistant/turn', {
+        'phase': 'execute', 'turn_id': ready['turn_id'], 'plan_id': plan['plan_id'],
+        'plan_version': plan['plan_version'], 'approve': True,
+    })
+
+    assert result['code'] == 'PLAN_NEEDS_INPUT'
+    session.create_project_from_prompt.assert_not_called()
+
+
 def test_compatible_confirm_uses_only_unique_server_plan(tmp_path):
     from openbrep.llm import MockLLM
     session = session_at(tmp_path)
     session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
-    result = prepare(session, requested_mode='plan')
+    prepare(session, requested_mode='plan')
     done = session.route('POST', '/api/modify/confirm', {'approve': True})
     assert done['result_kind'] == 'execution'
     assert session.assistant_service.generate_with_assistant.call_count == 1
@@ -221,7 +404,7 @@ def test_no_project_plan_does_not_create_and_executes_create(tmp_path):
     session.source_path = None
     session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
     session.create_project_from_prompt = Mock(return_value={'ok': True})
-    result = prepare(session, message='先给我一个书柜的建模方案')
+    result = prepare(session, message='先生成一个书柜，给我一个计划', requested_mode='plan')
     assert result['pending_plan']['task_intent'] == 'CREATE'
     assert not (tmp_path / 'output').exists()
     plan = result['pending_plan']
@@ -519,6 +702,7 @@ def test_continuation_inherits_prior_goal_contract_and_blocks_no_effect(tmp_path
 def test_continuation_recovers_goal_from_restored_user_history(tmp_path):
     """Backend 重启后仍须使用前端恢复的用户目标，而非只看当前短句。"""
     import json
+
     from openbrep.runtime.pipeline import TaskResult
 
     session = _real_session(tmp_path, TaskResult(success=True, plain_text='done'))

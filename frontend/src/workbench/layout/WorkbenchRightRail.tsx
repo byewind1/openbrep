@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { AssistantPanel } from '../../components/AssistantPanel'
+import { useT } from '../../i18n'
 import type {
   AssistantImageAttachment,
   AssistantMessage,
@@ -28,6 +29,7 @@ interface WorkbenchRightRailProps {
   assistantBusy: boolean
   pendingPlan: import('../../api/types').PendingPlan | null
   onConfirmPlan: (approve: boolean) => void
+  onRevisePlan?: (instruction: string) => void
   pendingExtraction: import('../../api/types').PendingExtraction | null
   onConfirmExtraction: (extractions: import('../../api/types').VisionExtraction[], approve: boolean) => void
   pendingSkillProposal: import('../../api/types').SkillProposal | null
@@ -46,11 +48,12 @@ interface WorkbenchRightRailProps {
   hasProject: boolean
   interruptedContext?: { message: string; intent: string } | null
   onProposalAction?: (id: string, action: 'select' | 'execute') => void
-  onChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan') => void
+  onChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan', confirmBeforeExecute?: boolean) => void
   onStop: () => void
   onClearAssistantHistory: () => void
   onDeleteAssistantMessages?: (indices: number[]) => void | Promise<void>
   onAdoptAssistantCode: (index: number) => void
+  onReviewVisualTurn: (turnId: string, force?: boolean) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => Promise<boolean> | boolean
   onRevealLine?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
@@ -85,6 +88,7 @@ export function WorkbenchRightRail({
   assistantBusy,
   pendingPlan,
   onConfirmPlan,
+  onRevisePlan,
   pendingExtraction,
   onConfirmExtraction,
   pendingSkillProposal,
@@ -108,6 +112,7 @@ export function WorkbenchRightRail({
   onClearAssistantHistory,
   onDeleteAssistantMessages,
   onAdoptAssistantCode,
+  onReviewVisualTurn,
   onOpenScript,
   onSaveRevision,
   onRevealLine,
@@ -129,6 +134,10 @@ export function WorkbenchRightRail({
   // P1b：预览质量档是 store 会话态，视口只消费，不走 props 倒灌
   const previewQuality = useWorkbenchStore((state) => state.previewQuality)
   const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
+  const importCandidate = useWorkbenchStore((state) => state.importContractCandidate)
+  const adoptImportCandidate = useWorkbenchStore((state) => state.adoptImportContractCandidate)
+  const projectBusy = useWorkbenchStore((state) => state.loading)
+  const t = useT()
   // P2a：任务前版本 ghost 快照，视口只读消费
   const previewGhost = useWorkbenchStore((state) => state.previewGhost)
   // ST03：delivery 卡动作直接挂 store，不另建第二套工作台 state
@@ -193,18 +202,47 @@ export function WorkbenchRightRail({
             />
           </Suspense>
         ) : activeRailPanel === 'inspect' ? (
-          <Suspense fallback={<div className="viewport-loading" />}>
-            <TapirPanel
-              status={tapirStatus}
-              busy={tapirBusy}
-              onRefresh={onRefreshTapirStatus}
-              onReloadLibraries={onReloadTapirLibraries}
-              onSyncSelection={onSyncTapirSelection}
-              onHighlightSelection={onHighlightTapirSelection}
-              onLoadParameters={onLoadTapirParameters}
-              onApplyParameters={onApplyTapirParameters}
-            />
-          </Suspense>
+          <>
+            {importCandidate && (
+              <section className="import-contract-candidate" aria-label={t('project.importContract.title')}>
+                <h3>{t('project.importContract.title')}</h3>
+                <p>{t('project.importContract.description')}</p>
+                <details>
+                  <summary>{t('project.importContract.sourceFacts')}</summary>
+                  <ul>
+                    {(importCandidate.observation?.items ?? []).map((item) => (
+                      <li key={item.field_path}>
+                        <code>{item.field_path}</code> · {item.status}: {JSON.stringify(item.value)}
+                        {item.note ? ` — ${item.note}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+                <ul>
+                  {(importCandidate.warnings ?? []).map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}
+                </ul>
+                <button
+                  type="button"
+                  disabled={projectBusy}
+                  onClick={() => void adoptImportCandidate()}
+                >
+                  {projectBusy ? t('project.importContract.adopting') : t('project.importContract.adopt')}
+                </button>
+              </section>
+            )}
+            <Suspense fallback={<div className="viewport-loading" />}>
+              <TapirPanel
+                status={tapirStatus}
+                busy={tapirBusy}
+                onRefresh={onRefreshTapirStatus}
+                onReloadLibraries={onReloadTapirLibraries}
+                onSyncSelection={onSyncTapirSelection}
+                onHighlightSelection={onHighlightTapirSelection}
+                onLoadParameters={onLoadTapirParameters}
+                onApplyParameters={onApplyTapirParameters}
+              />
+            </Suspense>
+          </>
         ) : (
           <AssistantPanel
             messages={assistantMessages}
@@ -217,6 +255,7 @@ export function WorkbenchRightRail({
             onClearHistory={onClearAssistantHistory}
             onDeleteMessages={onDeleteAssistantMessages}
             onAdoptCode={onAdoptAssistantCode}
+            onReviewVisualTurn={onReviewVisualTurn}
             onOpenScript={onOpenScript}
             onSaveRevision={onSaveRevision}
             onRevealLine={onRevealLine}
@@ -250,6 +289,7 @@ export function WorkbenchRightRail({
             onOpenModelSettings={onOpenModelSettings}
             pendingPlan={pendingPlan}
             onConfirmPlan={onConfirmPlan}
+            onRevisePlan={onRevisePlan}
             pendingExtraction={pendingExtraction}
             onConfirmExtraction={onConfirmExtraction}
             pendingSkillProposal={pendingSkillProposal}

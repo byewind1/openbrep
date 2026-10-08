@@ -1,11 +1,11 @@
 {
   "name": "openbrep-workbench",
   "private": true,
-  "version": "0.12.0",
+  "version": "0.13.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.preview-capture.config.ts",
     "test": "vitest",
     "preview": "vite preview --host 127.0.0.1"
   },

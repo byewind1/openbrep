@@ -2,20 +2,20 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from openbrep.codex.provider import CodexNotSignedInError
 from openbrep.compiler import CompileResult, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.revisions import create_revision
+from openbrep.workbench import settings_service
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService, parse_compile_issue
 from openbrep.workbench.git_service import WorkbenchGitService, run_git
-from openbrep.revisions import create_revision
 from openbrep.workbench.memory_service import WorkbenchMemoryService
 from openbrep.workbench.preview_service import WorkbenchPreviewService
 from openbrep.workbench.project_parameter_service import WorkbenchProjectParameterService
 from openbrep.workbench.project_script_service import WorkbenchProjectScriptService
 from openbrep.workbench.project_service import WorkbenchProjectService
-from openbrep.codex.provider import CodexNotSignedInError
-from openbrep.workbench import settings_service
 from openbrep.workbench.settings_service import WorkbenchSettingsService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
 from openbrep.workbench_tapir import WorkbenchTapirAdapter
@@ -597,6 +597,34 @@ def test_project_script_service_reads_memory_script_content(tmp_path):
     assert response["content"] == "BLOCK A, B, ZZYZX\n"
 
 
+def test_project_script_service_saves_transactionally_and_stales_contract(tmp_path):
+    from openbrep.contracts.project_store import commit_project_state, load_project_contract
+
+    project = HSFProject.create_new("ScriptShelf", str(tmp_path))
+    project.save_to_disk()
+    spec = {
+        "schema_version": 1,
+        "spec_id": "shelf-v1",
+        "object_type": "shelf",
+        "params": [],
+        "requirements": [],
+        "relations": [],
+    }
+    assert commit_project_state(project, spec).ok
+    session = SimpleNamespace(
+        project=project,
+        source_path=project.root,
+        refresh_same_project=lambda refreshed: setattr(session, "project", refreshed),
+    )
+    service = WorkbenchProjectScriptService(session)
+
+    response = service.save_project_script("3d.gdl", {"content": "BLOCK 3, 3, 3\n"})
+
+    assert response["ok"] is True
+    assert session.project.get_script(ScriptType.SCRIPT_3D) == "BLOCK 3, 3, 3\n"
+    assert load_project_contract(project.root).status == "stale"
+
+
 def test_project_parameter_service_applies_values_and_snapshots(tmp_path):
     project = HSFProject.create_new("ParamShelf", str(tmp_path))
     project.save_to_disk()
@@ -861,6 +889,13 @@ def test_tapir_artifact_verification_distinguishes_unavailable_host_capabilities
 
     unsupported = WorkbenchTapirAdapter(True, lambda: UnsupportedBridge(), lambda: "now")
     assert unsupported.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc")["code"] == "unsupported"
+
+    class SchemaLimitedBridge(LegacyBridge):
+        def verify_library_part_artifact(self, **_request):
+            raise RuntimeError("Input validation failed: additional properties are not allowed")
+
+    schema_limited = WorkbenchTapirAdapter(True, lambda: SchemaLimitedBridge(), lambda: "now")
+    assert schema_limited.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc")["code"] == "unsupported"
 
 
 def test_tapir_artifact_verification_preserves_verified_host_evidence():

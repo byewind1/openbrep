@@ -171,6 +171,11 @@ export function Preview2DViewport({ preview, warnings, sourceControl }: Preview2
                 <span className={`viewport-verification-status is-${sourceControl.verificationStatus ?? 'not_checked'}`}>
                   {hostVerificationLabel(sourceControl.verificationStatus ?? 'not_checked')}
                 </span>
+                {sourceControl.verificationParametersSummary ? (
+                  <span className="viewport-verification-parameters" title={sourceControl.verificationParametersSummary}>
+                    {sourceControl.verificationParametersSummary}
+                  </span>
+                ) : null}
               </>
             ) : null}
           </div>

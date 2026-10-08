@@ -1,0 +1,15 @@
+{
+  "fixture_schema_version": 1,
+  "fixture_id": "cabinet-observation-contract-v1",
+  "kind": "synthetic",
+  "observation": {
+    "source": "synthetic",
+    "items": [
+      {"field_path": "overall.width", "status": "observed", "value": 1.2, "unit": "m"},
+      {"field_path": "parts.doors.count", "status": "observed", "value": 2},
+      {"field_path": "parts.shelves.count", "status": "unknown", "value": null},
+      {"field_path": "occlusion.hidden_structure", "status": "unknown", "value": null}
+    ]
+  },
+  "expected": {"unknown_fields_remain_unknown": true, "dimension_unit": "m"}
+}

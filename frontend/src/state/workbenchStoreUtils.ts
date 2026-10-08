@@ -23,6 +23,8 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     project: snapshot.project,
     parameters: snapshot.parameters,
     sourceFingerprint: snapshot.source_fingerprint ?? null,
+    objectContract: snapshot.object_contract ?? null,
+    importContractCandidate: snapshot.import_contract_candidate ?? null,
     effectiveParameters: {},
     effectiveParameterDiagnostics: [],
     effectiveParametersBusy: false,
@@ -58,7 +60,7 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     latestRevisionId: null,
     revisionLoading: false,
     // ST03：换项目/恢复 before 后清掉跨项目 pending，避免旧任务污染新项目面板
-    pendingPlan: null,
+    pendingPlan: snapshot.pending_plan ?? null,
     pendingExtraction: null,
     pendingSkillProposal: null,
     pendingDeliveryContinue: null,

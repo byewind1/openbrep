@@ -5,6 +5,7 @@ from pathlib import Path
 
 from openbrep.hsf_project import GDLParameter, HSFProject
 from openbrep.paramlist_builder import parse_paramlist_xml
+from openbrep.revisions import get_latest_revision_id
 from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.workbench_api import WorkbenchSession
 
@@ -42,6 +43,7 @@ def test_add_parameter_success_persists_paramlist_xml(tmp_path):
     assert 'Name="seat_height"' in content
     parsed = parse_paramlist_xml(content)
     assert any(param.name == "seat_height" and param.value == "0.45" for param in parsed)
+    assert get_latest_revision_id(session.project.root) is not None
 
 
 def test_add_parameter_rejects_duplicate_name(tmp_path):

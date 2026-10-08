@@ -1,10 +1,9 @@
 import base64
 import copy
 import json
-
-import pytest
 from pathlib import Path
 
+import openbrep.workbench_api as workbench_api
 from openbrep import feedback_distill
 from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
@@ -13,7 +12,6 @@ from openbrep.learning import ErrorLearningStore
 from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import TaskResult
 from openbrep.source_fingerprint import compute_source_fingerprint
-import openbrep.workbench_api as workbench_api
 from openbrep.workbench.project_session_service import write_project_origin
 from openbrep.workbench.workspace_service import init_workspace
 from openbrep.workbench_api import (
@@ -27,6 +25,24 @@ from openbrep.workbench_api import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_visual_review_routes_dispatch_to_review_service(monkeypatch):
+    session = WorkbenchSession(tapir_import_ok=False)
+    seen = []
+
+    def route(method, path, body):
+        seen.append((method, path, body))
+        return {"ok": True, "reports": []}
+
+    monkeypatch.setattr(session.visual_review_service, "route", route)
+
+    assert session.route("POST", "/api/vision/review", {"turn_id": "t"}) == {"ok": True, "reports": []}
+    assert session.route("GET", "/api/vision/reviews/run-1", {}) == {"ok": True, "reports": []}
+    assert seen == [
+        ("POST", "/api/vision/review", {"turn_id": "t"}),
+        ("GET", "/api/vision/reviews/run-1", {}),
+    ]
 
 
 def test_build_demo_snapshot_contains_project_parameters_and_preview():
@@ -1280,6 +1296,43 @@ def test_workbench_session_creates_project_from_prompt(tmp_path):
     assert FakePipeline.last_request.output_dir == str(tmp_path.resolve())
 
 
+def test_create_commits_planned_object_spec_with_final_hsf_source(tmp_path):
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces", config_path=None):
+            pass
+
+        def execute(self, request):
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nEND\n")
+            return TaskResult(
+                success=True,
+                intent="CREATE",
+                scripts={"scripts/3d.gdl": project.get_script(ScriptType.SCRIPT_3D)},
+                project=project,
+                metadata={"planning_artifact": {"candidate_spec": {
+                    "schema_version": 1,
+                    "spec_id": "cabinet-create-v1",
+                    "object_type": "cabinet",
+                    "params": [],
+                    "requirements": [],
+                    "relations": [],
+                }}},
+            )
+
+    session = WorkbenchSession(pipeline_class=FakePipeline)
+    response = session.route("POST", "/api/project/create", {
+        "prompt": "生成一个柜体", "output_dir": str(tmp_path),
+    })
+
+    from openbrep.contracts.project_store import load_project_contract
+
+    project_path = response["project"]["path"]
+    contract = load_project_contract(project_path)
+    assert response["ok"] is True
+    assert contract.status == "fresh"
+    assert contract.object_spec["spec_id"] == "cabinet-create-v1"
+
+
 def test_project_create_pipeline_receives_saved_codex_auto_mode_and_provider(tmp_path):
     """D9：新项目 CREATE 主入口同步 mode/effort/provider，不只当前项目助手入口。"""
     provider = object()
@@ -1855,6 +1908,24 @@ timeout = 60
     assert response["llm"]["max_retries"] == 7
     assert response["llm"]["assistant_settings"] == "prefer concise GDL diffs"
     assert "glm-4-flash" in response["llm"]["models"]
+
+
+def test_plan_approval_default_requires_explicit_save_and_survives_reload(tmp_path):
+    config_path = tmp_path / "config.toml"
+    session = WorkbenchSession(config_path=config_path)
+
+    runtime = session.route("GET", "/api/settings/runtime")
+    assert runtime["llm"]["confirm_before_execute"] is False
+
+    invalid = session.route("POST", "/api/settings/llm/plan-approval", {"confirm_before_execute": "true"})
+    assert invalid["ok"] is False
+    assert session.config.llm.confirm_before_execute is False
+
+    saved = session.route("POST", "/api/settings/llm/plan-approval", {"confirm_before_execute": True})
+    assert saved["ok"] is True
+    assert saved["llm"]["confirm_before_execute"] is True
+    reloaded = WorkbenchSession(config_path=config_path)
+    assert reloaded.config.llm.confirm_before_execute is True
 
 
 def test_workbench_session_saves_api_key_via_settings_route(tmp_path, monkeypatch):
@@ -3298,6 +3369,7 @@ def test_workbench_session_create_delivers_output_when_verification_fails(tmp_pa
 
     assert response["ok"] is True
     assert response["assistant"]["verification"]["passed"] is False
+    assert response["assistant"]["execution_status"] == "verification_failed"
     assert response["project"]["source"] == "hsf"
 
 

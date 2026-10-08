@@ -257,9 +257,23 @@ export interface HostVerificationRecord {
   status: HostVerificationRecordStatus
   source_fingerprint: string
   contract_hash?: string | null
+  spec_hash?: string | null
+  spec_id?: string | null
+  scenario_id?: string
+  scenario_hash?: string
+  executor_id?: string
+  executor_version?: string
+  dependencies_hash?: string | null
   gsm_sha256?: string | null
   parameter_fingerprint: string
   requested_parameters: Record<string, unknown>
+  effective_parameters?: Record<string, unknown> | null
+  parameter_readback_status?: 'verified' | 'unavailable'
+  parameter_differences?: Record<string, { requested: unknown; effective: unknown }>
+  automatic_measurements?: Record<string, unknown> | null
+  human_review?: { status: string; reviewer?: string | null; notes?: string | null }
+  evidence_source?: 'archicad' | 'local_gdl'
+  evidence_binding?: Record<string, unknown>
   applied_parameters: string[]
   skipped_parameters: string[]
   loaded_identity?: Record<string, unknown> | null
@@ -352,6 +366,8 @@ export interface CompilerSettings {
 
 export interface LlmSettings {
   conversation_entry?: 'unified' | 'legacy'
+  /** U05-C: 默认是否在执行前等待用户批准计划。 */
+  confirm_before_execute?: boolean
   /** 生效模型（会话覆盖存在时即覆盖值） */
   model: string
   /** D16：会话级模型覆盖（pill/聊天侧切换）；无覆盖时为 null。写默认仍只有设置页一扇门 */
@@ -733,8 +749,35 @@ export interface WorkbenchSnapshot {
   session_id?: string
   project_epoch?: number
   source_fingerprint?: string | null
+  object_contract?: {
+    status: 'missing' | 'fresh' | 'stale' | 'invalid' | string
+    object_spec?: Record<string, unknown> | null
+    observation?: Record<string, unknown> | null
+    source_fingerprint?: string
+    errors?: string[]
+  }
+  import_contract_candidate?: {
+    status: 'proposed' | string
+    source_fingerprint: string
+    candidate_hash: string
+    candidate_spec: Record<string, unknown>
+    observation: {
+      observation_id: string
+      items: Array<{
+        field_path: string
+        status: 'observed' | 'inferred' | 'unknown' | string
+        value: unknown
+        unit?: string | null
+        confidence?: 'high' | 'low' | 'unknown' | string
+        note?: string
+      }>
+    }
+    warnings: string[]
+  } | null
   /** 后端 snapshot 的工作区块：无附着为 null（P3-d1） */
   workspace?: WorkspaceInfo | null
+  /** U05-C: reload a server-held pending approval for display only. */
+  pending_plan?: PendingPlan | null
 }
 
 export interface HsfExportResult extends WorkbenchSnapshot {
@@ -953,6 +996,7 @@ export interface AssistantHistoryItem {
     /** 卡05/RF04：任务时间线与事件记录关联（不进 LLM prompt） */
     thinking_steps?: AssistantThinkingStep[]
     task_ref?: TurnTaskRef
+    pending_plan?: PendingPlan | null
     [key: string]: unknown
   } | null
 }
@@ -990,10 +1034,29 @@ export interface AssistantMessage {
   events_recording?: { status: string; error?: string | null }
   /** 卡05：任务事件记录关联（复盘：重开后按 turn_id 拉取执行过程） */
   turnTaskRef?: TurnTaskRef
+  /** U05-C: persist an unexecuted approval card for display after app reload. */
+  pendingPlan?: PendingPlan | null
   /** 卡05：任务类旧记录没有过程数据（不编造历史） */
   staleTimeline?: boolean
   /** RF03：后端执行记录保存失败（仅当前会话内存活的提示） */
   recordingFailed?: boolean
+  /** U12-B：只读视觉对照候选，不代表自动验收通过。 */
+  visualReview?: VisualReviewReport
+  visualReviewError?: string
+  visualReviewBusy?: boolean
+  visualReviewRestored?: boolean
+}
+
+export interface VisualReviewReport {
+  review_id: string
+  run_id: string
+  source_fingerprint: string
+  plan_id: string
+  model: string
+  status: 'complete' | 'partial'
+  coverage: Array<{ target_id: string; status: 'covered' | 'partial' | 'unknown' | 'not_observable' }>
+  findings: Array<{ finding_id: string; target_id: string; outcome: 'pass' | 'fail' | 'unknown'; severity: string; summary: string; failure_layer: string; uncertainty: string; evidence: Array<{ frame_id: string; view_id?: string; note: string; region?: number[] }> }>
+  missing_target_ids: string[]
 }
 
 /** RF04：任务索引条目（GET /api/assistant/turn/events） */
@@ -1011,6 +1074,7 @@ export interface TurnSummary {
 export interface TurnTaskRef {
   turn_id: string
   run_id?: string | null
+  reference_available?: boolean
   schema_version?: number
 }
 
@@ -1046,6 +1110,27 @@ export interface VisionExtractionCorrection {
   evidence?: string
 }
 
+export interface VisionFusionConflict {
+  field_path: string
+  state_key?: string
+  candidates: Array<{
+    value: unknown
+    unit?: string | null
+    role?: string
+    status?: string
+    confidence?: string
+    evidence?: string
+    source_refs?: string[]
+  }>
+}
+
+export interface VisionFusion {
+  observation?: Record<string, unknown>
+  by_state?: Record<string, Record<string, unknown>>
+  conflicts?: VisionFusionConflict[]
+  needs_clarification?: string[]
+}
+
 export interface VisionExtraction {
   token?: string
   skipped?: boolean
@@ -1060,8 +1145,18 @@ export interface VisionExtraction {
   // P5d-2：schema 元数据（required + critic_checks = 可编辑确认卡的可编辑范围）
   required?: string[]
   critic_checks?: string[]
+  editable_fields?: string[]
   // P5e：MODIFY 复用标记（D7）——提取结果来自内容哈希命中的缓存，标注来源模型
   reused_from_model?: string
+  // U04-B：附在首条可见提取上的多图融合视图，不参与生成 prompt。
+  fusion?: VisionFusion
+  // Confirmation-card edits are explicit user values and take precedence in fusion.
+  user_overrides?: Record<string, unknown>
+  cache_context?: Record<string, string>
+  evidence?: Record<string, string>
+  domain_skill_id?: string
+  domain_skill_status?: string
+  domain_skill_version?: string
 }
 
 // ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────
@@ -1357,6 +1452,14 @@ export interface PendingPlan {
   constraints?: string[]
   assumptions?: string[]
   acceptance_criteria?: string[]
+  change_delta?: string[]
+  preserved_constraints?: string[]
+  revision_instruction?: string
+  original_request?: string
+  original_has_images?: boolean
+  restored_display_only?: boolean
+  typed_plan?: Record<string, unknown>
+  object_plan?: Record<string, unknown>
   intent_summary: string
   user_visible_changes: string[]
   affected_files: string[]

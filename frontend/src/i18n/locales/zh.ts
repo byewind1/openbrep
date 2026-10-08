@@ -70,6 +70,13 @@ export const zh = {
   'settings.ai.apiKeyPlaceholder': '输入该模型的 API Key',
   'settings.ai.apiKeyReplacePlaceholder': '已保存 Key，输入新值可替换',
   'settings.ai.saveKey': '保存 Key',
+  'settings.ai.planApproval.title': '生成前审批计划',
+  'settings.ai.planApproval.hint': '默认关闭以自动执行；也可在输入区只为当前一轮切换。',
+  'settings.ai.planApproval.auto': '默认自动执行',
+  'settings.ai.planApproval.confirm': '默认先审批计划',
+  'settings.ai.planApproval.save': '保存偏好',
+  'settings.ai.planApproval.saved': '审批偏好已保存。',
+  'settings.ai.planApproval.saveFailed': '审批偏好保存失败。',
   'settings.ai.savingAndVerifying': '保存并验证中…',
   'settings.ai.keySaved': 'API Key 已保存',
   'settings.ai.keySavedConnectionOk': '✅ Key 已保存，连接正常 ({ms} ms)',
@@ -246,7 +253,15 @@ export const zh = {
 
   // Assistant plan confirmation gate (V3)
   'assistant.plan.title': '修改计划',
+  'assistant.plan.restoredReadOnly': '这是历史计划，仅供查看。需要重新规划后才能审批执行。',
   'assistant.plan.userChanges': '将要发生的改动',
+  'assistant.plan.delta': '本次修改增量',
+  'assistant.plan.preserved': '必须保持的现有行为',
+  'assistant.plan.typedDetails': '查看完整建模策略、识别依据与执行计划',
+  'assistant.plan.needsInput': '计划依据需要补充确认，当前不能执行。请取消后补充要求再生成计划。',
+  'assistant.plan.revisionLabel': '修改计划要求',
+  'assistant.plan.revisionPlaceholder': '补充或更正这份计划应如何调整…',
+  'assistant.plan.revise': '重新规划并检查',
   'assistant.plan.affectedFiles': '影响文件',
   'assistant.plan.risk': '风险',
   'assistant.plan.confirm': '确认修改',
@@ -320,6 +335,11 @@ export const zh = {
   'vision.extraction.criticDegraded': '【critic 校验已降级】',
   'vision.extraction.lowConfidence': '低置信',
   'vision.extraction.evidenceHint': 'critic 修正依据',
+  'vision.extraction.conflictsTitle': '多图信息有冲突',
+  'vision.extraction.conflictsHelp': '请对照原图确认冲突字段后再继续生成。',
+  'vision.extraction.skillUnverified': '领域 Skill「{skill}」v{version} 尚未通过真实样本验证；结果仅作候选，请人工核对。',
+  'vision.extraction.skillUnsupported': '没有匹配的领域 Skill，当前结果来自通用识别，构件专属字段可能不完整。',
+  'vision.extraction.skillAmbiguous': '当前描述同时匹配多个领域 Skill，暂用通用识别；请补充构件类型以获得专用字段。',
   'vision.extraction.reusedFrom': '复用自',
 
   // P5d-2 提取确认门（可编辑确认卡）
@@ -552,6 +572,11 @@ export const zh = {
   'providerPanel.importConflicts': '冲突（以现有为准）',
   'providerPanel.importSkipped': '跳过',
   'providerPanel.importNoCredential': '无凭据，导入后需补填',
+  'project.importContract.title': '导入的 HSF 事实',
+  'project.importContract.description': '请检查从源码整理的参数和 HSF 事实。采用后会把类型合同保存到当前项目；不会补入推断的几何或行为规则。',
+  'project.importContract.sourceFacts': '查看导入的源码事实',
+  'project.importContract.adopt': '采用这些源码事实',
+  'project.importContract.adopting': '正在采用…',
 } as const
 
 export type LocaleKey = keyof typeof zh

@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from openbrep.quality.cross_script import build_cross_script_graph, format_graph
+from openbrep.hsf_project import HSFProject
+from openbrep.quality.cross_script import (
+    analyze_mutation_impact,
+    build_cross_script_graph,
+    format_graph,
+)
 
 
 def _project(tmp_path: Path, *, malformed: bool = False) -> Path:
@@ -110,3 +115,35 @@ def test_quality_uses_conservative_shared_parameter_roles(tmp_path):
     assert graph.eligibility["conditional"]["reason"] == "conditional_assignment"
     assert graph.eligibility["left"]["role"] == "unknown"
     assert graph.eligibility["right"]["role"] == "unknown"
+
+
+def test_source_edit_invalidates_all_scripts_and_reports_partial_coverage(tmp_path):
+    root = _project(tmp_path)
+    project = HSFProject.load_from_disk(str(root))
+
+    impact = analyze_mutation_impact(project, {"changed_files": ["scripts/3d.gdl"]})
+
+    assert impact.status == "partial"
+    assert "scripts/2d.gdl" in impact.affected_scripts
+    assert "scripts/vl.gdl" in impact.affected_scripts
+    assert {"compile", "static", "semantic", "preview", "parameter_ui"} <= set(impact.checks)
+    assert impact.coverage["complete"] is False
+
+
+def test_parameter_impact_follows_master_derivations_and_dynamic_edges(tmp_path):
+    root = _project(tmp_path)
+    (root / "scripts" / "1d.gdl").write_text("derived = width * 2\n", encoding="utf-8")
+    (root / "scripts" / "3d.gdl").write_text("BLOCK derived, 1, 1\n", encoding="utf-8")
+    (root / "scripts" / "ui.gdl").write_text('CALL "ui_macro"\n', encoding="utf-8")
+    project = HSFProject.load_from_disk(str(root))
+
+    impact = analyze_mutation_impact(project, {"changed_parameters": ["WIDTH"]})
+
+    assert "width" in impact.affected_parameters
+    assert {"scripts/1d.gdl", "scripts/3d.gdl"} <= set(impact.affected_scripts)
+    assert set(impact.affected_scripts) == {
+        "scripts/1d.gdl", "scripts/2d.gdl", "scripts/3d.gdl", "scripts/ui.gdl", "scripts/vl.gdl", "scripts/pr.gdl"
+    }
+    assert impact.coverage["method"] == "conservative_full_script_invalidation"
+    assert any("dynamic GDL references" in item for item in impact.unknown_dependencies)
+    assert impact.coverage["complete"] is False

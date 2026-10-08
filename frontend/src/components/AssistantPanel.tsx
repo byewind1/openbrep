@@ -19,12 +19,13 @@ interface AssistantPanelProps {
   busy: boolean
   hasProject: boolean
   interruptedContext?: { message: string; intent: string } | null
-  onChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan') => void
+  onChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan', confirmBeforeExecute?: boolean) => void
   onProposalAction?: (id: string, action: 'select' | 'execute') => void
   onStop: () => void
   onClearHistory: () => void
   onDeleteMessages?: (indices: number[]) => void | Promise<void>
   onAdoptCode: (index: number) => void
+  onReviewVisualTurn?: (turnId: string, force?: boolean) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => Promise<boolean> | boolean
   onRevealLine?: (scriptName: string, lineNumber: number) => void
@@ -50,6 +51,7 @@ interface AssistantPanelProps {
   // 计划确认门（V3）：待确认计划 + 确认/取消回调
   pendingPlan?: PendingPlan | null
   onConfirmPlan?: (approve: boolean) => void
+  onRevisePlan?: (instruction: string) => void
   // 提取确认门（P5d-2）：待确认/编辑的读图提取 + 确认（带编辑后 extractions）/取消回调
   pendingExtraction?: PendingExtraction | null
   onConfirmExtraction?: (extractions: VisionExtraction[], approve: boolean) => void
@@ -86,6 +88,7 @@ export function AssistantPanel({
   onClearHistory,
   onDeleteMessages,
   onAdoptCode,
+  onReviewVisualTurn,
   onOpenScript,
   onSaveRevision,
   onRevealLine,
@@ -102,6 +105,7 @@ export function AssistantPanel({
   onOpenModelSettings,
   pendingPlan = null,
   onConfirmPlan,
+  onRevisePlan,
   pendingExtraction = null,
   onConfirmExtraction,
   pendingSkillProposal = null,
@@ -117,6 +121,7 @@ export function AssistantPanel({
   const [attachments, setAttachments] = useState<AttachedImage[]>([])
   const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [confirmThisTurn, setConfirmThisTurn] = useState(llmSettings?.confirm_before_execute ?? false)
   const [selectedMessages, setSelectedMessages] = useState<Set<number>>(new Set())
   // P0-B/P1-A：当前采用的执行参考图（显式选择；渲染图片不自动成为参考）。
   // 采用动作经后端取回为会话参考资产（hash + 状态），下一轮执行注入允许列表。
@@ -144,6 +149,8 @@ export function AssistantPanel({
   }, [currentProjectPath])
   const t = useT()
   const { confirm, dialogNode } = useThemedDialog()
+  const savedConfirmDefault = llmSettings?.confirm_before_execute ?? false
+  useEffect(() => setConfirmThisTurn(savedConfirmDefault), [savedConfirmDefault])
 
   async function adoptGalleryReference(url: string | null, alt: string) {
     setAdoptError('')
@@ -231,14 +238,13 @@ export function AssistantPanel({
     if (pickerMode !== null || busy) return
     const message = draft.trim()
     if (!message) return
+    const confirmForTurn = confirmThisTurn
     setDraft('')
     setPlanOnly(false)
-    onChat(
-      message,
-      attachments.map(({ token: _token, ...img }) => img),
-      planOnly ? 'plan' : 'auto',
-
-    )
+    setConfirmThisTurn(savedConfirmDefault)
+    const outgoingImages = attachments.map(({ token: _token, ...img }) => img)
+    if (llmSettings) onChat(message, outgoingImages, planOnly ? 'plan' : 'auto', confirmForTurn)
+    else onChat(message, outgoingImages, planOnly ? 'plan' : 'auto')
     setAttachments([])
   }
 
@@ -554,6 +560,39 @@ export function AssistantPanel({
                 <ExtractionCardList extractions={message.visionExtractions} />
               ) : null}
 
+              {message.role === 'assistant' && message.turnTaskRef?.turn_id && message.turnTaskRef.run_id &&
+              (message.turnTaskRef.reference_available || (messages[index - 1]?.role === 'user' && messages[index - 1].images?.length)) ? (
+                <section className="assistant-visual-review">
+                  <button
+                    type="button"
+                    disabled={busy || message.visualReviewBusy || !onReviewVisualTurn}
+                    onClick={() => onReviewVisualTurn?.(message.turnTaskRef!.turn_id, Boolean(message.visualReviewRestored))}
+                  >
+                    {message.visualReviewBusy ? '正在对照参考图…' : message.visualReviewRestored ? '重新对照参考图' : message.visualReview ? '重新对照参考图' : '对照参考图'}
+                  </button>
+                  {message.visualReviewError ? <p role="alert">{message.visualReviewError}</p> : null}
+                  {message.visualReview ? (
+                    <div className="assistant-visual-review-report">
+                      <strong>视觉对照候选 · {message.visualReview.status === 'partial' ? '覆盖不完整' : '完成'}</strong>
+                      {message.visualReviewRestored ? <p>这是从项目记录恢复的历史结果；如果源码已变更，请重新对照。</p> : null}
+                      <p>这是基于参考图、Plan 和当前预览的 AI 对照结果，不构成自动验收。</p>
+                      {message.visualReview.coverage.map((item) => (
+                        <p key={item.target_id}>{item.target_id}：{item.status}</p>
+                      ))}
+                      {message.visualReview.findings.map((finding) => (
+                        <div key={finding.finding_id}>
+                          <p><b>{finding.outcome === 'fail' ? '发现差异' : finding.outcome === 'unknown' ? '无法判断' : '观察项'}</b> · {finding.summary}</p>
+                          {finding.uncertainty ? <small>{finding.uncertainty}</small> : null}
+                          {finding.evidence.map((evidence) => (
+                            <small key={`${finding.finding_id}-${evidence.frame_id}`}>证据：{evidence.view_id || evidence.frame_id}{evidence.note ? ` · ${evidence.note}` : ''}</small>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
               {message.changedFiles?.length ? (
                 <div className="assistant-change-card">
                   <strong>Changed files</strong>
@@ -643,7 +682,7 @@ export function AssistantPanel({
             </div>
           </PanelEmpty>
         )}
-        {pendingPlan ? <PlanConfirmCard plan={pendingPlan} busy={busy} onConfirm={onConfirmPlan} /> : null}
+        {pendingPlan ? <PlanConfirmCard plan={pendingPlan} busy={busy} onConfirm={onConfirmPlan} onRevise={onRevisePlan} /> : null}
         {pendingExtraction ? (
           <ExtractionConfirmCard
             extractions={pendingExtraction.extractions}
@@ -817,6 +856,11 @@ export function AssistantPanel({
           )}
           {!legacyEntry && <button type="button" aria-pressed={planOnly} disabled={busy}
             onClick={() => setPlanOnly(!planOnly)}>先出计划（不改项目）{planOnly ? ' ✓' : ''}</button>}
+          {!legacyEntry && <button type="button" aria-pressed={confirmThisTurn} disabled={busy}
+            aria-label="生成前计划审批（仅当前一轮）" title="只影响当前消息；默认值在 AI 设置中显式保存"
+            onClick={() => setConfirmThisTurn(!confirmThisTurn)}>
+            {confirmThisTurn ? '审批后执行 ✓' : '自动执行'}
+          </button>}
           <div className="assistant-actions">
             {busy ? (
               <button type="button" className="chat-stop-btn" onClick={onStop}>
@@ -976,19 +1020,25 @@ function PlanConfirmCard({
   plan,
   busy,
   onConfirm,
+  onRevise,
 }: {
   plan: PendingPlan
   busy: boolean
   onConfirm?: (approve: boolean) => void
+  onRevise?: (instruction: string) => void
 }) {
   const t = useT()
+  const [revisionInstruction, setRevisionInstruction] = useState('')
+  const planNeedsInput = (plan.typed_plan as { status?: unknown } | undefined)?.status === 'needs_input'
   return (
     <div className="plan-confirm-card" role="group" aria-label={t('assistant.plan.title')}>
       <div className="plan-confirm-header">
         <strong>{t('assistant.plan.title')}</strong>
         <span className="plan-confirm-risk">{t('assistant.plan.risk')}: {plan.risk || '无'}</span>
       </div>
+      {plan.restored_display_only ? <p className="plan-confirm-risk">{t('assistant.plan.restoredReadOnly')}</p> : null}
       <p className="plan-confirm-intent">{plan.intent_summary}</p>
+      {planNeedsInput ? <p className="plan-confirm-risk">{t('assistant.plan.needsInput')}</p> : null}
       {plan.user_visible_changes.length ? (
         <div className="plan-confirm-section">
           <strong>{t('assistant.plan.userChanges')}</strong>
@@ -997,6 +1047,18 @@ function PlanConfirmCard({
               <li key={i}>{change}</li>
             ))}
           </ul>
+        </div>
+      ) : null}
+      {plan.change_delta?.length ? (
+        <div className="plan-confirm-section">
+          <strong>{t('assistant.plan.delta')}</strong>
+          <ul>{plan.change_delta.map((change, i) => <li key={i}>{change}</li>)}</ul>
+        </div>
+      ) : null}
+      {plan.preserved_constraints?.length ? (
+        <div className="plan-confirm-section">
+          <strong>{t('assistant.plan.preserved')}</strong>
+          <ul>{plan.preserved_constraints.map((item, i) => <li key={i}>{item}</li>)}</ul>
         </div>
       ) : null}
       {plan.affected_files.length ? (
@@ -1014,8 +1076,36 @@ function PlanConfirmCard({
           <strong>{{ constraints: '必须遵守', assumptions: '采用的假设', acceptance_criteria: '验收条件' }[key]}</strong>
           <ul>{plan[key]!.map((item, i) => <li key={i}>{item}</li>)}</ul>
         </div> : null)}
+      {plan.typed_plan || plan.object_plan ? (
+        <details className="plan-confirm-section">
+          <summary>{t('assistant.plan.typedDetails')}</summary>
+          <pre>{JSON.stringify({ object_plan: plan.object_plan, typed_plan: plan.typed_plan }, null, 2)}</pre>
+        </details>
+      ) : null}
+      {onRevise ? (
+        <div className="plan-confirm-section">
+          <label>
+            <strong>{t('assistant.plan.revisionLabel')}</strong>
+            <textarea
+              aria-label={t('assistant.plan.revisionLabel')}
+              value={revisionInstruction}
+              disabled={busy}
+              onChange={(event) => setRevisionInstruction(event.currentTarget.value)}
+              placeholder={t('assistant.plan.revisionPlaceholder')}
+              rows={2}
+            />
+          </label>
+          <button type="button" disabled={busy || !revisionInstruction.trim()}
+            onClick={() => {
+              onRevise(revisionInstruction.trim())
+              setRevisionInstruction('')
+            }}>
+            {t('assistant.plan.revise')}
+          </button>
+        </div>
+      ) : null}
       <div className="plan-confirm-actions">
-        <button type="button" className="plan-confirm-approve" disabled={busy} onClick={() => onConfirm?.(true)}>
+        <button type="button" className="plan-confirm-approve" disabled={busy || planNeedsInput || plan.restored_display_only} onClick={() => onConfirm?.(true)}>
           {t('assistant.plan.confirm')}
         </button>
         <button type="button" className="plan-confirm-reject" disabled={busy} onClick={() => onConfirm?.(false)}>
