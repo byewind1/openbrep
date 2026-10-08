@@ -106,6 +106,7 @@ def execute_requirements(
         result.requirement_id = requirement.requirement_id
         result.executor_id = check_id or ""
         result.source_fingerprint = str(context.get("source_fingerprint", ""))
+        result.requirement_source = requirement.source
         if context.get("source_stale"):
             result.stale = True
             if result.status == "pass":

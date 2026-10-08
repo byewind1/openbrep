@@ -59,6 +59,30 @@ def test_builds_hash_bound_typed_candidate_and_canonicalizes_explicit_units():
     assert artifact.execution_plan["plan_hash"]
 
 
+def test_domain_skill_requirements_are_required_and_source_bound_in_candidate_and_plan():
+    skill_requirement = {
+        "requirement_id": "cabinet:doors-visible",
+        "text": "门扇在 2D 视图可见",
+        "kind": "check",
+        "check_id": "static",
+        "params": {},
+        "source": "domain-skill:cabinet@0.1.0#abc123",
+    }
+    artifact = build_planning_artifact(_plan(), domain_requirements=[skill_requirement])
+
+    assert artifact.status == "ready"
+    raw = next(item for item in artifact.candidate_spec["requirements"]
+               if item["requirement_id"] == "cabinet:doors-visible")
+    assert raw["strength"] == "required"
+    assert raw["source"] == skill_requirement["source"]
+    parsed = parse_execution_plan(artifact.execution_plan)
+    assert parsed.ok
+    requirement = next(item for item in parsed.value.requirements
+                       if item.requirement_id == "cabinet:doors-visible")
+    assert requirement.strength == "required"
+    assert requirement.source == skill_requirement["source"]
+
+
 def test_dimensionless_gdl_labels_and_material_defaults_do_not_request_input():
     plan = _plan(typed_parameters=[
         {"param_id": "p.count", "gdl_name": "count", "type": "Integer", "unit": "count", "default_value": 4},

@@ -309,6 +309,7 @@ class CheckResult:
     requirement_id: str = ""
     executor_id: str = ""
     source_fingerprint: str = ""
+    requirement_source: str = ""
 
     def to_dict(self) -> dict:
         payload = {
@@ -325,6 +326,8 @@ class CheckResult:
             payload["executor_id"] = self.executor_id
         if self.source_fingerprint:
             payload["source_fingerprint"] = self.source_fingerprint
+        if self.requirement_source:
+            payload["requirement_source"] = self.requirement_source
         return payload
 
 

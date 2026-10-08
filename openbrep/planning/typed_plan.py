@@ -56,6 +56,7 @@ def build_planning_artifact(
     conflict_fields: Iterable[str] = (),
     project: Any = None,
     user_input: str = "",
+    domain_requirements: Iterable[dict[str, Any]] = (),
 ) -> PlanningArtifact:
     """Validate planner declarations and bind them to observations and source facts.
 
@@ -73,6 +74,7 @@ def build_planning_artifact(
         observation_rows.append(explicit_observation)
     observation_data = tuple(item.to_dict() for item in observation_rows)
     raw_mappings = list(getattr(object_plan, "requirement_mappings", []) or [])
+    domain_requirement_rows = [dict(item) for item in domain_requirements]
     for gdl_name, source in parameter_sources.items():
         raw_mappings.append({
             "requirement_id": f"req-explicit-{gdl_name.casefold()}",
@@ -91,6 +93,7 @@ def build_planning_artifact(
         "parts": parts,
         "params": typed_parameters,
         "requirements": raw_mappings,
+        "domain_requirements": domain_requirement_rows,
         "observations": [item.observation_id for item in observation_rows],
     })
     plan_id = _stable_id("plan", {
@@ -104,6 +107,18 @@ def build_planning_artifact(
         observation_rows[0].observation_id if observation_rows else ""
     )
     requirements, mappings = _build_requirements(raw_mappings, issues)
+    for item in domain_requirement_rows:
+        check_id = str(item.get("check_id") or "").strip() or None
+        requirements.append(Requirement(
+            requirement_id=str(item.get("requirement_id") or ""),
+            text=str(item.get("text") or ""),
+            kind=str(item.get("kind") or "check"),
+            check_id=check_id,
+            params=dict(item.get("params") or {}),
+            status="defined" if check_id and known_check_executor(check_id) else "unknown",
+            strength="required",
+            source=str(item.get("source") or ""),
+        ))
     mapped_texts = {item.text for item in requirements}
     if not raw_mappings:
         for index, text in enumerate(getattr(object_plan, "validation_checks", []) or []):
@@ -179,6 +194,8 @@ def build_planning_artifact(
                 check_id=item.check_id,
                 params=dict(item.params),
                 status=requirement_status.get(item.requirement_id, item.status),
+                strength=item.strength,
+                source=item.source,
             )
             for item in spec.requirements
         ],
@@ -270,6 +287,8 @@ def _build_requirements(
             check_id=str(check_id) if check_id else None,
             params={"part_refs": raw.get("part_refs", []), "parameter_refs": raw.get("parameter_refs", [])},
             status="unknown" if kind == "check" and not check_id else "defined",
+            strength=str(raw.get("strength") or "legacy"),
+            source=str(raw.get("source") or ""),
         ))
         mappings.append(PlanRequirementMapping(
             requirement_id=requirement_id,

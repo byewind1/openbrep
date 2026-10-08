@@ -180,9 +180,10 @@ class Requirement:
     params: dict = field(default_factory=dict)       # 执行器的 typed 参数
     status: str = "defined"          # defined | unknown（语法不支持时显式 unknown）
     strength: str = "legacy"         # required | advisory | legacy
+    source: str = ""                  # planner/user/domain-skill provenance ref
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "requirement_id": self.requirement_id,
             "text": self.text,
             "kind": self.kind,
@@ -191,6 +192,9 @@ class Requirement:
             "status": self.status,
             "strength": self.strength,
         }
+        if self.source:
+            payload["source"] = self.source
+        return payload
 
 
 @dataclass
@@ -521,6 +525,7 @@ def parse_object_spec(data: dict[str, Any]) -> ParseResult:
             requirement_id=requirement_id, text=text, kind=kind,
             check_id=check_id or None, params=dict(raw.get("params") or {}),
             status=requirement_status, strength=strength,
+            source=str(raw.get("source") or ""),
         ))
 
     relations: list[Relation] = []
@@ -645,6 +650,7 @@ def parse_execution_plan(data: dict[str, Any]) -> ParseResult:
             params=dict(raw.get("params") or {}) if isinstance(raw, dict) else {},
             status=requirement_status,
             strength=strength,
+            source=str(raw.get("source") or ""),
         ))
 
     requirement_ids = {item.requirement_id for item in requirements}

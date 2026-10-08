@@ -1526,6 +1526,7 @@ class TaskPipeline:
         if request.intent in ("CREATE", "IMAGE"):
             selected_domain_skills: list[dict[str, str]] = []
             domain_skill_sections: list[str] = []
+            domain_requirement_rows: list[dict[str, Any]] = []
             if request.project is not None:
                 try:
                     from openbrep.domain_skill_selection import load_project_skill_selections
@@ -1543,6 +1544,15 @@ class TaskPipeline:
                             "content_hash": skill.content_hash,
                             "status": skill.status,
                         })
+                        source_ref = f"domain-skill:{skill.skill_id}@{skill.version}#{skill.content_hash}"
+                        for raw_requirement in skill.manifest.get("requirements", []):
+                            if not isinstance(raw_requirement, dict):
+                                continue
+                            domain_requirement_rows.append({
+                                **raw_requirement,
+                                "requirement_id": f"{skill.skill_id}:{raw_requirement.get('requirement_id', '')}",
+                                "source": source_ref,
+                            })
                         section = [
                             f"已选 Domain Skill：{skill.skill_id} v{skill.version} "
                             f"({skill.status}; sha256={skill.content_hash})",
@@ -1589,6 +1599,7 @@ class TaskPipeline:
                 conflict_fields=conflict_fields,
                 project=request.project,
                 user_input=request.user_input,
+                domain_requirements=domain_requirement_rows,
             ).to_dict()
             if selected_domain_skills:
                 planning_artifact["domain_skills"] = selected_domain_skills
