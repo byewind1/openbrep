@@ -320,6 +320,33 @@ def semantic_verify(path: str, sweep: bool = True) -> dict:
                 and result.project_contract.applicability != "not_applicable"
             ):
                 payload["project_contract"] = result.project_contract.to_dict()
+            from openbrep.contracts.object_spec import parse_object_spec
+            from openbrep.contracts.project_store import load_project_contract
+            from openbrep.contracts.requirement_execution import execute_requirements
+
+            stored_contract = load_project_contract(root)
+            if stored_contract.object_spec is not None and stored_contract.status in {"fresh", "stale"}:
+                parsed_spec = parse_object_spec(stored_contract.object_spec)
+                if parsed_spec.ok:
+                    evaluation = execute_requirements(
+                        parsed_spec.value.requirements,
+                        {
+                            "source_fingerprint": source_fingerprint,
+                            "source_stale": stored_contract.status != "fresh"
+                            or compute_source_fingerprint(root) != source_fingerprint,
+                            "checks": {
+                                "semantic": {
+                                    "status": "pass" if result.passed else "fail",
+                                    "reason": "语义检查完成" if result.passed else "语义检查发现问题",
+                                    "evidence_refs": [issue["check_type"] for issue in issues],
+                                }
+                            },
+                        },
+                    )
+                    payload["requirement_evaluation"] = evaluation.to_dict()
+                    payload["requirements_passed"] = evaluation.status in {
+                        "passed", "not_applicable", "advisory_only"
+                    }
             return payload | _identify_evidence(payload, "semantic", source_fingerprint)
         except Exception as exc:
             return _make_error("mcp_internal_error", f"semantic_verify 失败: {exc}", trace_id)

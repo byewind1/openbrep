@@ -202,6 +202,32 @@ def test_semantic_verify_well_formed_project_passes(tmp_path):
     result = semantic_verify(str(hsf_dir))
     assert result["ok"] is True
     assert result["passed"] is True
+
+
+def test_semantic_verify_projects_adopted_requirements_without_claiming_missing_checks(tmp_path):
+    from openbrep.contracts.object_spec import ObjectSpec, Requirement
+    from openbrep.contracts.project_store import commit_project_state
+
+    _project, hsf_dir = _make_project(tmp_path)
+    project = HSFProject.load_from_disk(str(hsf_dir))
+    spec = ObjectSpec(
+        spec_id="spec.requirements",
+        object_type="generic",
+        requirements=[
+            Requirement("r.semantic", "geometry is valid", check_id="semantic", strength="required"),
+            Requirement("r.compile", "real compile", check_id="compile", strength="required"),
+        ],
+    )
+    assert commit_project_state(project, spec).ok
+
+    result = semantic_verify(str(hsf_dir), sweep=False)
+
+    assert result["ok"] is True
+    assert result["requirement_evaluation"]["status"] == "incomplete"
+    by_requirement = {item["requirement_id"]: item for item in result["requirement_evaluation"]["results"]}
+    assert by_requirement["r.semantic"]["status"] == "pass"
+    assert by_requirement["r.compile"]["status"] == "not_run"
+    assert result["requirements_passed"] is False
     assert "project_contract" not in result
 
 
