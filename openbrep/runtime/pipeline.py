@@ -275,6 +275,8 @@ class AssembledContext:
     project_context: Optional[ProjectContext]
     knowledge_selection: KnowledgeSelection
     skills_text: str
+    domain_skills: tuple[Any, ...] = ()
+    domain_skill_issues: tuple[dict[str, Any], ...] = ()
     # AC-4：本次是否因优化/审查触发词强制注入了规则全文
     review_rules_forced: bool = False
 
@@ -289,6 +291,23 @@ class AssembledContext:
     @property
     def source_ids(self) -> list[str]:
         return self.knowledge_selection.source_ids
+
+
+def _format_selected_domain_skill(skill: Any) -> str:
+    policy = {
+        "plan_policy": skill.manifest.get("plan_policy"),
+        "requirements": skill.manifest.get("requirements"),
+        "allowed_variations": skill.manifest.get("allowed_variations"),
+    }
+    parts = [
+        f"已选 Domain Skill：{skill.skill_id} v{skill.version} "
+        f"({skill.status}; sha256={skill.content_hash})",
+        "该包为数据合同；development/proposed 状态不代表专业验证。",
+        "要求与规划策略：" + json.dumps(policy, ensure_ascii=False, sort_keys=True),
+    ]
+    if skill.prompt_text.strip():
+        parts.append("选用方法：\n" + skill.prompt_text.strip())
+    return "\n".join(parts)
 
 
 @dataclass
@@ -1525,60 +1544,24 @@ class TaskPipeline:
         planning_artifact = None
         if request.intent in ("CREATE", "IMAGE"):
             selected_domain_skills: list[dict[str, str]] = []
-            domain_skill_sections: list[str] = []
-            domain_requirement_rows: list[dict[str, Any]] = []
-            if request.project is not None:
-                try:
-                    from openbrep.domain_skill_selection import load_project_skill_selections
-
-                    selection = load_project_skill_selections(request.project.root)
-                    if selection.issues:
-                        on_event("status", {
-                            "message": "部分已选 Domain Skill 无法加载，未静默替换版本。",
-                            "domain_skill_issues": [issue.__dict__ for issue in selection.issues],
-                        })
-                    for skill in selection.skills:
-                        selected_domain_skills.append({
-                            "skill_id": skill.skill_id,
-                            "version": skill.version,
-                            "content_hash": skill.content_hash,
-                            "status": skill.status,
-                        })
-                        source_ref = f"domain-skill:{skill.skill_id}@{skill.version}#{skill.content_hash}"
-                        for raw_requirement in skill.manifest.get("requirements", []):
-                            if not isinstance(raw_requirement, dict):
-                                continue
-                            domain_requirement_rows.append({
-                                **raw_requirement,
-                                "requirement_id": f"{skill.skill_id}:{raw_requirement.get('requirement_id', '')}",
-                                "source": source_ref,
-                            })
-                        section = [
-                            f"已选 Domain Skill：{skill.skill_id} v{skill.version} "
-                            f"({skill.status}; sha256={skill.content_hash})",
-                            "该包为数据合同；development/proposed 状态不代表专业验证。",
-                            "要求与规划策略：" + json.dumps(
-                                {"plan_policy": skill.manifest.get("plan_policy"),
-                                 "requirements": skill.manifest.get("requirements"),
-                                 "allowed_variations": skill.manifest.get("allowed_variations")},
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
-                        ]
-                        if skill.prompt_text.strip():
-                            section.append("选用方法：\n" + skill.prompt_text.strip())
-                        domain_skill_sections.append("\n".join(section))
-                except Exception as exc:
-                    logger.warning("Selected domain Skills unavailable: %s", exc)
-            planner_skills = skills_text
-            if domain_skill_sections:
-                planner_skills = "\n\n".join(part for part in (skills_text, *domain_skill_sections) if part)
+            for skill in assembled_context.domain_skills:
+                selected_domain_skills.append({
+                    "skill_id": skill.skill_id,
+                    "version": skill.version,
+                    "content_hash": skill.content_hash,
+                    "status": skill.status,
+                })
+            if assembled_context.domain_skill_issues:
+                on_event("status", {
+                    "message": "部分已选 Domain Skill 无法加载，未静默替换版本。",
+                    "domain_skill_issues": list(assembled_context.domain_skill_issues),
+                })
             on_event("status", {"message": "正在规划 GDL 对象结构…"})
             object_plan = plan_gdl_object(
                 llm,
                 instruction=enriched_instruction,
                 knowledge=assembled_context.planner_context,
-                skills=planner_skills,
+                skills=skills_text,
                 llm_kwargs=codex_kwargs or None,
             )
             object_plan = replace(
@@ -1588,6 +1571,7 @@ class TaskPipeline:
                     assembled_context.source_ids,
                 ),
             )
+            from openbrep.domain_skill_selection import skill_requirement_rows
             from openbrep.planning.typed_plan import build_planning_artifact
 
             observations, conflict_fields = self._planning_observations(
@@ -1599,10 +1583,12 @@ class TaskPipeline:
                 conflict_fields=conflict_fields,
                 project=request.project,
                 user_input=request.user_input,
-                domain_requirements=domain_requirement_rows,
+                domain_requirements=skill_requirement_rows(assembled_context.domain_skills),
             ).to_dict()
             if selected_domain_skills:
                 planning_artifact["domain_skills"] = selected_domain_skills
+            if assembled_context.domain_skill_issues:
+                planning_artifact["domain_skill_issues"] = list(assembled_context.domain_skill_issues)
             candidate_params = (planning_artifact.get("candidate_spec") or {}).get("params") or []
             parameter_sources = planning_artifact.get("parameter_sources") or {}
             if candidate_params:
@@ -3665,33 +3651,54 @@ class TaskPipeline:
         from openbrep.verification import build_verification_report
         typed_requirements = []
         requirement_context: dict[str, Any] = {"checks": {}}
+        domain_skill_issues: list[dict[str, Any]] = []
         try:
-            from openbrep.contracts.object_spec import parse_object_spec
+            from openbrep.contracts.object_spec import Requirement, parse_object_spec
             from openbrep.contracts.project_store import load_project_contract
+            from openbrep.domain_skill_selection import (
+                load_project_skill_selections,
+                skill_requirement_rows,
+            )
 
             stored_contract = load_project_contract(project.root)
+            from openbrep.source_fingerprint import compute_source_fingerprint
+
+            current_fingerprint = compute_source_fingerprint(project.root)
+            requirement_context.update({
+                "source_fingerprint": current_fingerprint,
+                "source_stale": stored_contract.status == "stale",
+            })
+            for check_id, passed in (
+                ("compile", compile_result.success if compile_result is not None else None),
+                ("static", static_result.passed if static_result is not None else None),
+                ("semantic", semantic_result.passed if semantic_result is not None else None),
+            ):
+                requirement_context["checks"][check_id] = {
+                    "status": "not_run" if passed is None else ("pass" if passed else "fail"),
+                    "reason": "本轮未执行" if passed is None else ("检查通过" if passed else "检查未通过"),
+                }
             if stored_contract.object_spec is not None:
                 parsed_spec = parse_object_spec(stored_contract.object_spec)
                 if parsed_spec.ok:
                     typed_requirements = parsed_spec.value.requirements
-                    from openbrep.source_fingerprint import compute_source_fingerprint
-
-                    current_fingerprint = compute_source_fingerprint(project.root)
-                    requirement_context.update({
-                        "source_fingerprint": current_fingerprint,
-                        "source_stale": stored_contract.status != "fresh",
-                    })
-                    for check_id, passed in (
-                        ("compile", compile_result.success if compile_result is not None else None),
-                        ("static", static_result.passed if static_result is not None else None),
-                        ("semantic", semantic_result.passed if semantic_result is not None else None),
-                    ):
-                        requirement_context["checks"][check_id] = {
-                            "status": "not_run" if passed is None else ("pass" if passed else "fail"),
-                            "reason": "本轮未执行" if passed is None else ("检查通过" if passed else "检查未通过"),
-                        }
+            selection = load_project_skill_selections(project.root)
+            domain_skill_issues = [issue.__dict__ for issue in selection.issues]
+            typed_requirements.extend(
+                Requirement(
+                    requirement_id=str(row.get("requirement_id") or ""),
+                    text=str(row.get("text") or ""),
+                    kind=str(row.get("kind") or "check"),
+                    check_id=str(row.get("check_id") or "").strip() or None,
+                    params=dict(row.get("params") or {}),
+                    status="defined" if row.get("check_id") else "unknown",
+                    strength="required",
+                    source=str(row.get("source") or ""),
+                )
+                for row in skill_requirement_rows(selection.skills)
+            )
         except Exception as exc:
             logger.warning("Adopted requirement projection unavailable: %s", exc)
+            domain_skill_issues.append({"code": "SKILL_SELECTION_UNAVAILABLE", "message": str(exc)})
         verification_report = build_verification_report(
             intent=request.intent or "MODIFY",
             user_input=request.user_input,
@@ -3707,6 +3714,13 @@ class TaskPipeline:
             requirements=typed_requirements,
             requirement_context=requirement_context,
         )
+        if domain_skill_issues:
+            verification_report.remaining_risks.append(
+                "已选 Domain Skill 未完整加载：" + "; ".join(
+                    str(issue.get("code") or issue.get("message") or "unknown")
+                    for issue in domain_skill_issues
+                )
+            )
         output_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
 
@@ -3830,7 +3844,24 @@ class TaskPipeline:
         task_request = replace(request, project=project, user_input=instruction or request.user_input)
         project_context = resolve_project_context(project)
         knowledge_selection = self._select_knowledge_for_request(task_request, context=project_context)
+        domain_skills: tuple[Any, ...] = ()
+        domain_skill_issues: tuple[dict[str, Any], ...] = ()
+        domain_skill_prompt = ""
+        if project is not None:
+            try:
+                from openbrep.domain_skill_selection import load_project_skill_selections
+
+                selection = load_project_skill_selections(project.root)
+                domain_skills = selection.skills
+                domain_skill_issues = tuple(issue.__dict__ for issue in selection.issues)
+                domain_skill_prompt = "\n\n---\n\n".join(
+                    _format_selected_domain_skill(skill) for skill in domain_skills
+                )
+            except Exception as exc:
+                logger.warning("Selected domain Skills could not be loaded: %s", exc)
+                domain_skill_issues = ({"code": "SKILL_SELECTION_UNAVAILABLE", "message": str(exc)},)
         skill_parts = [
+            domain_skill_prompt,
             _MODIFY_SKILLS_PROMPT if include_modify_rules else "",
             self._load_skills_for_request(instruction or request.user_input, task_request, context=project_context),
             # benchmark 需要 prompt 可复现：学习记忆是累积态，会污染黄金语料，
@@ -3869,6 +3900,8 @@ class TaskPipeline:
             project_context=project_context,
             knowledge_selection=knowledge_selection,
             skills_text="\n\n---\n\n".join(part for part in skill_parts if part),
+            domain_skills=domain_skills,
+            domain_skill_issues=domain_skill_issues,
             review_rules_forced=review_forced,
         )
 

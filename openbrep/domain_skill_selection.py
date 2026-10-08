@@ -42,6 +42,22 @@ class SelectionReadResult:
     issues: tuple[SkillIssue, ...] = ()
 
 
+def skill_requirement_rows(skills: tuple[DomainSkill, ...] | list[DomainSkill]) -> list[dict[str, Any]]:
+    """Turn declared package checks into source-bound requirements for this run."""
+    rows = []
+    for skill in skills:
+        source = f"domain-skill:{skill.skill_id}@{skill.version}#{skill.content_hash}"
+        for requirement in skill.manifest.get("requirements", []):
+            if not isinstance(requirement, dict):
+                continue
+            rows.append({
+                **requirement,
+                "requirement_id": f"{skill.skill_id}:{requirement.get('requirement_id', '')}",
+                "source": source,
+            })
+    return rows
+
+
 def select_project_skill(project_root: str | Path, skill: DomainSkill) -> SkillSelectionRecord:
     """Explicitly pin one validated Skill version/hash in the project."""
     root = Path(project_root).expanduser().resolve()

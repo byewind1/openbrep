@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from openbrep.domain_skill_selection import select_project_skill
 from openbrep.domain_skills import DomainSkillRegistry
 from openbrep.hsf_project import HSFProject
@@ -27,13 +25,17 @@ def test_explicitly_selected_project_skill_is_versioned_in_planning_context(tmp_
 
     llm = _PlannerLLM()
     pipeline = TaskPipeline()
+    request = TaskRequest(user_input="按我的柜体方法生成", intent="CREATE", project=project)
+    assembled = pipeline._assemble_context(
+        request, project, instruction=request.user_input, include_modify_rules=False
+    )
     events = []
     _plan, _instruction, artifact = pipeline._plan_gdl_object_phase(
-        TaskRequest(user_input="按我的柜体方法生成", intent="CREATE", project=project),
+        request,
         llm,
         "按我的柜体方法生成",
-        SimpleNamespace(planner_context="", source_ids=[]),
-        "",
+        assembled,
+        assembled.skills_text,
         {},
         lambda name, payload: events.append((name, payload)),
     )
