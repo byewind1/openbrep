@@ -123,6 +123,11 @@ def get_executor_spec(check_id: str) -> Optional[CheckExecutorSpec]:
     return _executor_specs.get(str(check_id or "").strip())
 
 
+def list_executor_specs() -> tuple[CheckExecutorSpec, ...]:
+    """Return a stable snapshot of trusted registered check capabilities."""
+    return tuple(_executor_specs[key] for key in sorted(_executor_specs))
+
+
 def reset_executor_specs_for_tests() -> None:
     _executor_specs.clear()
     _executor_specs.update(_BUILTIN_EXECUTORS)

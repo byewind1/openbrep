@@ -292,6 +292,10 @@ class AssembledContext:
     def source_ids(self) -> list[str]:
         return self.knowledge_selection.source_ids
 
+    @property
+    def omitted_source_ids(self) -> list[str]:
+        return self.knowledge_selection.omitted_source_ids
+
 
 def _format_selected_domain_skill(skill: Any) -> str:
     policy = {
@@ -1585,6 +1589,10 @@ class TaskPipeline:
                 user_input=request.user_input,
                 domain_requirements=skill_requirement_rows(assembled_context.domain_skills),
             ).to_dict()
+            if assembled_context.omitted_source_ids:
+                planning_artifact["knowledge_omissions"] = list(
+                    assembled_context.omitted_source_ids,
+                )
             if selected_domain_skills:
                 planning_artifact["domain_skills"] = selected_domain_skills
             if assembled_context.domain_skill_issues:
@@ -2515,6 +2523,8 @@ class TaskPipeline:
             auto_repair_info, _graph_constraint_injected, _graph_powered_repair,
             vision_extractions, planning_artifact, _sem_outcome, cleaned, create_metadata, plain_text,
             parameter_contract_report=parameter_contract_report,
+            knowledge_sources=assembled_context.source_ids,
+            knowledge_omissions=assembled_context.omitted_source_ids,
         )
 
     def _finalize_create_result(
@@ -2539,6 +2549,8 @@ class TaskPipeline:
         create_metadata: dict,
         plain_text: str,
         parameter_contract_report: dict | None = None,
+        knowledge_sources: list[str] | None = None,
+        knowledge_omissions: list[str] | None = None,
     ) -> TaskResult:
         """组装 CREATE/IMAGE 交付：文本分节 + 统一验证报告 + 素材推断 + metadata。"""
         create_text_parts = []
@@ -2626,6 +2638,8 @@ class TaskPipeline:
         # ─────────────────────────────────────────────────────────────────────
 
         result_metadata: dict = dict(create_metadata)
+        result_metadata["knowledge_sources"] = list(knowledge_sources or [])
+        result_metadata["knowledge_omissions"] = list(knowledge_omissions or [])
         if parameter_contract_report is not None:
             result_metadata["parameter_contract"] = parameter_contract_report
         if object_plan is not None:
@@ -3543,6 +3557,8 @@ class TaskPipeline:
             plain_text, lint_summary, preflight_summary, static_result,
             semantic_result, auto_repair_info, _graph_powered_repair,
             before_revision_id, revision_warnings, _sem_outcome,
+            knowledge_sources=assembled_context.source_ids,
+            knowledge_omissions=assembled_context.omitted_source_ids,
         )
 
     def _modify_finalize_result(
@@ -3565,6 +3581,8 @@ class TaskPipeline:
         before_revision_id: str | None,
         revision_warnings: list[str],
         sem_outcome,
+        knowledge_sources: list[str] | None = None,
+        knowledge_omissions: list[str] | None = None,
     ) -> TaskResult:
         """组装 MODIFY/DEBUG/REPAIR 交付：编译对比 + 结构化摘要 + after revision
         + 统一验证报告 + metadata。
@@ -3727,6 +3745,8 @@ class TaskPipeline:
         modify_metadata: dict = {
             "before_revision_id": before_revision_id or None,
             "after_revision_id": _after_revision_id or None,
+            "knowledge_sources": list(knowledge_sources or []),
+            "knowledge_omissions": list(knowledge_omissions or []),
         }
         if cleaned:
             try:

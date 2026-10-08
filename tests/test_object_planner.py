@@ -118,8 +118,9 @@ class TestObjectPlanner(unittest.TestCase):
 
         plan = plan_gdl_object(llm, instruction="做一个书架")
 
-        self.assertIn("书架", plan.object_type)
-        self.assertIn("shelf_count", "\n".join(plan.parameters))
+        self.assertEqual(plan.object_type, "GDL 构件（类型未确定）")
+        self.assertNotIn("shelf_count", "\n".join(plan.parameters))
+        self.assertEqual(plan.geometry, [])
 
     def test_plan_gdl_object_does_not_hard_truncate_selected_planner_knowledge(self):
         llm = MagicMock()
@@ -211,12 +212,22 @@ class TestObjectPlanner(unittest.TestCase):
         self.assertTrue(result.success)
         mock_planner.assert_not_called()
 
-    def test_bookshelf_fallback_is_professional_not_single_block(self):
+    def test_fallback_does_not_infer_construction_from_object_name(self):
         plan = infer_minimum_plan("生成一个书架")
 
-        self.assertIn("侧板", "\n".join(plan.geometry))
-        self.assertIn("层板", "\n".join(plan.geometry))
-        self.assertIn("FOR", "\n".join(plan.script_3d_strategy))
+        self.assertEqual(plan.geometry, [])
+        self.assertEqual(plan.geometry_parts, [])
+        self.assertNotIn("shelf_count", "\n".join(plan.parameters))
+        self.assertIn("未指定", "\n".join(plan.risks))
+
+    def test_explicitly_empty_planner_fields_stay_empty(self):
+        plan = parse_gdl_object_plan(
+            '{"object_type":"cabinet","geometry":[],"assumptions":[],"parameters":[]}',
+            fallback=infer_minimum_plan("柜体"),
+        )
+        self.assertEqual(plan.geometry, [])
+        self.assertEqual(plan.assumptions, [])
+        self.assertEqual(plan.parameters, [])
 
     def test_trace_records_object_plan_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:

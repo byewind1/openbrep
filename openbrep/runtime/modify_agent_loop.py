@@ -1004,6 +1004,8 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         impact_report=registry.impact_report,
         before_revision_id=before_revision_id,
         changed_files=list(registry.changed_files.keys()),
+        knowledge_sources=list(assembled.source_ids),
+        knowledge_omissions=list(assembled.omitted_source_ids),
     )
     try:
         from openbrep.source_fingerprint import compute_source_fingerprint
@@ -1049,6 +1051,8 @@ def _agent_loop_metadata(
     task_timed_out: bool = False,
     run_control: dict | None = None,
     impact_report: dict | None = None,
+    knowledge_sources: list[str] | None = None,
+    knowledge_omissions: list[str] | None = None,
 ) -> dict:
     """agent loop 的 TaskResult.metadata 组装（vision_extractions 有值才写入）。
 
@@ -1080,6 +1084,8 @@ def _agent_loop_metadata(
     }
     if changed_files is not None:
         metadata["changed_files"] = sorted(set(changed_files))
+    metadata["knowledge_sources"] = list(knowledge_sources or [])
+    metadata["knowledge_omissions"] = list(knowledge_omissions or [])
     if impact_report is not None:
         metadata["impact_report"] = impact_report
     if vision_extractions:

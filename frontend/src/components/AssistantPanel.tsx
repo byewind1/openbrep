@@ -26,6 +26,7 @@ interface AssistantPanelProps {
   onDeleteMessages?: (indices: number[]) => void | Promise<void>
   onAdoptCode: (index: number) => void
   onReviewVisualTurn?: (turnId: string, force?: boolean) => void
+  onRepairVisualFinding?: (reviewId: string, findingId: string) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => Promise<boolean> | boolean
   onRevealLine?: (scriptName: string, lineNumber: number) => void
@@ -89,6 +90,7 @@ export function AssistantPanel({
   onDeleteMessages,
   onAdoptCode,
   onReviewVisualTurn,
+  onRepairVisualFinding,
   onOpenScript,
   onSaveRevision,
   onRevealLine,
@@ -512,6 +514,25 @@ export function AssistantPanel({
               ) : (
                 <p>{message.content}</p>
               )}
+              {message.role === 'assistant' && message.workingIntent ? (
+                <section className="assistant-working-intent" aria-label="本项目工作要求">
+                  <strong>本项目任务状态 · {message.workingIntent.persistence === 'project' ? '已保存' : message.workingIntent.persistence === 'memory_only' ? '仅本会话' : message.workingIntent.persistence === 'load_failed' ? '恢复失败' : '保存失败'}</strong>
+                  {message.workingIntent.goals.slice(-1).map((goal) => <p key={goal.id}>目标：{goal.text}</p>)}
+                  {message.workingIntent.constraints.filter((item) => item.status === 'active').map((constraint) => (
+                    <p key={constraint.id}>保持：{constraint.value}</p>
+                  ))}
+                  {message.workingIntent.persistence_issue ? <p role="alert">{message.workingIntent.persistence_issue}</p> : null}
+                </section>
+              ) : null}
+              {message.role === 'assistant' && (message.knowledgeSources?.length || message.knowledgeOmissions?.length) ? (
+                <details className="assistant-knowledge-sources">
+                  <summary>本轮技术知识来源 · 已注入 {message.knowledgeSources?.length ?? 0} 项</summary>
+                  {message.knowledgeSources?.map((source) => <small key={source}>{source}</small>)}
+                  {message.knowledgeOmissions?.length ? (
+                    <p role="alert">知识预算未注入：{message.knowledgeOmissions.join('、')}</p>
+                  ) : null}
+                </details>
+              ) : null}
               {message.advisor && <details><summary>只读建议 · 未修改项目</summary>
                 {message.advisor.inspection?.checks.map((check) => <p key={check.kind}>
                   {({ static: '静态检查', parameters: '参数声明', preview_2d: '2D预览', preview_3d: '3D预览', recent_verification: '已有验证' } as Record<string, string>)[check.kind] ?? check.kind}：
@@ -586,6 +607,7 @@ export function AssistantPanel({
                           {finding.evidence.map((evidence) => (
                             <small key={`${finding.finding_id}-${evidence.frame_id}`}>证据：{evidence.view_id || evidence.frame_id}{evidence.note ? ` · ${evidence.note}` : ''}</small>
                           ))}
+                          {finding.outcome === 'fail' ? <button type="button" disabled={busy || !onRepairVisualFinding || message.visualReviewRestored} onClick={() => onRepairVisualFinding?.(message.visualReview!.review_id, finding.finding_id)}>准备单轮修复计划</button> : null}
                         </div>
                       ))}
                     </div>
@@ -1147,6 +1169,18 @@ function SkillProposalCard({
           {evidenceNote}
         </p>
       ) : null}
+      {proposal.verification?.validation_scope ? (
+        <p className="skill-proposal-status">
+          验证范围：{proposal.verification.validation_scope.level === 'structure_only'
+            ? '仅结构检查'
+            : proposal.verification.validation_scope.level === 'mock_compile_and_semantic'
+              ? 'mock 编译与语义预览检查'
+              : proposal.verification.validation_scope.level === 'not_run_claims_unverified'
+                ? '未执行验证（含未核验技术断言）'
+              : proposal.verification.validation_scope.level}
+          {'；未验证：'}{proposal.verification.validation_scope.not_established.join('、')}
+        </p>
+      ) : null}
       {proposal.claims?.unverified?.length ? (
         <p className="skill-proposal-claims">
           ⚠ {t('assistant.skillProposal.claimsUnverified')}
@@ -1407,6 +1441,15 @@ const STATUS_ICON: Record<string, string> = {
   not_run: '⏸️',
 }
 
+const REQUIREMENT_STATUS_LABEL: Record<string, string> = {
+  passed: '全部通过',
+  failed: '存在失败',
+  incomplete: '待验证',
+  stale: '证据已过期',
+  advisory_only: '仅建议项',
+  not_applicable: '不适用',
+}
+
 function VerificationCard({
   report,
   onRevealLine,
@@ -1436,13 +1479,18 @@ function VerificationCard({
   const unknownChecks = report.checks.filter(
     (c) => c.status === 'unknown' || (c.status === 'not_run' && !isSkippedNoCompiler),
   )
+  const requirementEvaluation = report.requirement_evaluation
+  const failedRequirements = requirementEvaluation?.results.filter(
+    (result) => result.status !== 'pass' || result.stale,
+  ) ?? []
+  const requirementsNeedAttention = report.requirements_passed === false
   // 编译失败时的行级错误列表
   const compileLineErrors = compileCheck?.line_errors ?? []
 
   return (
-    <div className={`assistant-verification ${report.passed ? 'is-pass' : 'is-fail'}`}>
+    <div className={`assistant-verification ${report.passed ? 'is-pass' : 'is-fail'}${requirementsNeedAttention ? ' has-unverified-requirements' : ''}`}>
       <div className="assistant-verification-header">
-        <strong>验证报告</strong>
+        <strong>{report.passed ? '通用检查通过' : '通用检查未通过'}</strong>
         <em className={`assistant-verification-confidence confidence-${report.confidence}`}>
           置信度 {CONFIDENCE_LABEL[report.confidence] ?? report.confidence}
         </em>
@@ -1452,6 +1500,25 @@ function VerificationCard({
           </span>
         ) : null}
       </div>
+      {requirementEvaluation ? (
+        <div className={`assistant-verification-requirements${requirementsNeedAttention ? ' needs-attention' : ''}`} role="status">
+          <strong>
+            作者要求：{REQUIREMENT_STATUS_LABEL[requirementEvaluation.status] ?? requirementEvaluation.status}
+            {' · '}{requirementEvaluation.required_passed}/{requirementEvaluation.required_total} 项 required 通过
+          </strong>
+          {failedRequirements.length ? (
+            <ul>
+              {failedRequirements.slice(0, 4).map((requirement) => (
+                <li key={requirement.requirement_id}>
+                  {requirement.requirement_id}：{requirement.stale ? '证据已过期' : requirement.reason || requirement.status}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : report.requirements_passed === null ? (
+        <p className="assistant-verification-requirements">作者要求：本轮没有声明可执行要求</p>
+      ) : null}
       <div className="assistant-verification-counts">
         <span>✅ {report.counts.pass ?? 0}</span>
         <span>❌ {report.counts.fail ?? 0}</span>

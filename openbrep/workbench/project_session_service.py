@@ -729,6 +729,8 @@ class WorkbenchProjectSessionService:
                 "run_id": (result.metadata or {}).get("run_id"),
                 "source_fingerprint": delivered_source_fingerprint,
                 "verification": result.verification,
+                "knowledge_sources": list((result.metadata or {}).get("knowledge_sources") or []),
+                "knowledge_omissions": list((result.metadata or {}).get("knowledge_omissions") or []),
                 "execution_status": (
                     "source_spec_commit_failed"
                     if ((result.metadata or {}).get("source_spec_commit") or {}).get("status") == "failed"

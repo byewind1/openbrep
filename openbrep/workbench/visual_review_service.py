@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from openbrep.runtime.repair_policy import RepairContext, decide_repair
 from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.vision.review import (
     ReviewFrame,
@@ -40,10 +41,96 @@ class WorkbenchVisualReviewService:
     def route(self, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
         if method.upper() == "POST" and path == "/api/vision/review":
             return self.review_turn(body)
+        if method.upper() == "POST" and path == "/api/vision/repair":
+            return self.prepare_repair(body)
         prefix = "/api/vision/reviews/"
         if method.upper() == "GET" and path.startswith(prefix):
             return self.saved_reviews(path[len(prefix):])
         return {"ok": False, "error": f"Unknown visual review route: {method} {path}"}
+
+    def prepare_repair(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Prepare one user-approved modify turn from a current failed finding."""
+        review_id = str(body.get("review_id") or "")
+        finding_id = str(body.get("finding_id") or "")
+        if not re.fullmatch(r"review-[a-f0-9]{32}", review_id) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", finding_id
+        ):
+            return {"ok": False, "code": "INVALID_REPAIR_REFERENCE", "error": "修复证据编号无效。"}
+        if self.session.project is None:
+            return {"ok": False, "code": "PROJECT_UNAVAILABLE", "error": "当前没有可修复的项目。"}
+        if body.get("project_epoch") != self.session.project_epoch:
+            return {"ok": False, "code": "PROJECT_CHANGED", "error": "项目已切换，请从当前任务重新发起修复。"}
+        root = Path(self.session.project.root).resolve()
+        path = root / ".openbrep" / "visual-reviews" / f"{review_id}.json"
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"ok": False, "code": "REVIEW_NOT_FOUND", "error": "找不到对应的视觉对照记录。"}
+        turns = getattr(self.session.conversation_service, "turns", {})
+        turn = next((candidate for candidate in turns.values() if
+                     getattr(candidate, "state", "") == "completed" and
+                     isinstance(getattr(candidate, "result", None), dict) and
+                     (candidate.result.get("assistant") or {}).get("run_id") == report.get("run_id")), None)
+        if turn is None:
+            return {"ok": False, "code": "TURN_NOT_FOUND", "error": "原始生成任务已不在当前会话中。"}
+        artifact, _object_plan, plan_id = self._plan_context(turn)
+        fingerprint = compute_source_fingerprint(root)
+        selected = [item for item in report.get("findings", []) if isinstance(item, dict) and item.get("finding_id") == finding_id]
+        if not selected:
+            return {"ok": False, "code": "FINDING_NOT_FOUND", "error": "该 finding 不属于这份对照记录。"}
+        bound_report = {**report, "findings": selected}
+        target_id = str(selected[0].get("target_id") or "")
+        decision = decide_repair(
+            bound_report,
+            RepairContext(
+                run_id=str((turn.result.get("assistant") or {}).get("run_id") or ""),
+                source_fingerprint=fingerprint,
+                plan_id=plan_id,
+                approved_target_ids=frozenset({target_id}),
+                remaining_budget=1,
+                approval_mode="control",
+                allow_reextract=False,
+                allow_replan=False,
+            ),
+        )
+        if decision.action != "modify":
+            return {"ok": False, "code": "REPAIR_NOT_SUPPORTED", "decision": decision.to_dict(),
+                    "error": "此 finding 当前不支持自动修复；需要重新观察或人工调整计划。"}
+        summary = str(selected[0].get("summary") or "当前视觉对照发现的问题").strip()
+        message = (
+            f"针对视觉对照 finding {finding_id}，修复这一项：{summary}。"
+            f"严格限制在目标 {target_id}；保留原计划中的其他构造、尺寸与约束。"
+            "不要扩大范围；若现有信息不足以安全修改，请说明原因并停止。"
+        )
+        prepared = self.session.conversation_service.route({
+            "phase": "prepare",
+            "client_turn_id": f"visual-repair-{hashlib.sha256((review_id + finding_id).encode()).hexdigest()[:32]}",
+            "message": message,
+            "requested_mode": "plan",
+            "confirm_before_execute": True,
+            "project_epoch": self.session.project_epoch,
+        })
+        if isinstance(prepared, dict) and prepared.get("ok"):
+            prepared_turn = turns.get(str(prepared.get("turn_id") or ""))
+            repair_context = {
+                "state": "awaiting_approval", "review_id": review_id,
+                "finding_id": finding_id, "run_id": decision.run_id,
+                "plan_id": decision.plan_id,
+                "before_source_fingerprint": fingerprint,
+                "decision": decision.to_dict(),
+            }
+            if prepared_turn is not None:
+                original_body = getattr(turn, "body", {}) or {}
+                prepared_turn.review_reference_images = list(original_body.get("images") or [])
+                prepared_turn.review_reference_image_b64 = original_body.get("image_b64")
+                prepared_turn.review_reference_image_mime = original_body.get("image_mime")
+                prepared_turn.reference_asset_ids = list(getattr(turn, "reference_asset_ids", []) or [])
+                prepared_turn.repair_context = repair_context
+            prepared["repair"] = {
+                **repair_context,
+                "review_id": review_id, "finding_id": finding_id,
+            }
+        return prepared
 
     def saved_reviews(self, run_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", run_id):
@@ -225,10 +312,13 @@ class WorkbenchVisualReviewService:
         frames: list[ReviewFrame] = []
         seen: set[str] = set()
         body = getattr(turn, "body", {}) or {}
-        images = body.get("images") if isinstance(body.get("images"), list) else []
-        legacy_b64 = body.get("image_b64")
+        images = getattr(turn, "review_reference_images", None)
+        if not isinstance(images, list):
+            images = body.get("images") if isinstance(body.get("images"), list) else []
+        legacy_b64 = getattr(turn, "review_reference_image_b64", None) or body.get("image_b64")
         if legacy_b64:
-            images = [{"b64": legacy_b64, "mime": body.get("image_mime") or "image/png", "name": "attachment-1"}, *images]
+            legacy_mime = getattr(turn, "review_reference_image_mime", None) or body.get("image_mime") or "image/png"
+            images = [{"b64": legacy_b64, "mime": legacy_mime, "name": "attachment-1"}, *images]
         for index, image in enumerate(images, start=1):
             if not isinstance(image, dict) or not image.get("b64"):
                 continue

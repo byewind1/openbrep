@@ -36,8 +36,14 @@ def read_operation_receipt(project_root: str | Path, operation_id: str) -> dict[
         raise ValueError(f"operation receipt is unreadable: {exc}") from exc
     if not isinstance(payload, dict) or payload.get("operation_id") != operation_id:
         raise ValueError("operation receipt identity is invalid")
-    if not isinstance(payload.get("request_hash"), str) or not isinstance(payload.get("result"), dict):
+    state = payload.get("state", "completed")  # v1 receipts written before state was introduced
+    if (
+        not isinstance(payload.get("request_hash"), str)
+        or not isinstance(payload.get("result"), dict)
+        or state not in {"prepared", "completed"}
+    ):
         raise ValueError("operation receipt shape is invalid")
+    payload["state"] = state
     return payload
 
 
@@ -46,9 +52,14 @@ def write_operation_receipt(
     operation_id: str,
     request_hash: str,
     result: dict[str, Any],
+    *,
+    state: str = "completed",
+    source_fingerprint_before: str = "",
 ) -> None:
     if not valid_operation_id(operation_id):
         raise ValueError("invalid operation_id")
+    if state not in {"prepared", "completed"}:
+        raise ValueError("invalid operation receipt state")
     path = _receipt_path(project_root, operation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps(
@@ -56,6 +67,8 @@ def write_operation_receipt(
             "schema_version": 1,
             "operation_id": operation_id,
             "request_hash": request_hash,
+            "state": state,
+            "source_fingerprint_before": source_fingerprint_before,
             "result": result,
         },
         ensure_ascii=False,

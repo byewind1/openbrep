@@ -12,9 +12,8 @@
 协议：stdio（stdout 是 JSON-RPC 通道，日志只写 stderr）。
 入口：`obr mcp-server`，或直接 `python -m openbrep.mcp_server`。
 
-依赖：官方 Python SDK（mcp >= 2.0.0）。注意 mcp 2.x 的 API 形态与 1.x 文档
-不同：handler 注册是构造器参数（on_list_tools / on_call_tool），返回类型为
-mcp_types 的 ListToolsResult / CallToolResult。
+依赖：官方 Python SDK（mcp >= 2.0.0）。handler 通过 Server.list_tools() 和
+Server.call_tool() decorators 注册；工具目录与调用返回 mcp.types 的结构化结果。
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from typing import Any
 
 import mcp.server.stdio as mcp_stdio
 from mcp.server import Server
-from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, TextContent, Tool
+from mcp.types import CallToolResult, ListToolsRequest, ListToolsResult, TextContent, Tool
 
 import openbrep.mcp_tools as mcp_tools
 from openbrep import __version__
@@ -76,7 +75,7 @@ _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
     (
         "capabilities",
         mcp_tools.capabilities,
-        "返回版本化 OpenBrep MCP 能力、编译模式、参数类型和结果语义；不需要模型凭据。",
+        "返回版本化 OpenBrep MCP 能力、编译模式、预览/宿主限制、要求检查和结果语义；不需要模型凭据。",
         _schema(required=()),
     ),
     (
@@ -346,19 +345,18 @@ def _call_tool_result(name: str, arguments: dict[str, Any] | None) -> CallToolRe
     )
 
 
-async def _on_list_tools(ctx: Any, params: Any) -> ListToolsResult:
-    del ctx, params  # 无分页：直接返回全部工具
+async def _on_list_tools(request: ListToolsRequest) -> ListToolsResult:
+    del request  # 无分页：直接返回全部工具
     return _list_tools_result()
 
 
-async def _on_call_tool(ctx: Any, params: CallToolRequestParams) -> CallToolResult:
-    del ctx  # 业务状态全部在 mcp_tools 内部（_locked() 串行化）
-    return _call_tool_result(params.name, params.arguments)
+async def _on_call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
+    return _call_tool_result(name, arguments)
 
 
 def build_server() -> Server:
-    """构造 mcp 2.x Server 实例（handler 注册走构造器参数）。"""
-    return Server(
+    """构造 mcp 2.x Server 实例并通过官方 decorators 注册 handlers."""
+    server = Server(
         name="openbrep",
         version=__version__,
         instructions=(
@@ -370,9 +368,10 @@ def build_server() -> Server:
             "skill 类工具用 name/query + skills_dir。"
             "返回 {ok, ..., trace_id} 或 {ok: False, error: {code, message}, trace_id}。"
         ),
-        on_list_tools=_on_list_tools,
-        on_call_tool=_on_call_tool,
     )
+    server.list_tools()(_on_list_tools)
+    server.call_tool()(_on_call_tool)
+    return server
 
 
 async def _run_server() -> None:

@@ -13,6 +13,45 @@ const baseProps = {
 }
 
 describe('AssistantPanel', () => {
+  test('shows project-saved goals and keep constraints in the conversation', () => {
+    render(<AssistantPanel {...baseProps} hasProject messages={[{
+      role: 'assistant', content: '已完成一轮修改', workingIntent: {
+        version: 3,
+        goals: [{ id: 'goal-1', text: '增加可调层板' }],
+        constraints: [{ id: 'keep-1', value: '保持外框宽度', scope: 'task', status: 'active' }],
+        assumptions: [], active_task: null, persistence: 'project',
+      },
+      knowledgeSources: ['knowledge.GDL_3d_commands.TUBE'],
+      knowledgeOmissions: ['example.optional-1'],
+    }]} />)
+
+    expect(screen.getByText(/本项目任务状态 · 已保存/)).toBeTruthy()
+    expect(screen.getByText('目标：增加可调层板')).toBeTruthy()
+    expect(screen.getByText('保持：保持外框宽度')).toBeTruthy()
+    expect(screen.getByText('knowledge.GDL_3d_commands.TUBE')).toBeTruthy()
+    expect(screen.getByText(/知识预算未注入：example.optional-1/)).toBeTruthy()
+  })
+
+  test('separates legacy verification success from unmet required author requirements', () => {
+    const { container } = render(<AssistantPanel {...baseProps} messages={[{
+      role: 'assistant', content: '源码已保存', verification: {
+        intent: 'MODIFY', goal: '保留已有功能', passed: true, requirements_passed: false,
+        requirement_evaluation: {
+          status: 'incomplete', required_total: 1, required_passed: 0,
+          results: [{ requirement_id: 'req.stair-safety', executor_id: 'semantic', status: 'not_run', reason: '当前没有该检查的执行结果' }],
+        },
+        confidence: 'high', graph_powered: false,
+        counts: { pass: 1, fail: 0, unknown: 0, not_run: 0 }, checks: [],
+        errors_caught: [], fixes_applied: [], remaining_risks: [],
+      },
+    }]} />)
+
+    expect(screen.getByText('通用检查通过')).toBeTruthy()
+    expect(screen.getByText(/作者要求：待验证 · 0\/1 项 required 通过/)).toBeTruthy()
+    expect(screen.getByText(/req\.stair-safety：当前没有该检查的执行结果/)).toBeTruthy()
+    expect(container.querySelector('.assistant-verification')?.classList.contains('has-unverified-requirements')).toBe(true)
+  })
+
   test('offers evidence-bound visual review for a completed image generation', () => {
     const onReviewVisualTurn = vi.fn()
     render(<AssistantPanel {...baseProps} onReviewVisualTurn={onReviewVisualTurn} messages={[
@@ -25,6 +64,17 @@ describe('AssistantPanel', () => {
     expect(screen.getByText(/无法判断/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '重新对照参考图' }))
     expect(onReviewVisualTurn).toHaveBeenCalledWith('turn-review', false)
+  })
+
+  test('offers one repair-plan action for a failed finding', () => {
+    const onRepairVisualFinding = vi.fn()
+    render(<AssistantPanel {...baseProps} onRepairVisualFinding={onRepairVisualFinding} messages={[
+      { role: 'user', content: '参考图生成', images: [{ name: 'ref.png', mime: 'image/png', b64: 'AA==' }] },
+      { role: 'assistant', content: '已生成', turnTaskRef: { turn_id: 'turn-review', run_id: 'run-review' },
+        visualReview: { review_id: 'review-1', run_id: 'run-review', source_fingerprint: 'sha', plan_id: 'plan-1', model: 'test', status: 'complete', coverage: [], findings: [{ finding_id: 'finding-fail', target_id: 'base', outcome: 'fail', severity: 'major', summary: '底座缺失', failure_layer: 'implementation', uncertainty: '', evidence: [] }], missing_target_ids: [] } },
+    ]} />)
+    fireEvent.click(screen.getByRole('button', { name: '准备单轮修复计划' }))
+    expect(onRepairVisualFinding).toHaveBeenCalledWith('review-1', 'finding-fail')
   })
 
   test('pending plan can be revised before approval', () => {

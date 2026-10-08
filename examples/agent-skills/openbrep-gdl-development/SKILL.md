@@ -9,7 +9,7 @@ Use OpenBrep as the deterministic GDL engineering harness. The calling Agent own
 
 ## Start with the tool contract
 
-1. Call `capabilities` and read `contract_version`, supported parameter types, compile modes, result semantics, evidence fields, and error codes.
+1. Call `capabilities` and read `contract_version`, supported parameter types, compile modes, per-call LP availability semantics, preview limits, host availability, requirement executors, result semantics, evidence fields, and error codes.
 2. Call `load_project` before proposing a change. Treat the returned `source_fingerprint` as the source snapshot you inspected.
 3. Keep the object’s purpose, requested change, explicit keep requirements, and parameter values in the task context. Do not infer a domain standard from the object name.
 

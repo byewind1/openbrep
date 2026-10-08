@@ -34,10 +34,30 @@ test('initial snapshot restores a server-held pending plan for display only', as
   expect(store.getState().pendingPlan).toEqual(plan)
 })
 
+test('visual repair action opens a scoped approval plan and anchors the repair turn for re-review', async () => {
+  const store = createWorkbenchStore(makeApi({
+    requestVisualRepair: async () => ({
+      ok: true, turn_id: 'repair-turn', pending_plan: {
+        turn_id: 'repair-turn', plan_id: 'repair-plan', plan_version: 1,
+        intent_summary: '修复底座', user_visible_changes: [], affected_files: [], risk: '',
+      },
+    }),
+  }))
+
+  await store.getState().repairVisualFinding('review-1', 'finding-1')
+
+  expect(store.getState().pendingPlan?.turn_id).toBe('repair-turn')
+  expect(store.getState().pendingPlan?.original_has_images).toBe(true)
+  expect(store.getState().assistantMessages.at(-1)?.turnTaskRef).toEqual({
+    turn_id: 'repair-turn', run_id: null, reference_available: true, schema_version: 1,
+  })
+})
+
 function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
   return {
     conversationTurn: async () => ({ ok: false, error: 'Unified entry is not mocked in this legacy test.' }),
     requestVisualReview: async () => ({ ok: false, error: '视觉对照未在该测试中模拟。' }),
+    requestVisualRepair: async () => ({ ok: false, error: '视觉修复未在该测试中模拟。' }),
     fetchSavedVisualReviews: async () => ({ ok: true, reports: [] }),
     fetchTurnEvents: async () => ({ ok: false, events: [] }),
     listTurnEvents: async () => ({ ok: false, turns: [] }),

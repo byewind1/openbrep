@@ -47,6 +47,102 @@ class TestKnowledgeSelector(unittest.TestCase):
         self.assertIn("Wiki: REVOLVE", selection.planner_context)
         self.assertIn("wiki.REVOLVE", selection.source_ids)
 
+    def test_explicit_command_knowledge_precedes_archetype_hints(self):
+        root = Path(__file__).parent.parent / "knowledge"
+        selection = select_gdl_knowledge(
+            instruction="做一个书架，必须用 REVOLVE",
+            intent="CREATE",
+            knowledge_dir=root,
+        )
+        self.assertIn("wiki.REVOLVE", selection.source_ids)
+        self.assertNotIn("wiki.REVOLVE", selection.omitted_source_ids)
+
+    def test_explicit_tube_loads_reference_without_object_keyword(self):
+        root = Path(__file__).parent.parent / "knowledge"
+        for instruction in ("TUBE", "做一个书架并使用 TUBE"):
+            selection = select_gdl_knowledge(
+                instruction=instruction,
+                intent="CREATE",
+                knowledge_dir=root,
+            )
+            assert "knowledge.GDL_3d_commands.TUBE" in selection.source_ids
+            assert "### 1.10 TUBE" in selection.planner_context
+
+    def test_multiple_explicit_commands_are_injected_and_budget_omissions_reported(self):
+        from openbrep.knowledge_selector import _load_explicit_command_context
+
+        root = Path(__file__).parent.parent / "knowledge"
+        selection = select_gdl_knowledge(
+            instruction="BLOCK CYLIND CONE SPHERE ELLIPS PRISM TUBE REVOLVE SWEEP",
+            intent="MODIFY",
+            knowledge_dir=root,
+        )
+        explicit_sources = [sid for sid in selection.source_ids if sid.startswith("knowledge.GDL_")]
+        assert len(explicit_sources) >= 7
+        assert "knowledge.GDL_3d_commands.TUBE" in explicit_sources
+        assert "### 1.10 TUBE" in selection.generation_context
+
+        _, injected, omitted = _load_explicit_command_context(
+            root,
+            "BLOCK CYLIND CONE SPHERE ELLIPS PRISM TUBE REVOLVE SWEEP",
+            max_chars=100,
+        )
+        assert injected
+        assert omitted
+
+    def test_knowledge_selection_reports_pages_omitted_by_budget(self):
+        root = Path(__file__).parent.parent / "knowledge"
+        selection = select_gdl_knowledge(
+            instruction="BLOCK CYLIND CUTPLANE DEFINE FOR_NEXT REVOLVE SWEEP",
+            intent="CREATE",
+            knowledge_dir=root,
+        )
+        self.assertEqual(len([sid for sid in selection.source_ids if sid.startswith("wiki.")]), 5)
+        self.assertTrue(selection.omitted_source_ids)
+        self.assertTrue(any(sid.startswith("wiki.") for sid in selection.omitted_source_ids))
+
+    def test_core_budget_reports_omitted_sources(self):
+        from openbrep.knowledge_selector import _load_core_context
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            core = root / "core"
+            core.mkdir()
+            (core / "first.md").write_text(
+                "---\nid: core.first\ntask_types: [create]\npriority: 10\n---\n" + "x" * 150,
+                encoding="utf-8",
+            )
+            (core / "second.md").write_text(
+                "---\nid: core.second\ntask_types: [create]\npriority: 1\n---\nsecond",
+                encoding="utf-8",
+            )
+            context, included, omitted = _load_core_context(
+                root, task_type="create", stage="planner", max_chars=100,
+            )
+
+        assert "core.first" in context
+        assert included == ["core.first"]
+        assert omitted == ["core.second"]
+
+    def test_optional_example_budget_reports_uninjected_candidates(self):
+        from openbrep.knowledge_selector import _load_examples
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            examples = root / "examples"
+            examples.mkdir()
+            for name in ("a", "b", "c"):
+                (examples / f"{name}.md").write_text(
+                    f"---\nid: example.{name}\nobject_types: [bookshelf]\n---\n{name}",
+                    encoding="utf-8",
+                )
+            _context, included, omitted = _load_examples(
+                root, "bookshelf", "create", ["bookshelf"], max_examples=1,
+            )
+
+        assert included == ["example.a"]
+        assert omitted == ["example.b", "example.c"]
+
     def test_wiki_failure_degrades_without_blocking_selection(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -221,6 +317,29 @@ def test_command_selection_doc_survives_modify_both_contexts() -> None:
     assert "core.command_selection" in selection.source_ids
 
 
+def test_common_errors_document_is_not_split_at_internal_horizontal_rules() -> None:
+    from openbrep.knowledge import KnowledgeBase
+    from openbrep.knowledge_selector import _compact_core_context
+
+    knowledge = KnowledgeBase("./knowledge")
+    knowledge.load()
+    compacted, _sources, _omitted = _compact_core_context(
+        knowledge.get_by_task_type("debug"), task_type="debug",
+    )
+    assert "## 23." in compacted
+    assert "GDL_common_errors" in compacted
+
+
+def test_builtin_context_budget_reports_whole_omitted_documents() -> None:
+    from openbrep.knowledge_selector import _compact_core_context
+
+    content = "## GDL_parameters\n\n" + "p" * 80 + "\n\n---\n\n## GDL_control_flow\n\n" + "c" * 80
+    context, sources, omitted = _compact_core_context(content, task_type="all", max_chars=100)
+    assert "GDL_parameters" in context
+    assert sources == ["builtin.GDL_parameters"]
+    assert omitted == ["builtin.GDL_control_flow"]
+
+
 def test_review_trigger_words_matching() -> None:
     """AC-4：优化/审查触发词命中口径（一处常量走的保守子串/正则匹配）。"""
     from openbrep.knowledge_selector import _hit_review_trigger
@@ -254,7 +373,7 @@ def test_wiki_truncation_keeps_tail_selection_advice() -> None:
     from openbrep.knowledge_selector import _load_wiki_context
 
     root = Path(__file__).parent.parent / "knowledge"
-    context, sources = _load_wiki_context(
+    context, sources, _omitted = _load_wiki_context(
         root,
         instruction="做一个旋转体花瓶",
         task_type="create",
@@ -275,7 +394,7 @@ def test_wiki_short_page_not_truncated() -> None:
     from openbrep.knowledge_selector import _load_wiki_context
 
     root = Path(__file__).parent.parent / "knowledge"
-    context, _ = _load_wiki_context(
+    context, _, _omitted = _load_wiki_context(
         root,
         instruction="BLOCK 怎么用",
         task_type="create",

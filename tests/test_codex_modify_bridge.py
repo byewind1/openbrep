@@ -1444,14 +1444,15 @@ def _wire_digest(recs: list[dict]) -> str:
     ).hexdigest()
 
 
-# 无图 MODIFY 的 wire 基线（HF2 实测于 ecaed74 原桥接；归一化后逐字节摘要）。
+# 无图 MODIFY wire 基线。D06 修复后完整的 GDL_common_errors 文档进入
+# 选定上下文，故该摘要以当前源码/知识装配为准，不再等于 ecaed74 旧提示词。
 # 任何「无图路径」改动都会改变该摘要 → 回归即红。
 # HF6（本分支）把 knowledge/core/gdl_command_selection.md 注入 MODIFY 的
 # generation_context（system 提示），prompt 变更是本单目标本身而非回归；
 # 基线曾按 HF6 摘要重录（c2420473...）。ST05 新增 read_parameters /
 # edit_parameters schema 及结构化参数协议，属于明确 prompt 变更；审计后的新摘要
 # 为 d3dc122d...。benchmark golden corpus 需按受影响套件重录。
-HF2_NO_IMAGE_WIRE_SHA256 = "e3abd51e17dba9d5bb6884bccf92ef8a30e517ca2b06ecc617111d3e2322328c"
+CURRENT_NO_IMAGE_WIRE_SHA256 = "e04810cd969e905118163b2bbdbcb8bd35ebcfbb92a1d2e1357baca7cbd9a27d"
 
 # 桥接 thread 的 system 消息标识（baseInstructions 中必含的协议锚点）
 _BRIDGE_SYSTEM_MARK = "Agent Loop 工作模式（本次任务生效，Codex 动态工具桥接）"
@@ -1463,7 +1464,7 @@ def test_no_image_wire_byte_identical_to_hf2_baseline(tmp_path):
     """无图 MODIFY：wire 与 HF2 基线逐字节一致（硬门禁）。
 
     thread/start + turn/start 全量参数（baseInstructions 全量、dynamicTools、
-    turn 输入）归一化后与 ecaed74 实测基线 SHA-256 逐字节相等；零 vision 痕迹
+    turn 输入）归一化后与当前基线 SHA-256 逐字节相等；零 vision 痕迹
     （无提取 turn、无【图N】、无参考图结构提取文本）。
     """
     harness = _FakeServerHarness(tmp_path)
@@ -1480,7 +1481,7 @@ def test_no_image_wire_byte_identical_to_hf2_baseline(tmp_path):
         recs = _read_wire_params(harness.params_log)
         assert recs, "fake app-server 必须记录 wire 参数"
         digest = _wire_digest(recs)
-        assert digest == HF2_NO_IMAGE_WIRE_SHA256, (
+        assert digest == CURRENT_NO_IMAGE_WIRE_SHA256, (
             "无图 MODIFY wire 与 HF2 基线不一致（归一化摘要 %s）", digest
         )
 

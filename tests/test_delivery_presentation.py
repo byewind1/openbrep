@@ -266,7 +266,9 @@ class TestAssistantServiceGeneratePayload:
         result = SimpleNamespace(
             intent="MODIFY",
             verification={"passed": True},
-            metadata={"delivery_source": _ds(state="verified_change"), "acceptance": None},
+            metadata={"delivery_source": _ds(state="verified_change"), "acceptance": None,
+                      "knowledge_sources": ["knowledge.GDL_3d_commands.TUBE"],
+                      "knowledge_omissions": ["example.optional"]},
             plain_text="已完成",
             scripts={"scripts/3d.gdl": "BODY"},
         )
@@ -280,6 +282,8 @@ class TestAssistantServiceGeneratePayload:
         assert assistant["run_id"] == "r_20260918_120000_abc123"
         assert assistant["continue_from"]["origin_run_id"] == "r_old"
         assert assistant["changed_files"] == ["scripts/3d.gdl"]
+        assert assistant["knowledge_sources"] == ["knowledge.GDL_3d_commands.TUBE"]
+        assert assistant["knowledge_omissions"] == ["example.optional"]
 
     def test_partial_prefers_delivery_changed_files(self):
         from openbrep.workbench.assistant_service import WorkbenchAssistantService
@@ -399,8 +403,8 @@ class TestRevisionServiceRestoreAndDiff:
     def test_f1_partial_working_tree_diff_not_before_to_before(self, tmp_path):
         """F1 阻断项：partial 无 after 时，diff 必须是 before→工作源且含真实变更。"""
         from openbrep.revisions import WORKING_TREE_SENTINEL, create_revision
-        from openbrep.workbench.revision_service import WorkbenchRevisionService
         from openbrep.workbench.delivery_presentation import build_delivery_presentation
+        from openbrep.workbench.revision_service import WorkbenchRevisionService
 
         scripts = tmp_path / "scripts"
         scripts.mkdir()
@@ -450,9 +454,9 @@ class TestRevisionServiceRestoreAndDiff:
     def test_f2_history_meta_roundtrip_and_continue_persisted(self, tmp_path):
         """F2：聊天历史持久化 delivery/continue；刷新后可恢复/显示 unlinked。"""
         from openbrep.learning import ErrorLearningStore
+        from openbrep.runtime.pipeline import TaskRequest
         from openbrep.workbench.assistant_service import WorkbenchAssistantService
         from openbrep.workbench.delivery_presentation import unlinked_delivery_presentation
-        from openbrep.runtime.pipeline import TaskRequest
 
         store = ErrorLearningStore(tmp_path)
         delivery = build_delivery_presentation(

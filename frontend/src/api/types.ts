@@ -1003,6 +1003,9 @@ export interface AssistantHistoryItem {
 
 export interface AssistantMessage {
   advisor?: { proposals?: Array<{ proposal_id: string; title: string; goal: string; scope: string[]; constraints: string[]; tradeoffs: string[] }>; inspection?: { checks: Array<{ kind: string; status: string; unavailable_reason?: string | null }> }; omitted_sections?: string[] }
+  workingIntent?: WorkingIntentSnapshot
+  knowledgeSources?: string[]
+  knowledgeOmissions?: string[]
   role: 'user' | 'assistant'
   content: string
   /** P2：消息创建时刻（epoch ms）；保存历史时转换为 timestamp 透传后端 */
@@ -1045,6 +1048,16 @@ export interface AssistantMessage {
   visualReviewError?: string
   visualReviewBusy?: boolean
   visualReviewRestored?: boolean
+}
+
+export interface WorkingIntentSnapshot {
+  version: number
+  goals: Array<{ id: string; text: string }>
+  constraints: Array<{ id: string; value: string; scope: string; status: string }>
+  assumptions: Array<{ id: string; value: string; scope: string; status: string }>
+  active_task: Record<string, unknown> | null
+  persistence: 'project' | 'memory_only' | 'save_failed' | 'load_failed'
+  persistence_issue?: string | null
 }
 
 export interface VisualReviewReport {
@@ -1241,6 +1254,20 @@ export interface VerificationReport {
   intent: string
   goal: string
   passed: boolean
+  requirements_passed?: boolean | null
+  requirement_evaluation?: {
+    status: string
+    required_total: number
+    required_passed: number
+    results: Array<{
+      requirement_id: string
+      executor_id: string
+      status: string
+      reason: string
+      stale?: boolean
+      requirement_source?: string
+    }>
+  } | null
   confidence: VerificationConfidence
   graph_powered?: boolean
   counts: Record<VerificationCheckStatus, number>
@@ -1486,6 +1513,11 @@ export interface SkillProposal {
     gate?: string
     status?: string
     error?: string | null
+    validation_scope?: {
+      level: string
+      proves: string[]
+      not_established: string[]
+    } | null
     unverified_claims?: Array<{ kind?: string; snippet?: string }>
   } | null
   /** ST04 K08：未核验技术断言 + 项目选择标注 */
@@ -1564,6 +1596,8 @@ export interface GenerateResult {
     reply: string
     changed_files: string[]
     intent: string
+    knowledge_sources?: string[]
+    knowledge_omissions?: string[]
     verification?: VerificationReport | null
     acceptance?: ModifyAcceptance | null
     /** ST03：原始 ST02 delivery_source */
@@ -1792,4 +1826,5 @@ export type ConversationTurnResult = GenerateResult & Partial<Omit<WorkbenchSnap
   cancelled?: boolean
   awaiting_extraction_confirmation?: boolean
   extractions?: VisionExtraction[]
+  working_intent?: WorkingIntentSnapshot
 }

@@ -72,6 +72,11 @@ def register_requirement_executor(check_id: str, executor: Executor) -> None:
     _EXECUTORS[check_id] = executor
 
 
+def list_requirement_executors() -> tuple[str, ...]:
+    """Return registered executable requirement checks in stable order."""
+    return tuple(sorted(_EXECUTORS))
+
+
 def execute_requirements(
     requirements: list[Requirement],
     context: dict[str, Any],

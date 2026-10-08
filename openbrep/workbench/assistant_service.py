@@ -92,6 +92,8 @@ class WorkbenchAssistantService:
             "intent": result.intent,
             "verification": result.verification,
             "acceptance": result.metadata.get("acceptance"),
+            "knowledge_sources": list(result.metadata.get("knowledge_sources") or []),
+            "knowledge_omissions": list(result.metadata.get("knowledge_omissions") or []),
             "delivery_source": delivery.get("delivery_source"),
             "delivery": presentation,
             "run_id": presentation.get("run_id"),

@@ -25,7 +25,8 @@ from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse
 from openbrep.quality.schema import QualityRecord
 from openbrep.quality.store import write_record
-from openbrep.skills_loader import SkillsLoader
+from openbrep.revisions import load_revision_protections, register_revision_protection
+from openbrep.runtime.skill_harvest import collect_script_excerpts
 from openbrep.skill_proposals import (
     artifact_ownership,
     candidate_path,
@@ -36,11 +37,10 @@ from openbrep.skill_proposals import (
     resolve_source_refs,
     save_candidate,
 )
-from openbrep.revisions import load_revision_protections, register_revision_protection
-from openbrep.runtime.skill_harvest import collect_script_excerpts
+from openbrep.skills_loader import SkillsLoader
 from openbrep.source_fingerprint import compute_source_fingerprint
-from openbrep.workbench.skill_proposal_service import SkillProposalService
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
+from openbrep.workbench.skill_proposal_service import SkillProposalService
 
 # ── 公共构造 ──────────────────────────────────────────────
 
@@ -411,6 +411,8 @@ class TestConfirm(_ServiceCase):
         self.assertTrue(result["ok"], result)
         self.assertIs(result["verified"], True)
         self.assertEqual(result["gate"], "structural")
+        self.assertEqual(result["verification"]["validation_scope"]["level"], "structure_only")
+        self.assertIn("real_lp_compile", result["verification"]["validation_scope"]["not_established"])
         stored = load_candidate(self.project.root, proposal["proposal_id"])
         self.assertEqual(stored["status"], "approved")
         self.assertEqual(stored["verification"]["state"], "verified")
@@ -866,6 +868,7 @@ class TestClaimsGuard(_ServiceCase):
         self.assertIs(approved["verified"], False)
         self.assertEqual(approved["gate"], "structural_capped")
         self.assertEqual(approved["verification"]["state"], "claims_unverified")
+        self.assertEqual(approved["verification"]["validation_scope"]["level"], "not_run_claims_unverified")
         loader = SkillsLoader(str(self.skills_dir))
         loader.load()
         self.assertEqual(loader.skill_meta("stair_spacing_rule").get("status"), "proposed")

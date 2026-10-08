@@ -43,10 +43,13 @@ def test_capabilities_report_versioned_model_independent_contract():
     result = capabilities()
 
     assert result["ok"] is True
-    assert result["contract_version"] == "1.4"
+    assert result["contract_version"] == "1.5"
     assert "Boolean" in result["parameter_types"]
     assert "mock" in result["compile_modes"]
     assert "not a real compile" in result["compile_modes"]["mock"]
+    assert result["availability"]["archicad_host"]["available_via_mcp"] is False
+    assert "2d_drawing_render" in result["preview"]["not_established"]
+    assert "semantic" in {item["check_id"] for item in result["requirement_checks"]["executors"]}
     assert "model credentials" not in str(result).lower()
 
 
@@ -550,6 +553,55 @@ def test_apply_edit_operation_id_replay_is_idempotent_and_detects_conflicts(tmp_
     assert HSFProject.load_from_disk(str(root)).get_parameter("A").value == "2.5"
 
 
+def test_apply_edit_operation_id_receipt_failure_never_reapplies_committed_source(tmp_path, monkeypatch):
+    root, _project = _make_editable_project(tmp_path)
+    request = {"type": "set_parameters", "values": {"A": 2.5}}
+    from openbrep import operation_store
+
+    write_receipt = operation_store.write_operation_receipt
+
+    def fail_completion(project_root, operation_id, request_hash, result, **kwargs):
+        if kwargs.get("state", "completed") == "completed":
+            raise OSError("simulated receipt disk failure")
+        return write_receipt(project_root, operation_id, request_hash, result, **kwargs)
+
+    monkeypatch.setattr(operation_store, "write_operation_receipt", fail_completion)
+    first = apply_edit(str(root), request, mode="apply", operation_id="receipt-fail-001")
+
+    assert first["ok"] is False
+    assert first["error"]["code"] == "operation_receipt_incomplete"
+    assert len(list_revisions(root)) == 1
+    assert HSFProject.load_from_disk(str(root)).get_parameter("A").value == "2.5"
+
+    retry = apply_edit(str(root), request, mode="apply", operation_id="receipt-fail-001")
+    assert retry["ok"] is False
+    assert retry["error"]["code"] == "operation_outcome_unknown"
+    assert len(list_revisions(root)) == 1
+    assert HSFProject.load_from_disk(str(root)).get_parameter("A").value == "2.5"
+
+
+def test_apply_edit_prepared_operation_can_resume_when_source_is_unchanged(tmp_path, monkeypatch):
+    root, _project = _make_editable_project(tmp_path)
+    request = {"type": "set_parameters", "values": {"A": 2.5}}
+    import openbrep.mcp_tools as mcp_tools
+
+    apply_impl = mcp_tools._apply_edit_apply
+    monkeypatch.setattr(
+        mcp_tools, "_apply_edit_apply", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("before commit"))
+    )
+    interrupted = apply_edit(str(root), request, mode="apply", operation_id="resume-001")
+    assert interrupted["ok"] is False
+    assert HSFProject.load_from_disk(str(root)).get_parameter("A").value == "1.5"
+    assert list_revisions(root) == []
+
+    monkeypatch.setattr(mcp_tools, "_apply_edit_apply", apply_impl)
+    resumed = apply_edit(str(root), request, mode="apply", operation_id="resume-001")
+    assert resumed["ok"] is True
+    assert resumed["operation_replayed"] is False
+    assert len(list_revisions(root)) == 1
+    assert HSFProject.load_from_disk(str(root)).get_parameter("A").value == "2.5"
+
+
 def _tree_bytes(root: Path) -> dict[str, bytes]:
     return {str(fp.relative_to(root)): fp.read_bytes() for fp in root.rglob("*") if fp.is_file()}
 
@@ -748,6 +800,8 @@ def test_verify_skill_with_compilable_slice_promotes_and_becomes_injectable(tmp_
     assert result["evidence"]["compile"]["success"] is True
     assert result["evidence"]["compile"]["mode"] == "mock"
     assert result["evidence"]["semantic"]["passed"] is True
+    assert result["validation_scope"]["level"] == "mock_compile_and_semantic"
+    assert "archicad_host_use" in result["validation_scope"]["not_established"]
     assert result["evidence"]["at"]
     assert TRACE_RE.match(result["trace_id"])
 
@@ -923,6 +977,8 @@ def test_verify_skill_structural_gate_requires_trigger_section_and_pattern_type(
     assert ok_result["status"] == "verified"
     assert ok_result["evidence"]["structural"]["frontmatter_complete"] is True
     assert ok_result["evidence"]["structural"]["trigger_section"] is True
+    assert ok_result["validation_scope"]["level"] == "structure_only"
+    assert "real_lp_compile" in ok_result["validation_scope"]["not_established"]
     assert ok_result["evidence"]["at"]
 
     # 缺触发词 → 不通过，status 保持 proposed

@@ -16,6 +16,7 @@ class KnowledgeSelection:
     planner_context: str
     generation_context: str
     source_ids: list[str] = field(default_factory=list)
+    omitted_source_ids: list[str] = field(default_factory=list)
 
 
 # ── 优化/审查触发词（AC-4，一处常量） ────────────────────────────────
@@ -111,6 +112,7 @@ def select_gdl_knowledge(
     object_keys = _detect_object_keys(instruction)
 
     source_ids: list[str] = []
+    omitted_source_ids: list[str] = []
     planner_parts: list[str] = []
     generation_parts: list[str] = []
 
@@ -128,7 +130,7 @@ def select_gdl_knowledge(
     # gdl_command_selection.md 靠这里到达 CREATE 生成与 MODIFY 的 prompt，
     # 是 MODIFY/EXPLAIN agent-loop 的统一注入点（二者都消费
     # generation_context；不在各处散写）。
-    planner_core_context, planner_core_sources = _load_core_context(
+    planner_core_context, planner_core_sources, omitted_core_sources = _load_core_context(
         root,
         task_type=task_type,
         stage="planner",
@@ -138,6 +140,7 @@ def select_gdl_knowledge(
         planner_parts.append(planner_core_context)
         generation_parts.append(planner_core_context)
         source_ids.extend(planner_core_sources)
+    omitted_source_ids.extend(omitted_core_sources)
 
     archetype_context = _load_archetypes(root, object_keys)
     if archetype_context:
@@ -145,23 +148,41 @@ def select_gdl_knowledge(
         generation_parts.append(archetype_context)
         source_ids.extend(f"archetype.{key}" for key in object_keys)
 
+    command_context, command_sources, omitted_command_sources = _load_explicit_command_context(
+        root, instruction,
+    )
+    if command_context:
+        planner_parts.append(command_context)
+        generation_parts.append(command_context)
+        source_ids.extend(command_sources)
+    omitted_source_ids.extend(omitted_command_sources)
+
     if task_type in {"create", "image"}:
-        wiki_context, wiki_sources = _load_wiki_context(root, instruction, task_type, object_keys)
+        wiki_context, wiki_sources, omitted_wiki_sources = _load_wiki_context(
+            root, instruction, task_type, object_keys,
+        )
         if wiki_context:
             planner_parts.append(wiki_context)
             generation_parts.append(wiki_context)
             source_ids.extend(wiki_sources)
+        omitted_source_ids.extend(omitted_wiki_sources)
 
     if task_type in {"create", "image", "modify"}:
-        example_context, example_sources = _load_examples(root, instruction, task_type, object_keys)
+        example_context, example_sources, omitted_example_sources = _load_examples(
+            root, instruction, task_type, object_keys,
+        )
         if example_context:
             generation_parts.append(example_context)
             source_ids.extend(example_sources)
+        omitted_source_ids.extend(omitted_example_sources)
 
-    core_context = _compact_core_context(base_context, task_type=task_type)
+    core_context, builtin_sources, omitted_builtin_sources = _compact_core_context(
+        base_context, task_type=task_type,
+    )
     if core_context:
         generation_parts.append(core_context)
-        source_ids.append("builtin.core")
+        source_ids.extend(builtin_sources)
+    omitted_source_ids.extend(omitted_builtin_sources)
 
     if not planner_parts and core_context:
         planner_parts.append(core_context)
@@ -170,6 +191,7 @@ def select_gdl_knowledge(
         planner_context=_join(planner_parts),
         generation_context=_join(generation_parts or [base_context]),
         source_ids=_dedupe(source_ids),
+        omitted_source_ids=_dedupe(omitted_source_ids),
     )
 
 
@@ -202,7 +224,7 @@ def _load_examples(
     object_keys: list[str],
     *,
     max_examples: int = 2,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], list[str]]:
     """按 object_types / commands 匹配 knowledge/examples/ 里的案例，注入生成上下文。
 
     评分：object_type 与检测到的 object key 相同 +3；object_type 直接出现在
@@ -210,7 +232,7 @@ def _load_examples(
     """
     ex_dir = root / "examples"
     if not ex_dir.is_dir():
-        return "", []
+        return "", [], []
 
     text = (instruction or "").lower()
     instruction_cmds = set(re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", instruction or ""))
@@ -246,10 +268,15 @@ def _load_examples(
             scored.append((score, source_id, _section(f"Example: {source_id}", body or raw)))
 
     if not scored:
-        return "", []
+        return "", [], []
     scored.sort(key=lambda item: item[0], reverse=True)
     top = scored[:max_examples]
-    return _join(content for _, _, content in top), [source_id for _, source_id, _ in top]
+    omitted = scored[max_examples:]
+    return (
+        _join(content for _, _, content in top),
+        [source_id for _, source_id, _ in top],
+        [source_id for _, source_id, _ in omitted],
+    )
 
 
 def _load_core_context(
@@ -258,10 +285,10 @@ def _load_core_context(
     task_type: str,
     stage: str,
     max_chars: int,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], list[str]]:
     core_dir = root / "core"
     if not core_dir.is_dir():
-        return "", []
+        return "", [], []
 
     candidates: list[tuple[int, str, str]] = []
     for fp in sorted(core_dir.glob("*.md")):
@@ -277,20 +304,22 @@ def _load_core_context(
         candidates.append((priority, source_id, _section(f"Core: {source_id}", body or raw)))
 
     if not candidates:
-        return "", []
+        return "", [], []
 
     candidates.sort(key=lambda item: item[0], reverse=True)
     parts: list[str] = []
     sources: list[str] = []
+    omitted: list[str] = []
     total = 0
     for _priority, source_id, content in candidates:
         if total and total + len(content) > max_chars:
+            omitted.append(source_id)
             continue
         parts.append(content)
         sources.append(source_id)
         total += len(content)
 
-    return _join(parts), sources
+    return _join(parts), sources, omitted
 
 
 def _load_wiki_context(
@@ -301,12 +330,12 @@ def _load_wiki_context(
     *,
     max_pages: int = 5,
     max_chars_per_page: int = 1200,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], list[str]]:
     wiki = WikiKnowledge(str(root / "wiki"))
     try:
         wiki.load()
     except Exception:
-        return "", []
+        return "", [], []
 
     slugs: list[str] = []
     for key in object_keys:
@@ -314,9 +343,17 @@ def _load_wiki_context(
     slugs.extend(_INTENT_WIKI_HINTS.get(task_type, ()))
 
     pages = []
-    for slug in _dedupe(slugs):
+    explicit_commands = _explicit_wiki_commands(instruction, wiki.list_slugs())
+    # Explicit command references precede object archetype and intent hints.
+    # Otherwise a bookshelf's five default pages can consume the entire page
+    # budget and drop a user-requested TUBE/REVOLVE page.
+    for slug in explicit_commands:
         page = wiki.get_by_slug(slug)
         if page is not None:
+            pages.append(page)
+    for slug in _dedupe(slugs):
+        page = wiki.get_by_slug(slug)
+        if page is not None and page.slug not in {item.slug for item in pages}:
             pages.append(page)
 
     existing = {page.slug for page in pages}
@@ -326,12 +363,80 @@ def _load_wiki_context(
             existing.add(page.slug)
 
     selected = pages[:max_pages]
+    omitted = pages[max_pages:]
     if not selected:
-        return "", []
+        return "", [], []
     return (
         _join(_format_wiki_page_compact(page, max_chars=max_chars_per_page) for page in selected),
         [f"wiki.{page.slug}" for page in selected],
+        [f"wiki.{page.slug}" for page in omitted],
     )
+
+
+def _explicit_wiki_commands(instruction: str, slugs: list[str]) -> list[str]:
+    """Return wiki pages named as GDL commands in the user's instruction."""
+    candidates = set(slugs)
+    mentioned = {
+        token.upper()
+        for token in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", instruction or "", re.IGNORECASE)
+    }
+    return [slug for slug in slugs if slug in candidates and slug.upper() in mentioned]
+
+
+def _load_explicit_command_context(
+    root: Path,
+    instruction: str,
+    *,
+    max_sections: int = 32,
+    max_chars: int = 6000,
+) -> tuple[str, list[str], list[str]]:
+    """Load exact command-reference sections named by the author.
+
+    The two maintained command references are small enough to extract by their
+    stable level-three headings. We never inject a recall candidate here: only
+    command names that occur explicitly in the user's instruction can win this
+    higher-priority budget.
+    """
+    mentioned = {
+        token.upper()
+        for token in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", instruction or "", re.IGNORECASE)
+    }
+    if not mentioned:
+        return "", [], []
+
+    found: list[tuple[int, str, str, str]] = []
+    for doc_name in ("GDL_3d_commands", "GDL_2d_commands"):
+        path = root / f"{doc_name}.md"
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        matches = list(re.finditer(r"(?m)^### (.+)$", content))
+        for index, heading in enumerate(matches):
+            section_end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+            title = heading.group(1).strip()
+            names = {token.upper() for token in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", title)}
+            hit = names & mentioned
+            if not hit:
+                continue
+            section = content[heading.start():section_end].strip()
+            first_position = min((instruction.upper().find(name) for name in hit), default=len(instruction))
+            found.append((first_position, doc_name, sorted(hit)[0], section))
+
+    found.sort(key=lambda item: (item[0], item[1], item[2]))
+    selected: list[str] = []
+    selected_ids: list[str] = []
+    omitted_ids: list[str] = []
+    used_chars = 0
+    for _position, doc_name, command, section in found:
+        source_id = f"knowledge.{doc_name}.{command}"
+        if len(selected) >= max_sections or used_chars + len(section) > max_chars:
+            omitted_ids.append(source_id)
+            continue
+        selected.append(_section(f"Explicit GDL command: {command} ({doc_name})", section))
+        selected_ids.append(source_id)
+        used_chars += len(section)
+    return _join(selected), selected_ids, omitted_ids
 
 
 def _format_wiki_page_compact(page, *, max_chars: int) -> str:
@@ -422,9 +527,14 @@ def _parse_priority(raw: str) -> int:
         return 0
 
 
-def _compact_core_context(base_context: str, *, task_type: str) -> str:
+def _compact_core_context(
+    base_context: str,
+    *,
+    task_type: str,
+    max_chars: int = 16000,
+) -> tuple[str, list[str], list[str]]:
     if not base_context:
-        return ""
+        return "", [], []
 
     wanted = {
         "create": ("GDL_quick_reference", "GDL_parameters", "GDL_control_flow", "GDL_common_errors"),
@@ -435,14 +545,33 @@ def _compact_core_context(base_context: str, *, task_type: str) -> str:
     }.get(task_type, ("GDL_quick_reference", "GDL_common_errors"))
 
     sections = _split_markdown_sections(base_context)
-    parts = [content for name, content in sections if any(token in name for token in wanted)]
-    if not parts:
-        return base_context[:12000]
-    return _join(parts)[:16000]
+    matching = [
+        (name, content) for name, content in sections
+        if any(token in name for token in wanted)
+    ]
+    candidates = matching or sections
+    budget = max_chars if matching else min(12000, max_chars)
+    parts: list[str] = []
+    sources: list[str] = []
+    omitted: list[str] = []
+    used = 0
+    for name, content in candidates:
+        source_id = f"builtin.{name.removeprefix('##').strip()}"
+        additional = len(content) + (8 if parts else 0)
+        if used + additional > budget:
+            omitted.append(source_id)
+            continue
+        parts.append(content)
+        sources.append(source_id)
+        used += additional
+    return _join(parts), sources, omitted
 
 
 def _split_markdown_sections(text: str) -> list[tuple[str, str]]:
-    chunks = re.split(r"\n---\n", text or "")
+    # KnowledgeBase joins documents with a horizontal rule followed by a
+    # top-level document heading. A single horizontal rule inside a document
+    # is authored Markdown and must stay with that document.
+    chunks = re.split(r"\n\n---\n\n(?=## [A-Za-z_][\w.-]*\s*\n)", text or "")
     sections: list[tuple[str, str]] = []
     for chunk in chunks:
         stripped = chunk.strip()

@@ -222,22 +222,22 @@ def parse_gdl_object_plan(text: str, *, fallback: GDLObjectPlan | None = None) -
     object_type = _as_text(data.get("object_type")) or fallback.object_type
     return GDLObjectPlan(
         object_type=object_type,
-        geometry=_as_list(data.get("geometry")) or fallback.geometry,
-        parameters=_as_list(data.get("parameters")) or fallback.parameters,
-        assumptions=_as_list(data.get("assumptions")) or fallback.assumptions,
-        parameter_groups=_as_list(data.get("parameter_groups")) or fallback.parameter_groups,
-        derived_parameters=_as_list(data.get("derived_parameters")) or fallback.derived_parameters,
-        geometry_parts=_as_list(data.get("geometry_parts")) or fallback.geometry_parts,
-        command_candidates=_as_list(data.get("command_candidates")) or fallback.command_candidates,
-        script_3d_strategy=_as_list(data.get("script_3d_strategy")) or fallback.script_3d_strategy,
-        script_2d_strategy=_as_list(data.get("script_2d_strategy")) or fallback.script_2d_strategy,
-        parameter_script_strategy=_as_list(data.get("parameter_script_strategy")) or fallback.parameter_script_strategy,
-        ui_script_strategy=_as_list(data.get("ui_script_strategy")) or fallback.ui_script_strategy,
-        material_strategy=_as_list(data.get("material_strategy")) or fallback.material_strategy,
-        hotspots_and_editability=_as_list(data.get("hotspots_and_editability")) or fallback.hotspots_and_editability,
-        validation_checks=_as_list(data.get("validation_checks")) or fallback.validation_checks,
-        knowledge_sources=_as_list(data.get("knowledge_sources")) or fallback.knowledge_sources,
-        risks=_as_list(data.get("risks")) or fallback.risks,
+        geometry=_plan_list(data, "geometry", fallback.geometry),
+        parameters=_plan_list(data, "parameters", fallback.parameters),
+        assumptions=_plan_list(data, "assumptions", fallback.assumptions),
+        parameter_groups=_plan_list(data, "parameter_groups", fallback.parameter_groups),
+        derived_parameters=_plan_list(data, "derived_parameters", fallback.derived_parameters),
+        geometry_parts=_plan_list(data, "geometry_parts", fallback.geometry_parts),
+        command_candidates=_plan_list(data, "command_candidates", fallback.command_candidates),
+        script_3d_strategy=_plan_list(data, "script_3d_strategy", fallback.script_3d_strategy),
+        script_2d_strategy=_plan_list(data, "script_2d_strategy", fallback.script_2d_strategy),
+        parameter_script_strategy=_plan_list(data, "parameter_script_strategy", fallback.parameter_script_strategy),
+        ui_script_strategy=_plan_list(data, "ui_script_strategy", fallback.ui_script_strategy),
+        material_strategy=_plan_list(data, "material_strategy", fallback.material_strategy),
+        hotspots_and_editability=_plan_list(data, "hotspots_and_editability", fallback.hotspots_and_editability),
+        validation_checks=_plan_list(data, "validation_checks", fallback.validation_checks),
+        knowledge_sources=_plan_list(data, "knowledge_sources", fallback.knowledge_sources),
+        risks=_plan_list(data, "risks", fallback.risks),
         parts=_as_object_list(data.get("parts")),
         typed_parameters=_as_object_list(data.get("typed_parameters")),
         requirement_mappings=_as_object_list(data.get("requirement_mappings")),
@@ -245,138 +245,18 @@ def parse_gdl_object_plan(text: str, *, fallback: GDLObjectPlan | None = None) -
 
 
 def infer_minimum_plan(instruction: str) -> GDLObjectPlan:
-    """Build a conservative plan without LLM access."""
-    text = (instruction or "").lower()
-    if any(word in text for word in ("书架", "bookshelf", "shelf")):
-        return GDLObjectPlan(
-            object_type="参数化书架 / bookshelf",
-            geometry=[
-                "左、右侧板作为主结构竖向构件",
-                "顶板、底板和中间层板使用参数化厚度",
-                "可选背板使用独立开关和厚度参数",
-                "层板数量由参数控制，避免写死单一几何体",
-            ],
-            parameters=[
-                "Length A = 总宽度",
-                "Length B = 总深度",
-                "Length ZZYZX = 总高度",
-                "Length frame_thk = 侧板厚度",
-                "Integer shelf_count = 层板总数",
-                "Boolean has_back_panel = 是否带背板",
-            ],
-            assumptions=[
-                "默认采用板式家具结构",
-                "默认至少包含顶板、底板和两块侧板",
-            ],
-            parameter_groups=[
-                "尺寸参数：A, B, ZZYZX, frame_thk, shelf_thickness",
-                "构造参数：shelf_count, has_back_panel, back_thk",
-                "材质参数：mat_frame, mat_shelf",
-            ],
-            derived_parameters=[
-                "_inner_w = A - 2 * frame_thk",
-                "_shelf_gap 根据 ZZYZX、shelf_thickness 和 shelf_count 计算",
-            ],
-            geometry_parts=[
-                "left_side_panel",
-                "right_side_panel",
-                "bottom_panel",
-                "top_panel",
-                "middle_shelves",
-                "optional_back_panel",
-            ],
-            command_candidates=[
-                "BLOCK",
-                "ADDX/ADDY/ADDZ",
-                "DEL",
-                "FOR/NEXT",
-                "MATERIAL",
-                "PROJECT2",
-                "HOTSPOT2",
-            ],
-            script_3d_strategy=[
-                "使用 BLOCK 组合板件，保持 ADD/DEL 平衡",
-                "中间层板使用 FOR/NEXT 循环生成",
-                "用 MAX 或前置计算避免内宽、间距为负",
-            ],
-            script_2d_strategy=[
-                "至少输出 HOTSPOT2 边界点和 PROJECT2 3, 270, 2",
-                "用 A/B 作为平面外包络，保证可选中和可缩放",
-            ],
-            parameter_script_strategy=[
-                "对 shelf_count、frame_thk、shelf_thickness 做最小值保护",
-                "派生参数不写入参数表，优先在脚本内计算",
-            ],
-            material_strategy=[
-                "框架和层板材料分参数控制",
-                "背板沿用框架材料或单独材质参数",
-            ],
-            hotspots_and_editability=[
-                "2D 脚本设置四角 HOTSPOT2",
-                "3D 几何保持在 A/B/ZZYZX 外包络内",
-            ],
-            validation_checks=[
-                "检查 ADD/DEL 是否平衡",
-                "检查 FOR/NEXT 是否配对",
-                "检查 _inner_w 和 _shelf_gap 是否为正",
-            ],
-            knowledge_sources=[
-                "archetype.bookshelf",
-                "wiki.BLOCK",
-                "wiki.ADD_DEL",
-                "wiki.FOR_NEXT",
-            ],
-            risks=[
-                "FOR 循环必须有 NEXT",
-                "每个 ADDX/ADDY/ADDZ 必须有对应 DEL",
-                "参数名必须与 paramlist.xml 完全一致",
-            ],
-        )
-
+    """Build a domain-neutral plan without inventing object construction."""
     return GDLObjectPlan(
-        object_type="参数化 GDL 构件",
-        geometry=[
-            "用 A、B、ZZYZX 定义总体边界",
-            "将对象拆成可维护的基本构件，而不是单一固定几何体",
-        ],
+        object_type="GDL 构件（类型未确定）",
+        geometry=[],
         parameters=[
             "Length A = 总宽度",
             "Length B = 总深度",
             "Length ZZYZX = 总高度",
-            "Material mat_main = 主材质",
         ],
-        assumptions=[
-            "默认生成可参数化对象，不生成一次性固定尺寸几何",
-        ],
-        command_candidates=[
-            "BLOCK",
-            "PRISM_",
-            "MATERIAL",
-            "PROJECT2",
-            "HOTSPOT2",
-        ],
-        script_3d_strategy=[
-            "优先使用清晰的 GDL 基础命令组合几何",
-            "保持变换栈 ADD/DEL 平衡",
-            "为后续修改保留语义化参数名",
-        ],
-        script_2d_strategy=[
-            "输出 HOTSPOT2 外包络点",
-            "包含 PROJECT2 3, 270, 2 保证平面可见",
-        ],
-        material_strategy=[
-            "主要可见构件使用材质参数，不写死材质",
-        ],
-        validation_checks=[
-            "检查 2D 脚本是否可见",
-            "检查参数表和脚本参数名是否一致",
-            "检查 3D 脚本是否 END 结束",
-        ],
-        risks=[
-            "不要省略 2D 脚本",
-            "不要使用无效参数类型",
-            "3D 脚本必须以 END 结束",
-        ],
+        assumptions=[],
+        validation_checks=["执行适用的 GDL 静态检查和编译检查"],
+        risks=["构造、部件和材质未指定；遵循作者明确要求，缺失信息保持未确定。"],
     )
 
 
@@ -391,8 +271,8 @@ def _build_planner_user_prompt(
     parts = [
         f"用户目标：{instruction}",
         "",
-        "请先自主规划一个能用于工程继续修改的 GDL 物件，不要要求用户提供过细参数。",
-        "规划必须覆盖：构件假设、参数组、派生参数、几何拆解、GDL 命令选择、2D/3D 策略、材质、热点可编辑性、校验项和风险。",
+        "规划必须服从用户明确描述与保持项。不得根据对象名称补入未说明的构造、部件、门板、材质或数量；对象类型只用于理解，不等于设计授权。",
+        "缺少的信息保持未确定或标记为 assumption；只在用户目标需要时提出澄清。可用的几何、参数、脚本策略、材质和校验字段可以显式留空。",
         "另请输出 typed_parameters、parts 与 requirement_mappings。参数使用规范单位并关联稳定 param_id；每条用户/图像要求要映射到实际 part_refs、parameter_refs、script_refs、check_id（只用已提供的框架检查 ID；不确定则 null）、scenario_refs 与 source_refs。",
         "把图像推断与用户明确尺寸分开：用户明确值优先；未观察到的内部结构必须标为 assumption 或要求澄清，不能写成观察事实。",
     ]
@@ -440,6 +320,11 @@ def _as_list(value: Any) -> list[str]:
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
+
+
+def _plan_list(data: dict[str, Any], key: str, fallback: list[str]) -> list[str]:
+    """Missing means compatibility fallback; explicit [] means author/model chose none."""
+    return _as_list(data[key]) if key in data else list(fallback)
 
 
 def _as_object_list(value: Any) -> list[dict[str, Any]]:

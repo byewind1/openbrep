@@ -250,7 +250,7 @@ workspace/
 
 ### Unified conversation / 统一对话接缝
 
-`workbench/conversation_service.py` orchestrates read-only prepare and token-bound execute; `source_snapshot.py` binds editor drafts and source/context versions. `runtime/turn_policy.py` guards permission before every mutation engine. `runtime/advisor.py` and `runtime/inspection.py` produce read-only advice and bounded evidence; `workbench/working_intent.py` retains scoped user constraints and evidence-driven task state. `workbench/workspace_session_service.py` owns workspace attachment and persistence. Default CLI/benchmark prompts do not receive GUI conversation context. See [conversation contracts and evaluation](ASSISTANT_CONVERSATION.md).
+`workbench/conversation_service.py` orchestrates read-only prepare and token-bound execute; `source_snapshot.py` binds editor drafts and source/context versions. `runtime/turn_policy.py` guards permission before every mutation engine. `runtime/advisor.py` and `runtime/inspection.py` produce read-only advice and bounded evidence; `workbench/working_intent.py` retains scoped user constraints and evidence-driven task state, while `working_intent_store.py` atomically persists it per HSF project and invalidates run/revision links when an HSF is copied. `workbench/workspace_session_service.py` owns workspace attachment and persistence. Default CLI/benchmark prompts do not receive GUI conversation context. See [conversation contracts and evaluation](ASSISTANT_CONVERSATION.md).
 
 ### `openbrep/runtime/pipeline.py`
 

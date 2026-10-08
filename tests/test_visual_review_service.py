@@ -184,3 +184,62 @@ def test_unhealthy_rendered_view_stops_before_model_review(tmp_path):
     assert response["ok"] is False
     assert response["code"] == "PREVIEW_CAPTURE_INCOMPLETE"
     assert llm.calls == []
+
+
+def test_failed_current_finding_prepares_one_scoped_approved_repair(tmp_path):
+    service, session, _, project_root = _service(tmp_path)
+    reviewed = service.review_turn({"turn_id": "turn-1", "project_epoch": 4})["review"]
+    reviewed["findings"] = [{
+        "finding_id": "visible-overall", "target_id": "overall-object", "outcome": "fail",
+        "severity": "major", "summary": "模型底座缺失", "failure_layer": "implementation",
+        "uncertainty": "", "evidence": [{"frame_id": reviewed["frame_manifest"][0]["frame_id"]}],
+    }]
+    report_path = project_root / ".openbrep" / "visual-reviews" / f"{reviewed['review_id']}.json"
+    report_path.write_text(json.dumps(reviewed), encoding="utf-8")
+    calls = []
+    def prepare(body):
+        calls.append(body)
+        session.conversation_service.turns["repair-turn"] = SimpleNamespace(body={})
+        return {"ok": True, "state": "pending", "turn_id": "repair-turn"}
+    session.conversation_service.route = prepare
+
+    response = service.route("POST", "/api/vision/repair", {
+        "review_id": reviewed["review_id"], "finding_id": "visible-overall", "project_epoch": 4,
+    })
+
+    assert response["ok"] is True
+    assert response["repair"]["state"] == "awaiting_approval"
+    assert response["repair"]["decision"]["action"] == "modify"
+    assert len(calls) == 1
+    assert calls[0]["requested_mode"] == "plan"
+    assert calls[0]["confirm_before_execute"] is True
+    assert "目标 overall-object" in calls[0]["message"]
+    review_turn = session.conversation_service.turns["repair-turn"]
+    assert review_turn.review_reference_images == session.conversation_service.turns["turn-1"].body["images"]
+    frames, error = service._reference_frames(review_turn)
+    assert error is None
+    assert frames[0].kind == "reference"
+
+
+def test_repair_rejects_stale_source_without_preparing_turn(tmp_path):
+    service, session, _, project_root = _service(tmp_path)
+    reviewed = service.review_turn({"turn_id": "turn-1", "project_epoch": 4})["review"]
+    reviewed["findings"] = [{
+        "finding_id": "visible-overall", "target_id": "overall-object", "outcome": "fail",
+        "severity": "major", "summary": "问题", "failure_layer": "implementation",
+        "uncertainty": "", "evidence": [{"frame_id": reviewed["frame_manifest"][0]["frame_id"]}],
+    }]
+    (project_root / ".openbrep" / "visual-reviews" / f"{reviewed['review_id']}.json").write_text(
+        json.dumps(reviewed), encoding="utf-8"
+    )
+    calls = []
+    session.conversation_service.route = lambda body: calls.append(body) or {"ok": True}
+    (project_root / "scripts" / "3d.gdl").write_text("BLOCK 2, 2, 2\n", encoding="utf-8")
+
+    response = service.prepare_repair({
+        "review_id": reviewed["review_id"], "finding_id": "visible-overall", "project_epoch": 4,
+    })
+
+    assert response["ok"] is False
+    assert response["decision"]["reason"] == "review_source_stale"
+    assert calls == []

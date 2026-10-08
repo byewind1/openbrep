@@ -488,6 +488,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     thinkingSteps: AssistantThinkingStep[],
     originalInstruction?: string,
     taskRef?: import('../../api/types').TurnTaskRef,
+    workingIntent?: import('../../api/types').WorkingIntentSnapshot,
   ) {
     if (projectSwitchedSince(epoch)) {
       discardStaleResult('Generation result discarded: project switched during the request.')
@@ -520,6 +521,9 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
           turnTaskRef: taskRef,
           pendingPlan: null,
+          workingIntent,
+          knowledgeSources: result.assistant?.knowledge_sources ?? [],
+          knowledgeOmissions: result.assistant?.knowledge_omissions ?? [],
         })
       : compactExtras({
           errorCategory: classifyAssistantError(finalReply),
@@ -530,6 +534,9 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
           turnTaskRef: taskRef,
           pendingPlan: null,
+          workingIntent,
+          knowledgeSources: result.assistant?.knowledge_sources ?? [],
+          knowledgeOmissions: result.assistant?.knowledge_omissions ?? [],
         })
     set((state) => ({
       assistantBusy: false,
@@ -568,7 +575,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       : undefined
     if (result.awaiting_extraction_confirmation && result.extractions?.length) {
       set((state) => ({ assistantBusy: false, pendingExtraction: { turn_id: result.turn_id, extractions: result.extractions!, message, images: [] },
-        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, EXTRACTION_PENDING_CONTENT, { turnTaskRef: taskRef, thinkingSteps: [...steps] }) }))
+        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, EXTRACTION_PENDING_CONTENT, { turnTaskRef: taskRef, thinkingSteps: [...steps], workingIntent: result.working_intent }) }))
       await persistAssistantHistory()
       return
     }
@@ -582,7 +589,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       set((state) => ({ assistantBusy: false,
         pendingPlan,
         assistantMessages: replacePendingAssistantMessage(state.assistantMessages, PLAN_PENDING_CONTENT,
-          { turnTaskRef: taskRef, thinkingSteps: [...steps], pendingPlan }),
+          { turnTaskRef: taskRef, thinkingSteps: [...steps], pendingPlan, workingIntent: result.working_intent }),
       }))
       await persistAssistantHistory()
       return
@@ -593,12 +600,13 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       await get().loadRevisions()
       await get().loadRecentProjects()
       set((state) => ({ assistantBusy: false, pendingPlan: null, assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
-        result.assistant?.reply ?? 'Project created.', { verification: result.assistant?.verification ?? undefined, turnTaskRef: taskRef, pendingPlan: null }) }))
+        result.assistant?.reply ?? 'Project created.', { verification: result.assistant?.verification ?? undefined, turnTaskRef: taskRef, pendingPlan: null, workingIntent: result.working_intent,
+          knowledgeSources: result.assistant?.knowledge_sources ?? [], knowledgeOmissions: result.assistant?.knowledge_omissions ?? [] }) }))
       await persistAssistantHistory()
       return
     }
     if (result.result_kind === 'execution' || (result.assistant?.delivery && result.result_kind !== 'advice')) {
-      await finishModifyStream(result, epoch, ASSISTANT_PENDING_PREFIX, steps, message, taskRef)
+      await finishModifyStream(result, epoch, ASSISTANT_PENDING_PREFIX, steps, message, taskRef, result.working_intent)
       if (result.events_recording?.status === 'degraded') markRecordingFailed(result.turn_id)
       return
     }
@@ -611,7 +619,10 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     set((state) => ({ assistantBusy: false,
       assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply,
         { advisor: result.advisor, turnTaskRef: taskRef, thinkingSteps: closeRunningSteps(steps),
-          recordingFailed: result.events_recording?.status === 'degraded', pendingPlan: refreshedPlan }),
+          recordingFailed: result.events_recording?.status === 'degraded', pendingPlan: refreshedPlan,
+          workingIntent: result.working_intent,
+          knowledgeSources: result.assistant?.knowledge_sources ?? [],
+          knowledgeOmissions: result.assistant?.knowledge_omissions ?? [] }),
       lastError: result.ok ? null : reply,
       pendingPlan: refreshedPlan,
     }))
@@ -1012,6 +1023,34 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         update({ visualReviewBusy: false, visualReview: result.review, visualReviewError: undefined, visualReviewRestored: false })
       } catch (error) {
         if (!projectSwitchedSince(epoch)) update({ visualReviewBusy: false, visualReviewError: String(error) })
+      }
+    },
+
+    async repairVisualFinding(reviewId: string, findingId: string) {
+      const epoch = get().projectEpoch
+      if (get().assistantBusy) return
+      set({ assistantBusy: true, lastError: undefined })
+      try {
+        const result = await api.requestVisualRepair(reviewId, findingId, epoch)
+        if (projectSwitchedSince(epoch)) return
+        if (!result.ok || !result.pending_plan || !result.turn_id) {
+          set({ lastError: result.error ?? '无法准备该视觉差异的修复计划。' })
+          return
+        }
+        const repairTurnId = result.turn_id
+        const plan = { ...result.pending_plan, turn_id: repairTurnId, original_has_images: true }
+        set((state) => ({
+          pendingPlan: plan,
+          assistantMessages: [...state.assistantMessages, {
+            role: 'assistant', content: '已根据当前视觉证据准备一轮限定范围的修复计划，请审核后决定是否执行。',
+            createdAt: Date.now(), pendingPlan: plan,
+            turnTaskRef: { turn_id: repairTurnId, run_id: null, reference_available: true, schema_version: 1 },
+          }],
+        }))
+      } catch (error) {
+        if (!projectSwitchedSince(epoch)) set({ lastError: String(error) })
+      } finally {
+        if (!projectSwitchedSince(epoch)) set({ assistantBusy: false })
       }
     },
 
@@ -1456,7 +1495,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             const execution = await executeUnified(plan.turn_id, epoch, '', controller.signal, plan)
             if (execution) {
               if (execution.result.code !== 'PLAN_STALE') set({ pendingPlan: null })
-              await finishUnified(execution.result, epoch, execution.steps, '')
+              await finishUnified(execution.result, epoch, execution.steps, '', Boolean(plan.original_has_images))
             }
           }
         } catch (error) {

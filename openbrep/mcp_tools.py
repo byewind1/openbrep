@@ -165,10 +165,22 @@ def _load_project(path: str, trace_id: str) -> tuple[Path, HSFProject] | dict:
 def capabilities() -> dict[str, Any]:
     """Return the versioned, model-independent capability and result contract."""
     from openbrep import __version__
+    from openbrep.contracts.bindings import get_executor_spec
+    from openbrep.contracts.requirement_execution import list_requirement_executors
+
+    requirement_checks = []
+    for check_id in list_requirement_executors():
+        spec = get_executor_spec(check_id)
+        if spec is not None:
+            requirement_checks.append({
+                "check_id": check_id,
+                "required_bindings": sorted(spec.required_bindings),
+                "result_kind": spec.result_kind,
+            })
 
     return {
         "ok": True,
-        "contract_version": "1.4",
+        "contract_version": "1.5",
         "openbrep_version": __version__,
         "source_format": "HSF project directory",
         "compile_modes": {
@@ -177,6 +189,20 @@ def capabilities() -> dict[str, Any]:
             "real": "LP_XMLConverter required",
         },
         "parameter_types": ["Length", "Angle", "RealNum", "Integer", "Boolean", "String", "Material", "PenColor", "FillPattern", "LineType"],
+        "availability": {
+            "lp_xmlconverter": "not probed by capabilities; inspect compile_hsf(mode='auto').mode for this call",
+            "archicad_host": {"available_via_mcp": False, "note": "Host verification is exposed through the workbench/Tapir adapter, not this MCP surface."},
+        },
+        "preview": {
+            "engine": "built-in GDL previewer",
+            "evidence_tool": "render_evidence",
+            "dimensions": ["3d_geometry", "bbox", "mesh_statistics", "optional_parameter_sweep"],
+            "not_established": ["2d_drawing_render", "archicad_render_parity", "host_behavior"],
+        },
+        "requirement_checks": {
+            "executors": requirement_checks,
+            "non_passing_states": ["not_run", "unverified", "degraded", "fail", "stale"],
+        },
         "edit_modes": {
             "draft": "temporary project copy; returns diff, mock compile and semantic review",
             "apply": "writes HSF, records a revision before change, then compiles; optional operation_id makes retries idempotent",
@@ -186,7 +212,12 @@ def capabilities() -> dict[str, Any]:
             "error": "structured operation failure with code, message and optional details",
             "compile_mode": "returned per compile result; mock success is not a real compile",
         },
-        "error_codes": ["project_not_found", "invalid_mode", "invalid_spec", "source_changed", "source_commit_failed", "invalid_revision", "converter_unavailable", "mcp_internal_error"],
+        "error_codes": [
+            "project_not_found", "invalid_mode", "invalid_spec", "source_changed",
+            "source_commit_failed", "invalid_revision", "converter_unavailable",
+            "operation_id_conflict", "operation_outcome_unknown", "operation_receipt_incomplete",
+            "mcp_internal_error",
+        ],
         "evidence": ["evidence_id", "evidence_kind", "source_fingerprint", "revision_id", "compile result", "semantic issues"],
         "cancellation": "MCP transport cancellation is client-owned; synchronous source commits complete or roll back before returning",
         "timeouts": "The client/transport owns request deadlines; a started atomic source commit is not interrupted mid-transaction",
@@ -437,6 +468,13 @@ def apply_edit(
                     )
 
                     request_hash = operation_request_hash({"mode": mode, "spec": spec})
+                    source_at_lock = compute_source_fingerprint(root)
+                    if source_at_lock != source_before_load:
+                        return _make_error(
+                            "source_changed",
+                            "项目在操作准备期间发生变化，请重新读取后再编辑。",
+                            trace_id,
+                        )
                     receipt = read_operation_receipt(root, operation_id)
                     if receipt is not None:
                         if receipt["request_hash"] != request_hash:
@@ -446,17 +484,48 @@ def apply_edit(
                                 trace_id,
                                 details={"operation_id": operation_id},
                             )
-                        replayed = dict(receipt["result"])
-                        replayed["operation_replayed"] = True
-                        return replayed
+                        if receipt.get("state", "completed") == "completed":
+                            replayed = dict(receipt["result"])
+                            replayed["operation_replayed"] = True
+                            return replayed
+                        if receipt.get("source_fingerprint_before") != source_at_lock:
+                            return _make_error(
+                                "operation_outcome_unknown",
+                                "该操作曾开始但没有完成回执，且源码已变化。为避免重复修改，系统未重试；请核对项目/revision 后使用新的 operation_id。",
+                                trace_id,
+                                details={"operation_id": operation_id, "source_fingerprint": source_at_lock},
+                            )
+                    else:
+                        write_operation_receipt(
+                            root,
+                            operation_id,
+                            request_hash,
+                            {},
+                            state="prepared",
+                            source_fingerprint_before=source_at_lock,
+                        )
                 result = _apply_edit_apply(
                     root, project, spec, trace_id,
                     expected_source_fingerprint=source_before_load,
+                    operation_id=operation_id,
                 )
                 if operation_id is not None and request_hash is not None:
                     result["operation_id"] = operation_id
                     result["operation_replayed"] = False
-                    write_operation_receipt(root, operation_id, request_hash, result)
+                    try:
+                        write_operation_receipt(root, operation_id, request_hash, result)
+                    except Exception as exc:
+                        return _make_error(
+                            "operation_receipt_incomplete",
+                            "源码提交已返回，但完成回执写入失败。相同 operation_id 不会重复应用；请检查项目与 revision，再用新的 ID 继续。",
+                            trace_id,
+                            details={
+                                "operation_id": operation_id,
+                                "revision_id": result.get("revision_id"),
+                                "source_fingerprint": compute_source_fingerprint(root),
+                                "cause": str(exc),
+                            },
+                        )
                 return result
         except _McpEditRejected as exc:
             return _make_error(exc.code, str(exc), trace_id, details={"mode": mode})
@@ -630,6 +699,7 @@ def _apply_edit_apply(
     trace_id: str,
     *,
     expected_source_fingerprint: str,
+    operation_id: str | None = None,
 ) -> dict:
     """apply 模式：快照"修改前"状态（metadata 记 {trace_id, tool_spec}）→
     应用 spec → 落盘 → 编译。与 pipeline micro_modify 同一落盘语义。"""
@@ -640,7 +710,11 @@ def _apply_edit_apply(
             root,
             message="mcp apply_edit",
             gsm_name=project.name,
-            metadata={"trace_id": trace_id, "tool_spec": spec},
+            metadata={
+                "trace_id": trace_id,
+                "tool_spec": spec,
+                **({"operation_id": operation_id} if operation_id is not None else {}),
+            },
             trigger="mcp",
             intent="MCP",
             user_instruction="",
@@ -1589,6 +1663,11 @@ def _verify_full_gate(
             "passed": False,
             "evidence": {
                 "gate": "full",
+                "validation_scope": {
+                    "level": "mock_compile_and_semantic",
+                    "proves": ["mock_compile", "semantic_preview_checks"],
+                    "not_established": ["real_lp_compile", "archicad_host_use", "domain_calibration"],
+                },
                 "compile": {"mode": "mock", "success": False, "errors": [f"验证构建失败: {exc}"]},
                 "semantic": {"passed": False},
                 "at": today,
@@ -1599,6 +1678,11 @@ def _verify_full_gate(
 
     evidence: dict[str, Any] = {
         "gate": "full",
+        "validation_scope": {
+            "level": "mock_compile_and_semantic",
+            "proves": ["mock_compile", "semantic_preview_checks"],
+            "not_established": ["real_lp_compile", "archicad_host_use", "domain_calibration"],
+        },
         "compile": {"mode": compile_mode, "success": compile_success},
         "semantic": {"passed": semantic_passed},
         "at": today,
@@ -1612,6 +1696,7 @@ def _verify_full_gate(
             target,
             {
                 "gate": "full",
+                "validation_scope": evidence["validation_scope"],
                 "compile_mode": compile_mode,
                 "compile_success": compile_success,
                 "semantic_passed": semantic_passed,
@@ -1625,6 +1710,7 @@ def _verify_full_gate(
         "name": name,
         "gate": "full",
         "passed": passed,
+        "validation_scope": evidence["validation_scope"],
         "evidence": evidence,
         "status": "verified" if passed else "proposed",
         "trace_id": trace_id,
@@ -1643,6 +1729,11 @@ def _verify_structural_gate(
 
     evidence = {
         "gate": "structural",
+        "validation_scope": {
+            "level": "structure_only",
+            "proves": ["frontmatter_complete", "trigger_section"],
+            "not_established": ["mock_compile", "real_lp_compile", "semantic_behavior", "archicad_host_use", "domain_calibration"],
+        },
         "structural": {
             "frontmatter_complete": frontmatter_ok,
             "pattern_type": meta.get("pattern_type"),
@@ -1655,6 +1746,7 @@ def _verify_structural_gate(
             target,
             {
                 "gate": "structural",
+                "validation_scope": evidence["validation_scope"],
                 "pattern_type": meta.get("pattern_type"),
                 "trigger_section": True,
                 "at": today,
@@ -1667,6 +1759,7 @@ def _verify_structural_gate(
         "name": name,
         "gate": "structural",
         "passed": passed,
+        "validation_scope": evidence["validation_scope"],
         "evidence": evidence,
         "status": "verified" if passed else "proposed",
         "trace_id": trace_id,

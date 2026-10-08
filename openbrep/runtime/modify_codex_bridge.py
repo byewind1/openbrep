@@ -940,6 +940,8 @@ class CodexModifyBridge:
         assembled = pipeline._assemble_context(
             request, project, instruction=clean_instruction, include_modify_rules=True,
         )
+        self.knowledge_sources = list(assembled.source_ids)
+        self.knowledge_omissions = list(assembled.omitted_source_ids)
         agent = GDLAgent(
             llm=llm,
             compiler=compiler,
@@ -1832,6 +1834,8 @@ class CodexModifyBridge:
             },
             "before_revision_id": self.before_revision_id or None,
             "changed_files": sorted(dict(self.registry.changed_files).keys()),
+            "knowledge_sources": list(self.knowledge_sources),
+            "knowledge_omissions": list(self.knowledge_omissions),
             "codex_modify": {
                 "model": self.model,
                 "reasoning_effort": self.reasoning_effort,

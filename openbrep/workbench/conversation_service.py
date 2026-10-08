@@ -19,6 +19,7 @@ from openbrep.workbench.working_intent import (
     intent_context,
     reduce_intent,
 )
+from openbrep.workbench.working_intent_store import load_working_intent, save_working_intent
 
 TURN_TTL_SECONDS = 1800
 MAX_RECENT_TURNS = 128
@@ -45,6 +46,7 @@ class PreparedTurn:
     working_intent_version: int = 0
     plan_revision: int = 0
     reference_asset_ids: list[str] | None = None
+    repair_context: dict | None = None
 
 
 class WorkbenchConversationService:
@@ -54,7 +56,9 @@ class WorkbenchConversationService:
         self.epoch = session.project_epoch
         self.last_context_fingerprint = None
         self.project_identity = str(session.project.root) if session.project else None
-        self.working_intent = initial_intent(session.session_id, session.project_epoch)
+        self.working_intent_persistence = "memory_only"
+        self.working_intent_issue: str | None = None
+        self.working_intent = self._load_project_intent()
         self.turns: OrderedDict[str, PreparedTurn] = OrderedDict()
         self.client_ids: dict[str, str] = {}
         self.active_turn_id: str | None = None
@@ -90,6 +94,34 @@ class WorkbenchConversationService:
         if is_codex_qualified_model(config.model):
             llm.codex_provider = self.session.settings_service._codex_provider()
         return llm
+
+    def _load_project_intent(self) -> dict:
+        project = self.session.project
+        if project is None:
+            self.working_intent_persistence = "memory_only"
+            return initial_intent(self.session.session_id, self.session.project_epoch)
+        state, issue = load_working_intent(
+            project.root,
+            session_id=self.session.session_id,
+            project_epoch=self.session.project_epoch,
+        )
+        self.working_intent_persistence = "load_failed" if issue else "project"
+        self.working_intent_issue = issue
+        return state
+
+    def _reduce_working_intent(self, event: dict) -> None:
+        self.working_intent = reduce_intent(self.working_intent, event)
+        project = self.session.project
+        if project is None:
+            self.working_intent_persistence = "memory_only"
+            return
+        try:
+            save_working_intent(project.root, self.working_intent)
+            self.working_intent_persistence = "project"
+            self.working_intent_issue = None
+        except Exception as exc:  # persistence failure must remain visible
+            self.working_intent_persistence = "save_failed"
+            self.working_intent_issue = f"working_intent_save_failed:{type(exc).__name__}"
 
     def _semantic_decision(self, payload):
         import json
@@ -139,7 +171,7 @@ class WorkbenchConversationService:
             turn.state = 'failed'
             return self._failure(turn, 'PLAN_GENERATION_FAILED' if turn.policy.mode == 'plan' else 'ADVICE_FAILED', '计划生成失败，项目未修改。' if turn.policy.mode == 'plan' else '无法完成本轮顾问回答；项目未修改。')
         if answer.assumptions:
-            self.working_intent = reduce_intent(self.working_intent, {'kind': 'assumptions', 'message_id': turn.turn_id, 'values': list(answer.assumptions)})
+            self._reduce_working_intent({'kind': 'assumptions', 'message_id': turn.turn_id, 'values': list(answer.assumptions)})
         proposals = []
         for proposal in answer.proposals:
             bound = {**proposal, 'proposal_id': uuid.uuid4().hex, 'source_version': turn.snapshot.source_version, 'state': 'proposed'}
@@ -147,9 +179,16 @@ class WorkbenchConversationService:
             self.proposals[bound['proposal_id']] = copy.deepcopy(bound)
             while len(self.proposals) > 20:
                 self.proposals.popitem(last=False)
-        self.working_intent = reduce_intent(self.working_intent, {'kind': 'proposals', 'proposals': list(self.proposals.values())}) if proposals else self.working_intent
+        if proposals:
+            self._reduce_working_intent({'kind': 'proposals', 'proposals': list(self.proposals.values())})
         turn.working_intent_version = self.working_intent['version']
-        details = {**answer.to_dict(), 'proposals': proposals, 'inspection': report.to_dict(), 'knowledge_sources': knowledge.source_ids}
+        details = {
+            **answer.to_dict(),
+            'proposals': proposals,
+            'inspection': report.to_dict(),
+            'knowledge_sources': knowledge.source_ids,
+            'knowledge_omissions': knowledge.omitted_source_ids,
+        }
         if turn.policy.mode == 'plan':
             old = self.turns.get(self.pending_turn_id or '')
             if old and old.state == 'pending':
@@ -171,7 +210,7 @@ class WorkbenchConversationService:
         turn.state = 'completed'
         return self._response(turn, 'advice', advisor=details, assistant={'kind': 'advisor', 'reply': answer.reply})
 
-    def clear(self):
+    def clear(self, *, persist: bool = True):
         for turn in self.turns.values():
             if turn.state in {'prepared', 'pending'}:
                 self._discard_prepared_typed_plan(turn)
@@ -186,12 +225,20 @@ class WorkbenchConversationService:
         self.last_context_fingerprint = None
         self.project_identity = str(self.session.project.root) if self.session.project else None
         self.working_intent = initial_intent(self.session.session_id, self.session.project_epoch)
+        self.working_intent_issue = None
+        if persist and self.session.project is not None:
+            try:
+                save_working_intent(self.session.project.root, self.working_intent)
+                self.working_intent_persistence = "project"
+            except Exception as exc:
+                self.working_intent_persistence = "save_failed"
+                self.working_intent_issue = f"working_intent_save_failed:{type(exc).__name__}"
 
     def _sync_epoch(self):
         if self.epoch != self.session.project_epoch:
             identity = str(self.session.project.root) if self.session.project else None
             if identity is not None and identity == self.project_identity:
-                self.working_intent = reduce_intent(self.working_intent, {'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
+                self._reduce_working_intent({'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
                 for turn in self.turns.values():
                     if turn.state in {'pending', 'prepared'}:
                         self._discard_prepared_typed_plan(turn)
@@ -200,7 +247,8 @@ class WorkbenchConversationService:
                 self.pending_turn_id = None
                 self.epoch = self.session.project_epoch
             else:
-                self.clear()
+                self.clear(persist=False)
+                self.working_intent = self._load_project_intent()
 
     def _dependency_version(self):
         return getattr(self.session, 'dependency_context_version', None)
@@ -214,6 +262,8 @@ class WorkbenchConversationService:
                 'project_epoch': turn.snapshot.project_epoch if turn else self.session.project_epoch,
                 'session_id': self.session.session_id,
                 'current_project_epoch': self.session.project_epoch,
+                'working_intent': self.intent_summary(),
+                **({'repair_context': copy.deepcopy(turn.repair_context)} if turn and turn.repair_context else {}),
                 **payload}
 
     def _failure(self, turn, code, error=None):
@@ -347,7 +397,7 @@ class WorkbenchConversationService:
         if re.search(r'撤回|取消.*限制|withdraw', message, re.I):
             for constraint in list(self.working_intent['constraints']):
                 if constraint['status'] == 'active' and constraint['value'] in message:
-                    self.working_intent = reduce_intent(self.working_intent, {'kind': 'withdraw', 'constraint_id': constraint['id']})
+                    self._reduce_working_intent({'kind': 'withdraw', 'constraint_id': constraint['id']})
         previous_intent = self.intent_summary()
         try:
             snapshot = capture_snapshot(self.session.project, self.session.project_epoch, body.get('draft_scripts'), dependency_context_version=self._dependency_version())
@@ -367,11 +417,11 @@ class WorkbenchConversationService:
             # but prepare a plan and stop before the mutating execution path.
             policy = replace(policy, mode='plan')
         if self.last_context_fingerprint is not None and self.last_context_fingerprint != snapshot.context_fingerprint:
-            self.working_intent = reduce_intent(self.working_intent, {'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
+            self._reduce_working_intent({'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
         self.last_context_fingerprint = snapshot.context_fingerprint
         allowed = {'client_turn_id', 'message', 'history', 'images', 'image_b64', 'image_mime', 'requested_mode', 'confirm_before_execute', 'project_epoch', 'draft_scripts', 'proposal_id', 'continue_from', 'proposal_action', 'assistant_settings', 'output_dir', 'project_name', 'effect_contract'}
         turn = PreparedTurn(uuid.uuid4().hex, client_id, copy.deepcopy({k: v for k, v in body.items() if k in allowed}), policy, snapshot, self.clock())
-        self.working_intent = reduce_intent(self.working_intent, {'kind': 'turn', 'message_id': turn.turn_id, 'message': message,
+        self._reduce_working_intent({'kind': 'turn', 'message_id': turn.turn_id, 'message': message,
             'constraints': [c for c in policy.constraints if c in message], 'execute': policy.mode == 'execute' and not policy.error, 'task_intent': policy.task_intent})
         turn.working_intent_version = self.working_intent['version']
         self.turns[turn.turn_id] = turn
@@ -421,7 +471,7 @@ class WorkbenchConversationService:
             if body.get('proposal_action') == 'select':
                 proposal['state'] = 'selected'
                 self.selected_proposal = copy.deepcopy(proposal)
-                self.working_intent = reduce_intent(self.working_intent, {'kind': 'select', 'proposal_id': proposal_id, 'message_id': turn.turn_id})
+                self._reduce_working_intent({'kind': 'select', 'proposal_id': proposal_id, 'message_id': turn.turn_id})
                 turn.state = 'completed'
                 turn.result = self._response(turn, 'advice', assistant={'kind': 'advisor', 'reply': '已选择该方案；尚未执行。'})
                 self._record_task_terminal(turn, kind='completed', state='advice', message='已选择该方案；尚未执行。')
@@ -437,7 +487,7 @@ class WorkbenchConversationService:
                 turn.body['message'] = proposal['goal'] + '\n用户本轮要求：' + message + '\n范围：' + '\n'.join(proposal['scope']) + '\n约束：' + '\n'.join(policy.constraints)
                 proposal['state'] = 'selected'
                 self.selected_proposal = copy.deepcopy(proposal)
-                self.working_intent = reduce_intent(self.working_intent, {'kind': 'select', 'proposal_id': proposal_id, 'message_id': turn.turn_id, 'execute': True})
+                self._reduce_working_intent({'kind': 'select', 'proposal_id': proposal_id, 'message_id': turn.turn_id, 'execute': True})
                 turn.working_intent_version = self.working_intent['version']
         elif reference and pending and pending.state == 'pending' and policy.mode == 'execute':
             if pending.snapshot.context_fingerprint != snapshot.context_fingerprint:
@@ -456,7 +506,7 @@ class WorkbenchConversationService:
             task = previous_intent['active_task']
             goal = next((g['text'] for g in self.working_intent['goals'] if g['id'] in task['goal_refs']), '')
             turn.body['message'] = goal + '\n本轮要求：' + message
-            self.working_intent = reduce_intent(self.working_intent, {'kind': 'supersede_task', 'task_id': task['id']})
+            self._reduce_working_intent({'kind': 'supersede_task', 'task_id': task['id']})
         elif reference and policy.mode == 'execute':
             turn.state = 'failed'
             turn.result = self._failure(turn, 'REFERENCE_UNAVAILABLE')
@@ -467,7 +517,7 @@ class WorkbenchConversationService:
             turn.result = self._failure(turn, policy.error)
             self._record_task_terminal(turn, kind='failed', error_code=policy.error)
         elif policy.mode == 'execute':
-            self.working_intent = reduce_intent(self.working_intent, {'kind': 'set_goal', 'task_id': turn.turn_id, 'goal': turn.body['message']})
+            self._reduce_working_intent({'kind': 'set_goal', 'task_id': turn.turn_id, 'goal': turn.body['message']})
             turn.working_intent_version = self.working_intent['version']
             turn.result = self._response(turn, 'ready_to_execute', mode='execute', task_intent=policy.task_intent, source_version=snapshot.source_version)
             self._record_task_stage(turn, stage='ready', message='任务已就绪，等待执行。')
@@ -490,7 +540,8 @@ class WorkbenchConversationService:
     def intent_summary(self) -> dict:
         pending = self.turns.get(self.pending_turn_id or '')
         return {**intent_context(self.working_intent), 'pending_plan': pending.plan if pending and pending.state == 'pending' else None,
-                'proposals': list(self.proposals.values()), 'selected_proposal_id': self.selected_proposal.get('proposal_id') if self.selected_proposal else None}
+                'proposals': list(self.proposals.values()), 'selected_proposal_id': self.selected_proposal.get('proposal_id') if self.selected_proposal else None,
+                'persistence': self.working_intent_persistence, 'persistence_issue': self.working_intent_issue}
 
     def _prepare_advice(self, turn: PreparedTurn, *, should_cancel=None):
         if self.advisor is None:
@@ -717,7 +768,7 @@ class WorkbenchConversationService:
             if any(re.search(r'不改|不要改|保持|do not|don.t|unchanged', c, re.I) and any(token and token.lower() in c.lower() for token in tokens) for c in protected):
                 return self._failure(turn, 'CONSTRAINT_CONFLICT', '参数修改与仍有效的用户约束冲突；请明确撤回该约束。')
         if not any(t['id'] == turn.turn_id for t in self.working_intent['tasks']):
-            self.working_intent = reduce_intent(self.working_intent, {'kind': 'start_task', 'task_id': turn.turn_id, 'goal': turn.body['message'], 'task_intent': turn.policy.task_intent})
+            self._reduce_working_intent({'kind': 'start_task', 'task_id': turn.turn_id, 'goal': turn.body['message'], 'task_intent': turn.policy.task_intent})
         self.active_turn_id = turn.turn_id
         turn.state = 'executing'
         def emit(kind, data):
@@ -803,12 +854,19 @@ class WorkbenchConversationService:
                 response = self.session.assistant_service.generate_with_assistant(request)
             if self.session.project is not None and turn.snapshot._project is not None and self.session.project.root == turn.snapshot._project.root:
                 self.epoch = self.session.project_epoch
-                self.working_intent = reduce_intent(self.working_intent, {'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
+                self._reduce_working_intent({'kind': 'source_changed', 'project_epoch': self.session.project_epoch})
             kind = 'execution' if response.get('ok') else 'failed'
             turn.state = 'extraction_pending' if response.get('awaiting_extraction_confirmation') else ('completed' if response.get('ok') else 'failed')
             self.last_context_fingerprint = capture_snapshot(self.session.project, self.session.project_epoch).context_fingerprint
-            self.working_intent = reduce_intent(self.working_intent, {'kind': 'result', 'task_id': turn.turn_id, 'result': response})
+            self._reduce_working_intent({'kind': 'result', 'task_id': turn.turn_id, 'result': response})
             turn.result = self._response(turn, kind, **{k: v for k, v in response.items() if k not in {'turn_id', 'project_epoch', 'result_kind'}})
+            if turn.repair_context:
+                from openbrep.source_fingerprint import compute_source_fingerprint
+                turn.repair_context['after_source_fingerprint'] = (
+                    compute_source_fingerprint(self.session.project.root) if self.session.project else None
+                )
+                turn.repair_context['state'] = 'recheck_required' if response.get('ok') else 'repair_failed'
+                turn.result['repair_context'] = copy.deepcopy(turn.repair_context)
             if should_cancel and should_cancel():
                 # Keep real delivery evidence if changes already happened.
                 turn.state = 'cancelled'
