@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import difflib
 import re
 import shutil
 import uuid
@@ -44,6 +45,8 @@ class ModelingPluginService:
             return self.set_enabled(payload)
         if method == "POST" and route == "/api/settings/modeling-plugins/methodology":
             return self._with_personal_lock(lambda: self.save_methodology(payload))
+        if method == "POST" and route == "/api/settings/modeling-plugins/manifest":
+            return self._with_personal_lock(lambda: self.save_manifest(payload))
         if method == "POST" and route == "/api/settings/modeling-plugins/restore":
             return self._with_personal_lock(lambda: self.restore(payload))
         return {"ok": False, "code": "method_not_found", "error": "未知建模插件路由"}
@@ -105,6 +108,7 @@ class ModelingPluginService:
                     "aliases": skill.manifest.get("aliases", []),
                     "capabilities": ["methodology"] + (["typed_observation"] if skill.manifest.get("observation", {}).get("fields") else []) + (["registered_checks"] if any(r.get("check_id") for r in skill.manifest.get("requirements", [])) else []),
                     "methodology": skill.prompt_text,
+                    "manifest": skill.manifest,
                     "versions": sorted(set([skill.version, *archived_versions]), reverse=True) if scope == "personal" else [skill.version],
                     "installed": scope in {"personal", "project"},
                     "selected": binding is not None,
@@ -114,6 +118,7 @@ class ModelingPluginService:
                     "update_available": bool(binding and (binding.version != skill.version or binding.content_hash != digest)),
                     "shadowed": duplicate,
                     "recent_usage": usage.get(skill_id, []),
+                    "update_diff": self._update_diff(project, binding, skill) if binding else "",
                 })
         return {"ok": True, "has_project": project is not None, "plugins": items, "issues": issues,
                 "selection_issues": [issue.__dict__ for issue in (selected.issues if selected else ())]}
@@ -290,6 +295,58 @@ class ModelingPluginService:
         return {"ok": True, "skill_id": skill_id, "version": next_version,
                 "content_hash": package_hash(refreshed.package_path) if refreshed else ""}
 
+    def save_manifest(self, body: dict[str, Any]) -> dict[str, Any]:
+        skill_id = str(body.get("skill_id") or "")
+        expected_hash = str(body.get("expected_hash") or "")
+        manifest = body.get("manifest")
+        if isinstance(manifest, str):
+            try:
+                manifest = json.loads(manifest)
+            except json.JSONDecodeError as exc:
+                return self._error("manifest_invalid", str(exc))
+        if not isinstance(manifest, dict):
+            return self._error("manifest_invalid", "领域数据必须是 JSON 对象")
+        registry = DomainSkillRegistry(self.personal_root)
+        current = registry.load(skill_id)
+        if not current.ok or current.skill is None:
+            return self._error("personal_copy_required", "请先安装或创建个人副本再编辑")
+        skill = current.skill
+        try:
+            current_hash = package_hash(skill.package_path)
+        except (OSError, ValueError) as exc:
+            return self._error("package_unsafe", str(exc))
+        if current_hash != expected_hash:
+            return self._error("content_conflict", "插件内容已变化，请刷新后再保存", current_hash=current_hash)
+        if manifest.get("skill_id") != skill_id:
+            return self._error("manifest_identity_changed", "插件 ID 不可在编辑时变更")
+        if not _VERSION.fullmatch(skill.version):
+            return self._error("invalid_version", "只有语义版本号可自动递增")
+        version = skill.version.split(".")
+        next_version = f"{version[0]}.{version[1]}.{int(version[2]) + 1}"
+        manifest = dict(manifest)
+        manifest["version"] = next_version
+        versions_root = self.personal_root / ".versions" / skill_id
+        staging_root = self.personal_root / f".manifest-edit-{uuid.uuid4().hex}"
+        try:
+            versions_root.mkdir(parents=True, exist_ok=True)
+            archive = versions_root / skill.version
+            if not archive.exists():
+                self._atomic_copy(skill.package_path, archive)
+            staged = staging_root / skill_id
+            shutil.copytree(skill.package_path, staged, symlinks=False)
+            (staged / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            checked = DomainSkillRegistry(staging_root).load(skill_id)
+            if not checked.ok:
+                return {"ok": False, "code": "manifest_invalid", "error": "领域数据校验失败", "issues": [issue.__dict__ for issue in checked.issues]}
+            self._replace_directory(staged, skill.package_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            return self._error("save_failed", str(exc))
+        finally:
+            shutil.rmtree(staging_root, ignore_errors=True)
+        updated = DomainSkillRegistry(self.personal_root).load(skill_id).skill
+        return {"ok": True, "skill_id": skill_id, "version": next_version,
+                "content_hash": package_hash(updated.package_path) if updated else ""}
+
     def restore(self, body: dict[str, Any]) -> dict[str, Any]:
         skill_id, version = str(body.get("skill_id") or ""), str(body.get("version") or "")
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", skill_id) or not _VERSION.fullmatch(version):
@@ -331,6 +388,33 @@ class ModelingPluginService:
             {"id": "modify_agent", "name": "AI 修改工具", "provider": "ModifyToolRegistry", "status": "channel_limited" if available else "project_required", "tools": tool_names},
         ]
         return {"ok": True, "tools": tools}
+
+    @staticmethod
+    def _update_diff(project: Any, binding: Any, candidate: Any) -> str:
+        if project is None or binding is None or (binding.version == candidate.version and binding.content_hash == package_hash(candidate.package_path)):
+            return ""
+        try:
+            pinned = DomainSkillRegistry(Path(project.root) / PACKAGE_RELATIVE_PATH).load(candidate.skill_id)
+            old_text = pinned.skill.prompt_text if pinned.ok and pinned.skill is not None else ""
+            new_text = candidate.prompt_text or ""
+            if old_text != new_text:
+                return "".join(difflib.unified_diff(
+                    old_text.splitlines(keepends=True), new_text.splitlines(keepends=True),
+                    fromfile=f"project/{binding.version}/methodology", tofile=f"available/{candidate.version}/methodology",
+                ))
+            old_manifest = dict(pinned.skill.manifest) if pinned.ok and pinned.skill is not None else {}
+            new_manifest = dict(candidate.manifest)
+            old_manifest.pop("version", None)
+            new_manifest.pop("version", None)
+            if old_manifest == new_manifest:
+                return ""
+            return "".join(difflib.unified_diff(
+                (json.dumps(old_manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").splitlines(keepends=True),
+                (json.dumps(new_manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").splitlines(keepends=True),
+                fromfile=f"project/{binding.version}/manifest", tofile=f"available/{candidate.version}/manifest",
+            ))
+        except (OSError, ValueError):
+            return ""
 
     @staticmethod
     def _recent_plugin_usage(project_root: str | Path) -> dict[str, list[dict[str, Any]]]:

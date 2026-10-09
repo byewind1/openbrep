@@ -1757,6 +1757,8 @@ export interface ModelingPluginInfo {
   aliases: string[]
   capabilities: string[]
   methodology: string
+  manifest: Record<string, unknown>
+  update_diff: string
   versions: string[]
   recent_usage: { run_id: string; ts: string; version: string; content_hash: string; stage: string; consumed: string; tools_used: string[]; outcome: string }[]
   installed: boolean
@@ -1797,4 +1799,5 @@ export const personalizeModelingPlugin = (skill_id: string, source = 'builtin') 
 export const adoptModelingPlugin = (skill_id: string, source: string) => postModelingPlugin<{ ok: boolean; error?: string }>('/api/settings/modeling-plugins/adopt', { skill_id, source }, { ok: false })
 export const setModelingPluginEnabled = (skill_id: string, enabled: boolean) => postModelingPlugin<{ ok: boolean; error?: string }>('/api/settings/modeling-plugins/enabled', { skill_id, enabled }, { ok: false })
 export const saveModelingPluginMethod = (skill_id: string, methodology: string, expected_hash: string) => postModelingPlugin<{ ok: boolean; error?: string; content_hash?: string; version?: string }>('/api/settings/modeling-plugins/methodology', { skill_id, methodology, expected_hash }, { ok: false })
+export const saveModelingPluginManifest = (skill_id: string, manifest: Record<string, unknown>, expected_hash: string) => postModelingPlugin<{ ok: boolean; error?: string; content_hash?: string; version?: string; issues?: { code: string; field_path: string; message: string }[] }>('/api/settings/modeling-plugins/manifest', { skill_id, manifest, expected_hash }, { ok: false })
 export const restoreModelingPlugin = (skill_id: string, version: string, adopt = false) => postModelingPlugin<{ ok: boolean; error?: string }>('/api/settings/modeling-plugins/restore', { skill_id, version, adopt }, { ok: false })

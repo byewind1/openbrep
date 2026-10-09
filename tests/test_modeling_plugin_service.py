@@ -30,6 +30,19 @@ def test_standard_skill_markdown_import_edit_and_restore_are_versioned(tmp_path)
     assert saved["version"] == "1.2.4"
     assert (service.personal_root / ".versions/joinery-method/1.2.3/manifest.json").is_file()
 
+    edited = DomainSkillRegistry(service.personal_root).load("joinery-method").skill
+    assert edited is not None
+    updated_manifest = dict(edited.manifest)
+    updated_manifest["domain"] = "timber joinery"
+    saved_data = service.save_manifest({
+        "skill_id": "joinery-method",
+        "manifest": updated_manifest,
+        "expected_hash": package_hash(edited.package_path),
+    })
+    assert saved_data["ok"] is True
+    assert saved_data["version"] == "1.2.5"
+    assert (service.personal_root / ".versions/joinery-method/1.2.4/manifest.json").is_file()
+
     restored = service.restore({"skill_id": "joinery-method", "version": "1.2.3"})
     assert restored["ok"] is True
     after_restore = DomainSkillRegistry(service.personal_root).load("joinery-method").skill
@@ -51,3 +64,27 @@ def test_tools_list_uses_runtime_tool_definitions_and_environment_status(tmp_pat
     assert tools["modify_agent"]["tools"]
     assert tools["archicad.tapir"]["status"] == "not_connected"
     assert tools["compiler"]["status"] == "mock"
+
+
+def test_list_exposes_methodology_diff_when_personal_version_is_newer_than_project_pin(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    service = ModelingPluginService(SimpleNamespace(project=SimpleNamespace(root=project_root)))
+    service.personal_root = tmp_path / "personal"
+    copied = service.personalize({"skill_id": "chinese-timber-zuodou", "source": "example"})
+    assert copied["ok"] is True
+    adopted = service.adopt({"skill_id": "chinese-timber-zuodou", "source": "personal"})
+    assert adopted["ok"] is True
+    current = DomainSkillRegistry(service.personal_root).load("chinese-timber-zuodou").skill
+    assert current is not None
+    changed = service.save_methodology({
+        "skill_id": current.skill_id,
+        "methodology": current.prompt_text + "\nPersonal rule: keep the inner faces aligned.\n",
+        "expected_hash": package_hash(current.package_path),
+    })
+    assert changed["ok"] is True
+
+    listing = service.list_plugins()
+    personal = next(item for item in listing["plugins"] if item["source"] == "personal")
+    assert personal["update_available"] is True
+    assert "Personal rule: keep the inner faces aligned." in personal["update_diff"]

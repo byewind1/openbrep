@@ -7,6 +7,7 @@ import {
   personalizeModelingPlugin,
   restoreModelingPlugin,
   saveModelingPluginMethod,
+  saveModelingPluginManifest,
   setModelingPluginEnabled,
   type ModelingPluginInfo,
   type ModelingToolInfo,
@@ -24,7 +25,9 @@ export function ModelingPluginsPanel({ active, projectName }: Props) {
   const [hasProject, setHasProject] = useState(false)
   const [draftEnabled, setDraftEnabled] = useState<Record<string, boolean>>({})
   const [editing, setEditing] = useState<string | null>(null)
+  const [editingManifest, setEditingManifest] = useState<string | null>(null)
   const [methodDraft, setMethodDraft] = useState('')
+  const [manifestDraft, setManifestDraft] = useState('')
   const [installPath, setInstallPath] = useState('')
   const [filterText, setFilterText] = useState('')
   const [restoreVersion, setRestoreVersion] = useState<Record<string, string>>({})
@@ -91,6 +94,15 @@ export function ModelingPluginsPanel({ active, projectName }: Props) {
     setMethodDraft('')
   }
 
+  async function saveManifest(plugin: ModelingPluginInfo) {
+    let manifest: Record<string, unknown>
+    try { manifest = JSON.parse(manifestDraft) as Record<string, unknown> }
+    catch { setError(t('settings.plugins.manifestJsonError')); return }
+    await run(() => saveModelingPluginManifest(plugin.skill_id, manifest, plugin.content_hash), t('settings.plugins.versionSaved'))
+    setEditingManifest(null)
+    setManifestDraft('')
+  }
+
   return <div className="modeling-plugins-panel">
     <p className="settings-help">{t('settings.plugins.intro')}</p>
     {!hasProject && <p className="settings-help">{t('settings.plugins.noProject')}</p>}
@@ -118,12 +130,16 @@ export function ModelingPluginsPanel({ active, projectName }: Props) {
           </div>
           {plugin.recent_usage.length > 0 ? <p className="settings-help">{t('settings.plugins.recentUse')}: {plugin.recent_usage[0].stage} · {plugin.recent_usage[0].version} · {plugin.recent_usage[0].content_hash.slice(0, 10)} · {plugin.recent_usage[0].consumed} · {plugin.recent_usage[0].outcome} · {t('settings.plugins.toolsUsed')}: {plugin.recent_usage[0].tools_used.join(', ') || '—'}</p> : <p className="settings-help">{t('settings.plugins.notUsed')}</p>}
           {plugin.update_available && <p className="settings-dirty-state">{t('settings.plugins.updateAvailable')}</p>}
+          {plugin.update_diff && <details className="modeling-plugin-diff"><summary>{t('settings.plugins.viewDiff')}</summary><pre>{plugin.update_diff}</pre></details>}
           {plugin.shadowed && <p className="settings-help">{t('settings.plugins.duplicateId')}</p>}
           <div className="modeling-plugin-actions">
             {!plugin.installed && <button type="button" disabled={busy} onClick={() => void run(() => personalizeModelingPlugin(plugin.skill_id, plugin.source), t('settings.plugins.copyCreated'))}>{t('settings.plugins.makeCopy')}</button>}
             {plugin.installed && hasProject && (!plugin.selected || plugin.update_available) && <button type="button" disabled={busy} onClick={() => void run(() => adoptModelingPlugin(plugin.skill_id, plugin.source), t('settings.plugins.adopted'))}>{t('settings.plugins.adopt')}</button>}
             {plugin.selected && <label className="settings-inline-toggle"><input type="checkbox" checked={enabled} onChange={event => setDraftEnabled(current => ({ ...current, [plugin.skill_id]: event.target.checked }))} />{t('settings.plugins.enable')}</label>}
-            {personal && <button type="button" onClick={() => { setEditing(editing === plugin.skill_id ? null : plugin.skill_id); setMethodDraft(plugin.methodology) }}>{t('settings.plugins.edit')}</button>}
+            {personal && <>
+              <button type="button" onClick={() => { setEditing(editing === plugin.skill_id ? null : plugin.skill_id); setMethodDraft(plugin.methodology); setEditingManifest(null) }}>{t('settings.plugins.edit')}</button>
+              <button type="button" onClick={() => { setEditingManifest(editingManifest === plugin.skill_id ? null : plugin.skill_id); setManifestDraft(JSON.stringify(plugin.manifest, null, 2)); setEditing(null) }}>{t('settings.plugins.editDomainData')}</button>
+            </>}
           </div>
           {personal && <div className="modeling-plugin-version">
             <label>{t('settings.plugins.versions')} <select value={restoreVersion[plugin.skill_id] ?? personal.version} onChange={event => setRestoreVersion(current => ({ ...current, [plugin.skill_id]: event.target.value }))}>{personal.versions.map(version => <option key={version}>{version}</option>)}</select></label>
@@ -133,6 +149,12 @@ export function ModelingPluginsPanel({ active, projectName }: Props) {
             <label>{t('settings.plugins.methodology')}<textarea value={methodDraft} onChange={event => setMethodDraft(event.target.value)} rows={14} /></label>
             <button type="button" disabled={busy || !methodDraft.trim()} onClick={() => void saveMethod(plugin)}>{t('settings.plugins.saveVersion')}</button>
             <button type="button" disabled={busy} onClick={() => setEditing(null)}>{t('settings.plugins.cancel')}</button>
+          </div>}
+          {editingManifest === plugin.skill_id && <div className="modeling-plugin-editor">
+            <label>{t('settings.plugins.domainData')}<textarea value={manifestDraft} onChange={event => setManifestDraft(event.target.value)} rows={18} spellCheck={false} /></label>
+            <p className="settings-help">{t('settings.plugins.manifestValidation')}</p>
+            <button type="button" disabled={busy || !manifestDraft.trim()} onClick={() => void saveManifest(plugin)}>{t('settings.plugins.saveDomainVersion')}</button>
+            <button type="button" disabled={busy} onClick={() => setEditingManifest(null)}>{t('settings.plugins.cancel')}</button>
           </div>}
         </article>
       })}
