@@ -205,6 +205,33 @@ class WorkbenchConversationService:
     def _dependency_version(self):
         return getattr(self.session, 'dependency_context_version', None)
 
+    def _refresh_project_from_disk(self) -> None:
+        """Adopt the current HSF source before binding a new turn token.
+
+        A previous partial execution or an external source save can update the
+        HSF directory while leaving this session's HSFProject instance behind.
+        capture_snapshot() already treats the directory as source of truth, so
+        keeping the stale instance here would bind a fresh token to one source
+        and then reject it against another at execute time.
+        """
+        project = self.session.project
+        source_path = getattr(self.session, 'source_path', None)
+        if project is None or source_path is None:
+            return
+        from pathlib import Path
+
+        from openbrep.hsf_project import HSFProject
+
+        try:
+            project_root = Path(project.root).expanduser().resolve()
+            source_root = Path(source_path).expanduser().resolve()
+        except (TypeError, ValueError, OSError):
+            return
+        if project_root != source_root or not source_root.is_dir():
+            return
+        refreshed = HSFProject.load_from_disk(str(source_root))
+        self.session.refresh_same_project(refreshed)
+
     def _response(self, turn: PreparedTurn | None, kind: str, **payload):
         # identity 契约（卡02）：project_epoch = turn 开始时的会话代次（事件
         # 过滤/守卫用它）；current_project_epoch + session_id = 响应生成时的
@@ -339,6 +366,7 @@ class WorkbenchConversationService:
             return self._failure(None, 'EMPTY_MESSAGE')
         if self.active_turn_id:
             return self._failure(None, 'TURN_BUSY')
+        self._refresh_project_from_disk()
         if on_event:
             # 卡05：prepare 流式反馈——语义路由等待
             on_event('status', {'stage': 'route', 'message': '正在判断本轮执行方式…'})

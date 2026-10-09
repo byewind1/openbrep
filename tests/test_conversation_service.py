@@ -73,6 +73,37 @@ def test_source_change_and_project_epoch_reject_execution(tmp_path):
     assert prepare(session, client_turn_id='c2', project_epoch=1)['code'] == 'PROJECT_CHANGED'
 
 
+def test_new_turn_adopts_same_project_disk_source_after_partial_write(tmp_path):
+    """A fresh turn must start from the HSF files left by a prior partial run.
+
+    The prior run may have committed files while the session still holds an
+    older HSFProject instance. Preparing a new token should reconcile that
+    same project from disk; it must not invalidate the new token immediately.
+    """
+    session = session_at(tmp_path)
+    project_root = session.project.root
+    old_project = session.project
+
+    from openbrep.hsf_project import HSFProject
+
+    disk_project = HSFProject.load_from_disk(str(project_root))
+    disk_project.set_script(ScriptType.SCRIPT_3D, 'BLOCK 1, 2, 3\n')
+    disk_project.save_to_disk()
+    # Model a prior partial pipeline write that reached disk without updating
+    # the WorkbenchSession's in-memory project object.
+    assert session.project is old_project
+
+    ready = prepare(session, client_turn_id='after-partial')
+    assert ready['result_kind'] == 'ready_to_execute'
+    assert session.project.get_script(ScriptType.SCRIPT_3D) == 'BLOCK 1, 2, 3\n'
+
+    result = session.route('POST', '/api/assistant/turn', {
+        'phase': 'execute', 'turn_id': ready['turn_id'],
+    })
+    assert result['result_kind'] == 'execution'
+    session.assistant_service.generate_with_assistant.assert_called_once()
+
+
 def test_cancel_expire_and_restart_never_revive_tokens(tmp_path):
     session = session_at(tmp_path)
     ready = prepare(session)
