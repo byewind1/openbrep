@@ -359,6 +359,25 @@ def _provenance(result: Any, context: dict) -> dict:
             (delivery_source or {}).get("source_fingerprint") or None
         ),
     }
+    used_plugins = metadata.get("domain_skills_used")
+    if isinstance(used_plugins, list):
+        provenance["domain_skills_used"] = [
+            {
+                "skill_id": str(item.get("skill_id") or "")[:80],
+                "version": str(item.get("version") or "")[:40],
+                "content_hash": str(item.get("content_hash") or "")[:64],
+                "source": str(item.get("source") or "")[:40],
+                "stage": str(item.get("stage") or "")[:32],
+                "consumed": str(item.get("consumed") or "")[:40],
+            }
+            for item in used_plugins[:32]
+            if isinstance(item, dict) and item.get("skill_id")
+        ]
+    used_tools = metadata.get("tools_used")
+    if isinstance(used_tools, list):
+        provenance["tools_used"] = list(dict.fromkeys(
+            str(item)[:80] for item in used_tools[:128] if isinstance(item, str) and item
+        ))
     # ST03：继续关系是交付溯源，而不是 prompt 输入。只保留规范化字段，
     # 原始指令沿用质量账本的隐私上限，避免任意 request metadata 泄漏进档案。
     continue_from = context.get("continue_from")

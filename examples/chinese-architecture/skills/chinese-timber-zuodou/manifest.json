@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "skill_id": "chinese-timber-zuodou",
+  "version": "1.0.0",
+  "status": "active",
+  "domain": "中国古建 / 坐斗",
+  "intents": ["create", "modify", "debug"],
+  "aliases": ["坐斗", "斗拱", "chinese timber bracket", "zuodou"],
+  "observation": {
+    "fields": {
+      "overall.width": {"type": "length", "unit": "m", "unknown_policy": "preserve", "description": "坐斗外包宽度"},
+      "overall.depth": {"type": "length", "unit": "m", "unknown_policy": "preserve", "description": "坐斗外包进深"},
+      "overall.height": {"type": "length", "unit": "m", "unknown_policy": "preserve", "description": "坐斗总高"},
+      "geometry.profile": {"type": "string", "unknown_policy": "ask", "description": "有证据支持的外轮廓和凹槽形式"},
+      "construction.method": {"type": "string", "unknown_policy": "preserve", "description": "采用的建模构造方法"}
+    }
+  },
+  "plan_policy": {
+    "unobserved_values": "assumption_or_question",
+    "conflict_policy": "ask_user",
+    "requirement_mapping": "retain_source_and_field_path"
+  },
+  "requirements": [],
+  "allowed_variations": [
+    "Keep undocumented dimensions explicit as assumptions or ask the user.",
+    "The included HSF is an editable example, not a general geometry acceptance test."
+  ],
+  "fixtures": [],
+  "methodology_path": "SKILL.md"
+}

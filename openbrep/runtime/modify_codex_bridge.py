@@ -1832,6 +1832,10 @@ class CodexModifyBridge:
             },
             "before_revision_id": self.before_revision_id or None,
             "changed_files": sorted(dict(self.registry.changed_files).keys()),
+            "tools_used": list(dict.fromkeys(
+                str(entry.get("tool")) for entry in self.audit
+                if entry.get("executed") and entry.get("tool")
+            )),
             "codex_modify": {
                 "model": self.model,
                 "reasoning_effort": self.reasoning_effort,

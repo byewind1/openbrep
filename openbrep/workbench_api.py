@@ -23,6 +23,7 @@ from openbrep.workbench.copilot_service import WorkbenchCopilotService
 from openbrep.workbench.git_service import WorkbenchGitService
 from openbrep.workbench.host_verification_service import HostVerificationService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
+from openbrep.workbench.modeling_plugin_service import ModelingPluginService
 from openbrep.workbench.preview_service import authoritative_preview_payload
 from openbrep.workbench.project_service import (
     WorkbenchProjectService,
@@ -132,6 +133,7 @@ class WorkbenchSession:
         self.skill_proposal_service = SkillProposalService(self)
         self.copilot_service = WorkbenchCopilotService(self)
         self.memory_service = WorkbenchMemoryService(self)
+        self.modeling_plugin_service = ModelingPluginService(self)
         from openbrep.workbench.reference_service import WorkbenchReferenceService
 
         # P1-A：会话参考图资产（搜索—整理—选图—执行闭环；唯一写入入口是显式 adopt）
@@ -673,6 +675,9 @@ class WorkbenchSession:
 
         if route.startswith(("/api/settings/llm/providers", "/api/settings/llm/export", "/api/settings/llm/import")):
             return self.provider_settings_service.route(normalized_method, route, body)
+
+        if route.startswith(("/api/settings/modeling-plugins", "/api/settings/modeling-tools")):
+            return self.modeling_plugin_service.route(normalized_method, route, body)
 
         if normalized_method == "GET" and route == "/api/tapir/status":
             return self.tapir_service.status_response()
