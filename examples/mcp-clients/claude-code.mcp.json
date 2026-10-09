@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "openbrep": {
+      "type": "stdio",
+      "command": "obr",
+      "args": ["mcp-server"]
+    }
+  }
+}
