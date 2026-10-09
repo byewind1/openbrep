@@ -1,0 +1,15 @@
+﻿! Case-study proportions, not a historical dimensional standard.
+! A/B are actual overall width/depth. All length inputs must be positive.
+_body_w = A
+_body_d = B
+_lower_h = ZZYZX * 0.40
+_body_h = ZZYZX * 0.22
+_ear_h = ZZYZX - _lower_h - _body_h
+_bottom_w = A * 17 / 22
+_bottom_d = B * 17 / 22
+_slot_w = A * 15 / 44
+_slot_d = B * 15 / 44
+_ear_w = (_body_w - _slot_w) / 2
+_ear_d = (_body_d - _slot_d) / 2
+_ear_x = _slot_w / 2
+_ear_y = _slot_d / 2

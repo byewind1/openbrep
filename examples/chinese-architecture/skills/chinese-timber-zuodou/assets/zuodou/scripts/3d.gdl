@@ -1,0 +1,66 @@
+﻿! 坐斗 3D Script — 参考案例，非历史尺度标准
+! 下部四边棱台连接斗身，上部四耳围合十字斗口
+
+TOLER 0.001
+MATERIAL mat_wood
+
+! ========== 下部：四边棱台，上大下小 ==========
+! RULED pairs four lower XY nodes with four upper XYZ nodes.
+! Bottom is smaller than top; top meets the body.
+! Do not repeat the first node; mask bit 4 closes the last side.
+! Mask 119 = bottom + top + closing side + all three edge groups.
+RULED 4, 119,
+  -_bottom_w / 2, -_bottom_d / 2, 0,
+   _bottom_w / 2, -_bottom_d / 2, 0,
+   _bottom_w / 2,  _bottom_d / 2, 0,
+  -_bottom_w / 2,  _bottom_d / 2, 0,
+  -_body_w / 2, -_body_d / 2, _lower_h,
+   _body_w / 2, -_body_d / 2, _lower_h,
+   _body_w / 2,  _body_d / 2, _lower_h,
+  -_body_w / 2,  _body_d / 2, _lower_h
+
+! ========== 斗身：与棱台顶面衔接，顶部作为槽底 ==========
+ADDZ _lower_h
+PRISM_ 4, _body_h,
+  -_body_w / 2, -_body_d / 2, 15,
+   _body_w / 2, -_body_d / 2, 15,
+   _body_w / 2,  _body_d / 2, 15,
+  -_body_w / 2,  _body_d / 2, 15
+DEL 1
+
+! ========== 斗耳：四个角部实体，中央留槽口 ==========
+! Four ears sit on the body corners.
+ADDZ _lower_h + _body_h
+
+ADD -_ear_x - _ear_w, -_ear_y - _ear_d, 0
+BLOCK _ear_w, _ear_d, _ear_h
+DEL 1
+
+ADD _ear_x, -_ear_y - _ear_d, 0
+BLOCK _ear_w, _ear_d, _ear_h
+DEL 1
+
+ADD -_ear_x - _ear_w, _ear_y, 0
+BLOCK _ear_w, _ear_d, _ear_h
+DEL 1
+
+ADD _ear_x, _ear_y, 0
+BLOCK _ear_w, _ear_d, _ear_h
+DEL 1
+
+
+! ========== 前后低连接块：沿内缘连接同侧两只斗耳 ==========
+! Reference has no dimensions here: height = 1/3 ear, depth = 1/2 ear.
+_rail_h = _ear_h / 3
+_rail_d = _ear_d / 2
+
+ADD -_ear_x, -_ear_y - _rail_d, 0
+BLOCK _slot_w, _rail_d, _rail_h
+DEL 1
+
+ADD -_ear_x, _ear_y, 0
+BLOCK _slot_w, _rail_d, _rail_h
+DEL 1
+
+DEL 1
+END

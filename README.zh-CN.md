@@ -287,10 +287,14 @@ openbrep/
 │   └── obr7.py              # 启动编排（dev / tauri 双模式）
 ├── knowledge/               # GDL 参考文档（可自行扩充）
 ├── skills/                  # 任务策略（可自行扩充）
+├── examples/chinese-architecture/ # 中国古建建模 Skills 与 HSF 案例
 ├── tests/                   # 单元测试
 ├── config.example.toml
 └── pyproject.toml
 ```
+
+公开建模案例：[中国古建建模 Skills](examples/chinese-architecture/README.md)，
+包含坐斗 RULED 棱台、四耳与内侧低连接块的可复用方法和可编辑 HSF 示例。
 
 ---
 

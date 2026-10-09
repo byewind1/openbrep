@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="580" viewBox="0 0 640 580" role="img" aria-labelledby="title desc">
+  <title id="title">坐斗俯视：两条低连接块与斗耳内侧对齐</title>
+  <desc id="desc">深色四角为高斗耳。浅色连接块跨越左右斗耳间隙，位于前后两侧的内缘，朝向中央槽口的面与斗耳内面共线。</desc>
+  <rect width="640" height="580" fill="#faf8f3"/>
+  <g font-family="sans-serif" fill="#302b24">
+    <text x="32" y="36" font-size="22">坐斗 · 俯视内侧对齐示意</text>
+    <text x="260" y="75" font-size="16">后 / +Y</text>
+    <text x="260" y="505" font-size="16">前 / −Y</text>
+    <text x="42" y="294" font-size="16">−X</text>
+    <text x="514" y="294" font-size="16">+X</text>
+  </g>
+  <rect x="100" y="90" width="396" height="396" fill="#e8ddc8" stroke="#514839" stroke-width="2"/>
+  <g fill="#947451" stroke="#514839" stroke-width="2">
+    <rect x="100" y="90" width="130.5" height="130.5"/>
+    <rect x="365.5" y="90" width="130.5" height="130.5"/>
+    <rect x="100" y="355.5" width="130.5" height="130.5"/>
+    <rect x="365.5" y="355.5" width="130.5" height="130.5"/>
+  </g>
+  <g fill="#d2ad76" stroke="#514839" stroke-width="2">
+    <rect x="230.5" y="155.25" width="135" height="65.25"/>
+    <rect x="230.5" y="355.5" width="135" height="65.25"/>
+  </g>
+  <g stroke="#126f79" stroke-width="2" stroke-dasharray="7 5">
+    <path d="M 92,220.5 H 504"/>
+    <path d="M 92,355.5 H 504"/>
+  </g>
+  <g font-family="sans-serif" font-size="16" fill="#302b24" text-anchor="middle">
+    <text x="165" y="150" fill="#fff">高斗耳</text>
+    <text x="431" y="150" fill="#fff">高斗耳</text>
+    <text x="165" y="429" fill="#fff">高斗耳</text>
+    <text x="431" y="429" fill="#fff">高斗耳</text>
+    <text x="298" y="195">低连接块</text>
+    <text x="298" y="394">低连接块</text>
+    <text x="298" y="284">中央槽口</text>
+    <text x="298" y="310">槽底 = 斗身顶面</text>
+  </g>
+  <g font-family="sans-serif" font-size="15" fill="#126f79">
+    <text x="100" y="540">虚线：耳内侧与低块内侧共线</text>
+    <text x="100" y="562">位置示意；比例采用案例假设，不代表历史尺度标准</text>
+  </g>
+</svg>

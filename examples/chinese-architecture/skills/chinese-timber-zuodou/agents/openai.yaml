@@ -1,0 +1,4 @@
+interface:
+  display_name: "中国古建 · 坐斗建模"
+  short_description: "用 RULED 建坐斗棱台，按内侧边界定位四耳之间的低连接块"
+  default_prompt: "使用 $chinese-timber-zuodou，根据参考图创建或修改坐斗，明确内侧对齐关系与暂定尺寸。"

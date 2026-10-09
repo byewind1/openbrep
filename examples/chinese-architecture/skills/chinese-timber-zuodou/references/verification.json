@@ -1,0 +1,148 @@
+{
+  "static_passed": true,
+  "static_warnings": [],
+  "scenarios": [
+    {
+      "A": 0.396,
+      "B": 0.396,
+      "ZZYZX": 0.3,
+      "meshes": 8,
+      "sloped_sides": 4,
+      "continuous_sections": true,
+      "inner_alignment": true,
+      "rails_bounds": [
+        [
+          [
+            -0.0675,
+            0.0675
+          ],
+          [
+            -0.13275,
+            -0.0675
+          ],
+          [
+            0.186,
+            0.224
+          ]
+        ],
+        [
+          [
+            -0.0675,
+            0.0675
+          ],
+          [
+            0.0675,
+            0.13275
+          ],
+          [
+            0.186,
+            0.224
+          ]
+        ]
+      ]
+    },
+    {
+      "A": 0.6,
+      "B": 0.4,
+      "ZZYZX": 0.45,
+      "meshes": 8,
+      "sloped_sides": 4,
+      "continuous_sections": true,
+      "inner_alignment": true,
+      "rails_bounds": [
+        [
+          [
+            -0.10227272727272728,
+            0.10227272727272728
+          ],
+          [
+            -0.1340909090909091,
+            -0.06818181818181818
+          ],
+          [
+            0.279,
+            0.336
+          ]
+        ],
+        [
+          [
+            -0.10227272727272728,
+            0.10227272727272728
+          ],
+          [
+            0.06818181818181818,
+            0.1340909090909091
+          ],
+          [
+            0.279,
+            0.336
+          ]
+        ]
+      ]
+    },
+    {
+      "A": 0.2,
+      "B": 0.3,
+      "ZZYZX": 0.15,
+      "meshes": 8,
+      "sloped_sides": 4,
+      "continuous_sections": true,
+      "inner_alignment": true,
+      "rails_bounds": [
+        [
+          [
+            -0.03409090909090909,
+            0.03409090909090909
+          ],
+          [
+            -0.1005681818181818,
+            -0.05113636363636363
+          ],
+          [
+            0.093,
+            0.112
+          ]
+        ],
+        [
+          [
+            -0.03409090909090909,
+            0.03409090909090909
+          ],
+          [
+            0.05113636363636364,
+            0.1005681818181818
+          ],
+          [
+            0.093,
+            0.112
+          ]
+        ]
+      ]
+    }
+  ],
+  "project_skill_injected": [
+    "chinese-timber-zuodou"
+  ],
+  "compile": {
+    "success": true,
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "",
+    "gsm_bytes": 3386
+  },
+  "asset_sha256": {
+    "assets/zuodou/ancestry.xml": "2964a60448e5ecfa6fd29c7375138c36bf698674ffcbb6d8f1f480389692a83e",
+    "assets/zuodou/calledmacros.xml": "fe8f52f0a196f8b8a2056e2a1d8937abff4cd61fcaa6bf998a87104495a6b03c",
+    "assets/zuodou/libpartdata.xml": "4723c1a35c777580a01448276bedf18deac3ce7d3a58a613af4bb08461e87dc0",
+    "assets/zuodou/libpartdocs.xml": "3c426b648d4177d47fdaa699010b1f1c6c8aac382cddc9074a326441d4d15d9d",
+    "assets/zuodou/paramlist.xml": "f12b6774d5591ab5f511ef8267b26c38d4d810cab1cdee1781917fd00f41a1e7",
+    "assets/zuodou/scripts/1d.gdl": "571a4eabcdc17b99a552e299ff203a816cbc7278e328e94b8b33a7842dee4cb6",
+    "assets/zuodou/scripts/2d.gdl": "563172ea1891af1f31a21223b2aaf18351a16ef919537fa095311e09f388581c",
+    "assets/zuodou/scripts/3d.gdl": "6d5d7199bb7f03abea42c0e70dd446d529b5f7237a504fdb769c3d10f3f8fbad",
+    "assets/zuodou/scripts/vl.gdl": "539f1f9e3656d4342053937e423c250fd9702cf13dcce02b6755d5e358714ad0"
+  },
+  "verified_date": "2026-10-09",
+  "checker_sha256": "882e47dd5b2f0214b661c1898b408d5a5b4b3ea7f0eaf4f86041c0fba5452fdf",
+  "host_execution_verified": false,
+  "independent_agent_evaluation": "not_run"
+}

@@ -300,10 +300,15 @@ openbrep/
 │   └── obr7.py              # 启动编排（dev / tauri 双模式）
 ├── knowledge/               # GDL 参考文档（可自行扩充）
 ├── skills/                  # 任务策略（可自行扩充）
+├── examples/chinese-architecture/ # Chinese architecture modeling Skills + HSF examples
 ├── tests/                   # 单元测试
 ├── config.example.toml
 └── pyproject.toml
 ```
+
+Public modeling examples: [Chinese architecture Skills](examples/chinese-architecture/README.md),
+starting with a seated bracket block (坐斗): a RULED frustum, four ears, and two
+low connecting blocks aligned with the inner faces. Includes an editable HSF example.
 
 ---
 
