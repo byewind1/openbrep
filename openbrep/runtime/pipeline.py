@@ -347,6 +347,7 @@ class TaskPipeline:
         self._knowledge_text: Optional[str] = None
         self._skills_loader: Optional[SkillsLoader] = None
         self._skill_creator: Optional[SkillCreator] = None
+        self._domain_skill_usage: dict[str, dict[str, Any]] = {}
 
     def _resolve_skills_dir(self) -> Path:
         project_root = Path(__file__).parent.parent.parent
@@ -367,6 +368,7 @@ class TaskPipeline:
         # 0. G0：run_id 在入口生成，一次任务全程稳定（trace/feedback/质量档案关联键）
         run_id = _new_run_id()
         self._current_run_id = run_id
+        self._domain_skill_usage = {}
         started_at = time.monotonic()
 
         # Authorization precedes routing and every mutation fast path. The GUI
@@ -532,6 +534,7 @@ class TaskPipeline:
                 injected = list(self._skills_loader.last_injected or [])
             merged = dict(result.metadata or {})
             merged["injected_skills"] = injected
+            merged["domain_skills_used"] = list(self._domain_skill_usage.values())
             merged["run_id"] = run_id
             # ST03 F2：continue 关联在 pipeline 入口合并（trace/quality/revision 可追溯）
             continue_from = getattr(request, "continue_from", None)
@@ -3829,14 +3832,36 @@ class TaskPipeline:
     ) -> str:
         """Load global skills plus optional project-scoped skills."""
         context = context if context is not None else resolve_project_context(request.project)
-        return "\n\n---\n\n".join(
-            part
-            for part in [
-                self._load_skills(instruction),
-                load_project_skills(context, instruction),
-            ]
-            if part
-        )
+        parts = [self._load_skills(instruction), load_project_skills(context, instruction)]
+        if request.project is not None:
+            try:
+                from openbrep.domain_skill_selection import load_project_skill_selections, package_hash
+
+                selections = load_project_skill_selections(request.project.root)
+                bindings = {record.skill_id: record for record in selections.records}
+                task_intent = str(request.intent or "").casefold()
+                lowered = str(instruction or "").casefold()
+                for skill in selections.skills:
+                    intents = {str(value).casefold() for value in skill.manifest.get("intents", [])}
+                    aliases = [skill.skill_id, *skill.manifest.get("aliases", [])]
+                    if task_intent not in intents or not skill.prompt_text.strip():
+                        continue
+                    if not any(str(alias).casefold() in lowered for alias in aliases):
+                        continue
+                    digest = package_hash(skill.package_path)
+                    binding = bindings.get(skill.skill_id)
+                    if binding is None or digest != binding.content_hash:
+                        continue
+                    self._domain_skill_usage[skill.skill_id] = {
+                        "skill_id": skill.skill_id, "version": skill.version,
+                        "content_hash": binding.content_hash, "source": "project_selection",
+                        "stage": task_intent, "consumed": "methodology",
+                    }
+                    parts.append(f"## Adopted domain method: {skill.skill_id} {skill.version}\n\n{skill.prompt_text.strip()}")
+            except Exception:
+                # Optional plugin state must not make an otherwise valid task fail.
+                pass
+        return "\n\n---\n\n".join(part for part in parts if part)
 
     def _build_learned_error_skill_prompt(self, *, work_dir: str = "", project: HSFProject | None = None) -> str:
         project_name = getattr(project, "name", "") if project is not None else ""

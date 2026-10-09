@@ -20,6 +20,7 @@ import { GitSettingsPanel } from './GitSettingsPanel'
 import { InterfaceSettingsPanel, interfaceSummary } from './InterfaceSettingsPanel'
 import { KnowledgePanel } from './KnowledgePanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
+import { ModelingPluginsPanel } from './ModelingPluginsPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { useSettingsDialog } from './useSettingsDialog'
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
@@ -33,6 +34,7 @@ export type SettingsSectionId =
   | 'memory'
   | 'lessons'
   | 'knowledge'
+  | 'plugins'
 
 interface SettingsModalProps {
   open: boolean
@@ -230,6 +232,7 @@ export function SettingsModal({
     { id: 'memory', summary: memorySummary(t, memoryStatus, memoryLessons.length) },
     { id: 'lessons', summary: lessonsSummary(t, distilledLessons) },
     { id: 'knowledge', summary: knowledgeSummary(t, knowledgeStatus) },
+    { id: 'plugins', summary: t('settings.plugins.summary') },
   ]
 
   if (!open) return null
@@ -441,6 +444,16 @@ export function SettingsModal({
                 onRefresh={onLoadKnowledgeStatus}
                 onReload={onReloadKnowledge}
               />
+            </SettingsPanel>
+
+            <SettingsPanel
+              id="plugins"
+              title={t('settings.section.plugins')}
+              summary={t('settings.plugins.summary')}
+              active={activeSection === 'plugins'}
+              visited={visitedSections.has('plugins')}
+            >
+              <ModelingPluginsPanel active={activeSection === 'plugins'} projectName={projectName} />
             </SettingsPanel>
           </div>
         </div>

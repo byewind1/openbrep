@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_SKILL_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SKILL_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _TOP_LEVEL_FIELDS = frozenset({
     "schema_version", "skill_id", "version", "status", "domain", "intents",
     "aliases", "observation", "plan_policy", "requirements", "allowed_variations",
@@ -129,6 +129,11 @@ class DomainSkillRegistry:
                 prompt_text = target.read_text(encoding="utf-8")
             except OSError as exc:
                 return SkillLoadResult(issues=(SkillIssue("METHODOLOGY_UNAVAILABLE", "methodology_path", str(exc)),))
+            if prompt_text.startswith("---"):
+                lines = prompt_text.splitlines(keepends=True)
+                end = next((index for index in range(1, len(lines)) if lines[index].strip() == "---"), None)
+                if end is not None:
+                    prompt_text = "".join(lines[end + 1:])
         return SkillLoadResult(DomainSkill(
             skill_id=skill_id,
             version=str(manifest["version"]),

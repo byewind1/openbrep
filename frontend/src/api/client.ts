@@ -1744,3 +1744,57 @@ export async function fetchSavedVisualReviews(runId: string): Promise<{
 }> {
   return requestJson(`/api/vision/reviews/${encodeURIComponent(runId)}`, { method: 'GET' }, { ok: false, error: 'OpenBrep local API is not available.' })
 }
+
+export interface ModelingPluginInfo {
+  skill_id: string
+  name: string
+  domain: string
+  version: string
+  status: string
+  content_hash: string
+  source: 'builtin' | 'personal' | 'project' | string
+  intents: string[]
+  aliases: string[]
+  capabilities: string[]
+  methodology: string
+  versions: string[]
+  recent_usage: { run_id: string; ts: string; version: string; content_hash: string; stage: string; consumed: string; tools_used: string[]; outcome: string }[]
+  installed: boolean
+  selected: boolean
+  enabled: boolean
+  pinned_version: string | null
+  pinned_hash: string | null
+  update_available: boolean
+  shadowed: boolean
+}
+
+export interface ModelingToolInfo {
+  id: string
+  name: string
+  provider: string
+  status: string
+  tools?: string[]
+}
+
+export async function fetchModelingPlugins() {
+  return requestJson<{ ok: boolean; has_project?: boolean; plugins?: ModelingPluginInfo[]; issues?: { skill_id: string; code: string; message: string }[]; selection_issues?: { code: string; field_path: string; message: string }[]; error?: string }>(
+    '/api/settings/modeling-plugins', { method: 'GET' }, { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchModelingTools() {
+  return requestJson<{ ok: boolean; tools?: ModelingToolInfo[]; error?: string }>(
+    '/api/settings/modeling-tools', { method: 'GET' }, { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+async function postModelingPlugin<T>(path: string, body: object, fallback: T): Promise<T> {
+  return requestJson(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, fallback)
+}
+
+export const installModelingPlugin = (source_path: string) => postModelingPlugin<{ ok: boolean; error?: string; skill_id?: string }>('/api/settings/modeling-plugins/install', { source_path }, { ok: false })
+export const personalizeModelingPlugin = (skill_id: string, source = 'builtin') => postModelingPlugin<{ ok: boolean; error?: string }>('/api/settings/modeling-plugins/personalize', { skill_id, source }, { ok: false })
+export const adoptModelingPlugin = (skill_id: string, source: string) => postModelingPlugin<{ ok: boolean; error?: string }>('/api/settings/modeling-plugins/adopt', { skill_id, source }, { ok: false })
+export const setModelingPluginEnabled = (skill_id: string, enabled: boolean) => postModelingPlugin<{ ok: boolean; error?: string }>('/api/settings/modeling-plugins/enabled', { skill_id, enabled }, { ok: false })
+export const saveModelingPluginMethod = (skill_id: string, methodology: string, expected_hash: string) => postModelingPlugin<{ ok: boolean; error?: string; content_hash?: string; version?: string }>('/api/settings/modeling-plugins/methodology', { skill_id, methodology, expected_hash }, { ok: false })
+export const restoreModelingPlugin = (skill_id: string, version: string, adopt = false) => postModelingPlugin<{ ok: boolean; error?: string }>('/api/settings/modeling-plugins/restore', { skill_id, version, adopt }, { ok: false })
