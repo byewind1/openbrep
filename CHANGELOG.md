@@ -5,6 +5,12 @@ Format: [Semantic Versioning](https://semver.org), entries newest-first.
 
 ---
 
+## [0.13.1] — 2026-10-09
+
+> 完整发布说明见 `docs/releases/v0.13.1.md`。
+
+- 修复同一 HSF 项目部分修改后继续修改时，新任务快照基于磁盘源码而会话仍持有旧 `HSFProject`，导致令牌立即失效的问题。新任务准备阶段会先刷新当前项目；准备完成后的外部源码变化仍会被拒绝。
+
 ## [0.13.0] — 2026-10-08
 
 > 完整发布说明见 `docs/releases/v0.13.0.md`。

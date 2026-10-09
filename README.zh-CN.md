@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.13.0 — GDL 智能工作台升级：结构化计划、可扩展领域 Skill、参考图分析与预览对照闭环。
+> 正式发布版本 v0.13.1 — 修复同一 HSF 项目部分修改后继续修改时的源码快照失效。
 
 ---
 
@@ -45,8 +45,8 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.13.0_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.13.0_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.13.0_x64_en-US.msi` 或 `OpenBrep_0.13.0_x64-setup.exe`
+- macOS：`OpenBrep_0.13.1_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.13.1_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.13.1_x64_en-US.msi` 或 `OpenBrep_0.13.1_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
@@ -401,6 +401,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.13.1 | 修复同一 HSF 项目部分修改后继续修改时，内存项目与磁盘源码不同步导致的新任务令牌立即失效（见 docs/releases/v0.13.1.md） |
 | v0.13.0 | GDL 智能工作台统一框架：结构化计划、可扩展领域 Skill、参考图分析与预览对照闭环（见 docs/releases/v0.13.0.md） |
 | v0.12.0 | 任务反馈与连续对话修复：执行事件记录与复盘、同项目连续对话、Agent 超时独立、迟到写入隔离与原子提交授权（见 docs/releases/v0.12.0.md） |
 | v0.11.2 | 修复效果目标续接、后端重启后的用户目标恢复，以及跨项目参考图取消响应隔离（见 docs/releases/v0.11.2.md） |
